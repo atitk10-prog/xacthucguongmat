@@ -1,0 +1,7 @@
+{
+  "name": "Xác thực gương mặt",
+  "description": "Hệ thống điểm danh sự kiện bằng nhận diện khuôn mặt AI, tích hợp Gemini Vision để xác thực danh tính nhanh chóng và chính xác.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
