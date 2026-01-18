@@ -394,11 +394,15 @@ async function checkin(data: {
         }
 
         // Create checkin
+        // Note: participant_id should only be set if it's a valid UUID from event_participants
+        // Check if user_id looks like a UUID (36 chars with dashes)
+        const isValidUUID = data.user_id && data.user_id.length === 36 && data.user_id.includes('-');
+
         const { data: newCheckin, error: checkinError } = await supabase
             .from('checkins')
             .insert({
                 event_id: data.event_id,
-                participant_id: data.user_id,
+                participant_id: isValidUUID ? data.user_id : null,
                 checkin_time: checkinTime.toISOString(),
                 status,
                 face_confidence: data.face_confidence || 0,
