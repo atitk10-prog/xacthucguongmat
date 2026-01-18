@@ -452,7 +452,7 @@ async function getEventCheckins(eventId: string): Promise<ApiResponse<EventCheck
     try {
         const { data, error } = await supabase
             .from('checkins')
-            .select('*, participants:event_participants(full_name, avatar_url, student_code, organization)')
+            .select('*, participants:event_participants(full_name, avatar_url, student_code, organization, birth_date)')
             .eq('event_id', eventId)
             .order('checkin_time', { ascending: false });
 

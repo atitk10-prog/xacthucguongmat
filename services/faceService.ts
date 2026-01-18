@@ -157,24 +157,36 @@ class FaceMatcherService {
         this.registeredFaces = [];
     }
 
-    // Find best match for a face descriptor
-    findMatch(descriptor: Float32Array, threshold: number = 25): { userId: string; name: string; confidence: number } | null {
+    // Find best match for a face descriptor, excluding specified user IDs
+    findMatch(descriptor: Float32Array, threshold: number = 25, excludeIds: string[] = []): { userId: string; name: string; confidence: number } | null {
         if (this.registeredFaces.length === 0) return null;
 
         let bestMatch: { userId: string; name: string; confidence: number } | null = null;
         const allScores: { name: string; confidence: number }[] = [];
 
-        for (const face of this.registeredFaces) {
+        // Filter out excluded users (e.g. already checked in)
+        const candidates = this.registeredFaces.filter(f => !excludeIds.includes(f.userId));
+
+        for (const face of candidates) {
             const confidence = compareFaces(descriptor, face.descriptor);
-            allScores.push({ name: face.name, confidence });
+            if (confidence > 10) { // Only log somewhat relevant scores
+                allScores.push({ name: face.name, confidence });
+            }
+
             if (confidence >= threshold && (!bestMatch || confidence > bestMatch.confidence)) {
                 bestMatch = { userId: face.userId, name: face.name, confidence };
             }
         }
 
-        // ALWAYS show face scores for debugging
-        const scoresStr = allScores.map(s => `${s.name}: ${s.confidence}%`).join(', ');
-        console.log(`📊 Face scores (th=${threshold}%): ${scoresStr} → ${bestMatch ? `MATCH: ${bestMatch.name}` : 'NO MATCH'}`);
+        // Sort scores descending and take top 5 for cleaner logs
+        allScores.sort((a, b) => b.confidence - a.confidence);
+        const topScores = allScores.slice(0, 5);
+
+        // Log optimization: Only log if there are candidates
+        if (allScores.length > 0) {
+            const scoresStr = topScores.map(s => `${s.name}: ${s.confidence}%`).join(', ');
+            console.log(`📊 Face scores (th=${threshold}%): ${scoresStr}${allScores.length > 5 ? '...' : ''} → ${bestMatch ? `MATCH: ${bestMatch.name}` : 'NO MATCH'}`);
+        }
 
         return bestMatch;
     }

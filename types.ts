@@ -97,6 +97,7 @@ export interface EventCheckin {
     avatar_url?: string;
     student_code?: string;
     organization?: string;
+    birth_date?: string;
   };
 }
 

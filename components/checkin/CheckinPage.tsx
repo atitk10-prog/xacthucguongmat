@@ -266,6 +266,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         // Extra fields for details modal
                         student_code: c.participants?.student_code || 'N/A',
                         organization: c.participants?.organization || 'N/A',
+                        birth_date: c.participants?.birth_date ? new Date(c.participants.birth_date).toLocaleDateString('vi-VN') : 'N/A',
                         points: c.points_earned
                     }));
                     setRecentCheckins(mapped);
@@ -365,10 +366,13 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 if (singleFaceDetected && facesLoadedRef.current && detections.length > 0) {
                     const descriptor = detections[0].descriptor;
                     if (descriptor) {
-                        const match = faceMatcher.findMatch(descriptor, sensitivity);
+                        // Get list of already checked-in users to filter out
+                        const alreadyCheckedInIds = Array.from(checkinCooldowns.keys());
+
+                        const match = faceMatcher.findMatch(descriptor, sensitivity, alreadyCheckedInIds);
                         currentMatch = match;
 
-                        // Check cooldown
+                        // Check cooldown (double check just in case)
                         if (match) {
                             const lastCheckin = checkinCooldowns.get(match.userId);
                             if (lastCheckin && Date.now() - lastCheckin < COOLDOWN_PERIOD) {
@@ -548,8 +552,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         setResult(null);
                         autoCheckInRef.current = false;
                         setLastFaceDetectedTime(null);
+                        setLastFaceDetectedTime(null);
                         setFaceStableTime(0);
-                    }, 2000);
+                    }, 3000);
                 } else {
                     // Quick reset if popup disabled
                     setNotification({ type: 'success', message: 'Check-in thành công!' });
@@ -558,7 +563,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         autoCheckInRef.current = false;
                         setLastFaceDetectedTime(null);
                         setFaceStableTime(0);
-                    }, 2000);
+                    }, 3000);
                 }
             } else {
                 // playSound('error');
@@ -1094,7 +1099,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             )}
 
                             <h3 className="text-2xl font-bold text-white mb-1">{selectedUser.name}</h3>
-                            <p className="text-indigo-300 font-medium mb-4">{selectedUser.student_code} • {selectedUser.organization}</p>
+                            <p className="text-indigo-300 font-medium mb-1">{selectedUser.student_code} • {selectedUser.organization}</p>
+                            <p className="text-slate-400 text-sm mb-4">{selectedUser.birth_date !== 'N/A' ? `NS: ${selectedUser.birth_date}` : ''}</p>
 
                             <div className="grid grid-cols-2 gap-3 mb-6">
                                 <div className="bg-slate-700/50 p-3 rounded-xl border border-slate-600">
