@@ -376,14 +376,34 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // Get box of the first face and update tracking state
                 if (primaryDetection && primaryDetection.detection) {
                     const box = primaryDetection.detection.box;
-                    const videoWidth = videoRef.current.videoWidth;
-                    const mirroredX = videoWidth - box.x - box.width;
+                    const videoEl = videoRef.current;
+
+                    // Get actual displayed dimensions to scale the box correctly
+                    const displayWidth = videoEl.clientWidth;
+                    const displayHeight = videoEl.clientHeight;
+                    const originalWidth = videoEl.videoWidth;
+                    const originalHeight = videoEl.videoHeight;
+
+                    // Calculate scale factors (prevent divide by zero)
+                    const scaleX = originalWidth > 0 ? displayWidth / originalWidth : 1;
+                    const scaleY = originalHeight > 0 ? displayHeight / originalHeight : 1;
+
+                    // Scale the box dimensions
+                    const scaledWidth = box.width * scaleX;
+                    const scaledHeight = box.height * scaleY;
+                    const scaledX = box.x * scaleX;
+                    const scaledY = box.y * scaleY;
+
+                    // Correctly mirror the X coordinate
+                    // Since the video is visually mirrored (scaleX(-1)), the "left" of the source is "right" of the screen.
+                    // Source X=0 (Left) -> Visual X=Width (Right)
+                    const mirroredX = displayWidth - scaledX - scaledWidth;
 
                     setFaceBox({
                         x: mirroredX,
-                        y: box.y,
-                        width: box.width,
-                        height: box.height
+                        y: scaledY,
+                        width: scaledWidth,
+                        height: scaledHeight
                     });
                 } else {
                     setFaceBox(null);
@@ -551,6 +571,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         }
 
         setIsProcessing(true);
+
+        // OPTIMISTIC UPDATE: Add to cooldown immediately to prevent double-submit loop from rapid frames
+        setCheckinCooldowns(prev => new Map(prev).set(checkInUserId, Date.now()));
+
         // DISABLED: No longer capturing image for check-in to save generic storage
         const capturedImage = undefined;
 
@@ -871,8 +895,14 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                 {/* Main Camera View - FULLSCREEN */}
                 <div className="w-full h-full relative bg-black overflow-hidden">
-                    {/* Video - FULLSCREEN with object-cover */}
-                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover bg-black" />
+                    {/* Video - FULLSCREEN with object-contain to match tracking coordinates */}
+                    <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="w-full h-full object-contain bg-black transform -scale-x-100"
+                    />
                     {/* Hidden canvas for image capture */}
                     <canvas ref={canvasRef} className="hidden" />
 
@@ -1230,7 +1260,14 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 )}
 
                                 <h3 className="text-2xl font-bold text-white mb-1">{selectedUser.name}</h3>
-                                <p className="text-indigo-300 font-medium mb-1">{selectedUser.student_code} • {selectedUser.organization}</p>
+                                {(selectedUser.student_code !== 'N/A' || selectedUser.organization !== 'N/A') && (
+                                    <p className="text-indigo-300 font-medium mb-1">
+                                        {[
+                                            selectedUser.student_code !== 'N/A' ? selectedUser.student_code : null,
+                                            selectedUser.organization !== 'N/A' ? selectedUser.organization : null
+                                        ].filter(Boolean).join(' • ')}
+                                    </p>
+                                )}
                                 <p className="text-slate-400 text-sm mb-4">{selectedUser.birth_date !== 'N/A' ? `NS: ${selectedUser.birth_date}` : ''}</p>
 
                                 <div className="grid grid-cols-2 gap-3 mb-6">

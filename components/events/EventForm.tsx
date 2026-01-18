@@ -561,13 +561,59 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Thời gian bắt đầu *</label>
-                                    <input type="datetime-local" required value={formData.start_time} onChange={(e) => setFormData({ ...formData, start_time: e.target.value })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Bắt đầu *</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="date"
+                                            required
+                                            value={formData.start_time ? formData.start_time.split('T')[0] : ''}
+                                            onChange={(e) => {
+                                                const date = e.target.value;
+                                                const time = formData.start_time && formData.start_time.includes('T') ? formData.start_time.split('T')[1] : '07:00';
+                                                setFormData({ ...formData, start_time: `${date}T${time}` });
+                                            }}
+                                            className="flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                        />
+                                        <input
+                                            type="time"
+                                            required
+                                            value={formData.start_time && formData.start_time.includes('T') ? formData.start_time.split('T')[1] : ''}
+                                            onChange={(e) => {
+                                                const time = e.target.value;
+                                                const date = formData.start_time ? formData.start_time.split('T')[0] : new Date().toISOString().split('T')[0];
+                                                setFormData({ ...formData, start_time: `${date}T${time}` });
+                                            }}
+                                            className="w-36 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-center"
+                                        />
+                                    </div>
                                 </div>
 
                                 <div>
-                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Thời gian kết thúc *</label>
-                                    <input type="datetime-local" required value={formData.end_time} onChange={(e) => setFormData({ ...formData, end_time: e.target.value })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                                    <label className="block text-xs font-black text-slate-400 uppercase mb-2">Kết thúc *</label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="date"
+                                            required
+                                            value={formData.end_time ? formData.end_time.split('T')[0] : ''}
+                                            onChange={(e) => {
+                                                const date = e.target.value;
+                                                const time = formData.end_time && formData.end_time.includes('T') ? formData.end_time.split('T')[1] : '17:00';
+                                                setFormData({ ...formData, end_time: `${date}T${time}` });
+                                            }}
+                                            className="flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                        />
+                                        <input
+                                            type="time"
+                                            required
+                                            value={formData.end_time && formData.end_time.includes('T') ? formData.end_time.split('T')[1] : ''}
+                                            onChange={(e) => {
+                                                const time = e.target.value;
+                                                const date = formData.end_time ? formData.end_time.split('T')[0] : new Date().toISOString().split('T')[0];
+                                                setFormData({ ...formData, end_time: `${date}T${time}` });
+                                            }}
+                                            className="w-36 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-center"
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
