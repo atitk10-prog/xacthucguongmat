@@ -96,13 +96,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     const [result, setResult] = useState<CheckinResult | null>(null);
     const [cameraError, setCameraError] = useState<string | null>(null);
     const [faceDetected, setFaceDetected] = useState(false);
+    const faceDetectedRef = useRef(false); // Ref for stale closure fix
+    const [lastFaceDetectedTime, setLastFaceDetectedTime] = useState<number | null>(null);
+    const lastFaceDetectedTimeRef = useRef<number | null>(null); // Ref for stale closure fix
     const [recentCheckins, setRecentCheckins] = useState<Array<{ name: string; time: string; image?: string; status: string }>>([]);
+    const [sensitivity, setSensitivity] = useState(35); // Default 35%
 
     // New states for improvements
     const [autoCheckInMode, setAutoCheckInMode] = useState(true);
     const [faceStableTime, setFaceStableTime] = useState(0);
     const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
-    const [lastFaceDetectedTime, setLastFaceDetectedTime] = useState<number | null>(null);
+    // lastFaceDetectedTime removed (duplicate)
     const [multipleFaces, setMultipleFaces] = useState(false);
     const autoCheckInRef = useRef<boolean>(false);
 
@@ -129,6 +133,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         };
         loadModels();
     }, [event?.require_face]);
+
+    // Initialize sensitivity from event settings
+    useEffect(() => {
+        if (event?.face_threshold) {
+            // Auto-fix: If threshold is set to old default 60% or high, lower it to 40% for better UX
+            let threshold = event.face_threshold;
+            if (threshold >= 60) threshold = 40;
+            // If it's very low, keep it (e.g. 35)
+            setSensitivity(threshold);
+        }
+    }, [event]);
 
     // Load event participants and their face descriptors
     useEffect(() => {
@@ -252,12 +267,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // Only accept exactly 1 face for check-in
                 const singleFaceDetected = faceCount === 1;
 
-                if (singleFaceDetected && !faceDetected) {
-                    // First time detecting single face - NO sound here (only on check-in success)
-                    setLastFaceDetectedTime(Date.now());
+                if (singleFaceDetected && !faceDetectedRef.current) {
+                    // First time detecting single face
+                    const now = Date.now();
+                    setLastFaceDetectedTime(now);
+                    lastFaceDetectedTimeRef.current = now;
                 }
 
                 setFaceDetected(singleFaceDetected);
+                faceDetectedRef.current = singleFaceDetected;
+
+                // Try to recognize person if faces are loaded
 
                 // Try to recognize person if faces are loaded
                 let currentMatch: { userId: string; name: string; confidence: number } | null = null;
@@ -265,10 +285,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 if (singleFaceDetected && facesLoaded && detections.length > 0) {
                     const descriptor = detections[0].descriptor;
                     if (descriptor) {
-                        // Use event threshold or default 35%. 
-                        // Auto-fix: If threshold is set to old default 60%, lower it to 40% for better UX
-                        let threshold = event?.face_threshold || 35;
-                        if (threshold >= 60) threshold = 40;
+                        // Use local sensitivity state slider
+                        const threshold = sensitivity;
                         const registeredCount = faceMatcher.getCount();
                         const match = faceMatcher.findMatch(descriptor, threshold);
                         currentMatch = match;
@@ -293,9 +311,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 const canAutoCheckin = singleFaceDetected && (facesLoaded ? hasMatch : true);
 
                 if (canAutoCheckin && autoCheckInMode && !isProcessing && !result && !autoCheckInRef.current) {
-                    // Check-in instantly when face is recognized (reduced from 1500ms to 500ms)
-                    if (hasMatch && lastFaceDetectedTime) {
-                        const stableMs = Date.now() - lastFaceDetectedTime;
+                    // Check-in instantly when face is recognized
+                    const lastTime = lastFaceDetectedTimeRef.current;
+
+                    if (hasMatch && lastTime) {
+                        const stableMs = Date.now() - lastTime;
                         setFaceStableTime(Math.min(stableMs, 500));
 
                         // Only 500ms delay for face match - much faster!
@@ -304,9 +324,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             autoCheckInRef.current = true;
                             handleCheckIn();
                         }
-                    } else if (!facesLoaded && lastFaceDetectedTime) {
+                    } else if (!facesLoaded && lastTime) {
                         // For non-face events, keep original 1500ms
-                        const stableMs = Date.now() - lastFaceDetectedTime;
+                        const stableMs = Date.now() - lastTime;
                         setFaceStableTime(Math.min(stableMs, 1500));
                         if (stableMs >= 1500) {
                             autoCheckInRef.current = true;
@@ -315,6 +335,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     }
                 } else if (!singleFaceDetected) {
                     setLastFaceDetectedTime(null);
+                    lastFaceDetectedTimeRef.current = null;
                     setFaceStableTime(0);
                     setRecognizedPerson(null);
                 }
@@ -600,172 +621,208 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         </button>
 
                         {event && (
-                            <div className="bg-white/10 backdrop-blur-md px-4 py-2 rounded-xl">
+                            <div className="bg-white/10 backdrop-blur-md px-3 py-1 rounded-xl flex items-center gap-2">
                                 <p className="text-white text-sm font-bold">{event.name}</p>
+                                <span className="text-white/50 text-xs">|</span>
+                                <span className="text-white/90 text-xs font-medium">{sensitivity}% độ nhạy</span>
                             </div>
                         )}
                     </div>
                 </div>
 
-                {/* Video - object-contain to show full view without zoom/crop */}
-                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-contain scale-x-[-1] bg-black" />
-                <canvas ref={canvasRef} className="hidden" />
-
-                {/* Face Frame with progress */}
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <div className="relative">
-                        <div className={`w-72 h-80 border-4 rounded-[2.5rem] transition-all duration-300 ${isProcessing ? 'border-indigo-500 scale-105 animate-pulse' :
-                            faceDetected ? 'border-emerald-400 shadow-[0_0_60px_rgba(52,211,153,0.3)]' : 'border-white/40'
-                            }`}>
-                            <div className={`absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 rounded-tl-3xl transition-colors ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
-                            <div className={`absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 rounded-tr-3xl transition-colors ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
-                            <div className={`absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 rounded-bl-3xl transition-colors ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
-                            <div className={`absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 rounded-br-3xl transition-colors ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
-                        </div>
-
-                        {/* Auto check-in progress bar */}
-                        {autoCheckInMode && faceDetected && faceStableTime > 0 && !isProcessing && !result && (
-                            <div className="absolute -bottom-8 left-0 right-0">
-                                <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
-                                    <div
-                                        className="h-full bg-gradient-to-r from-emerald-400 to-teal-400 rounded-full transition-all duration-150"
-                                        style={{ width: `${Math.min((faceStableTime / 1500) * 100, 100)}%` }}
-                                    />
-                                </div>
-                                <p className="text-center text-white/70 text-xs mt-1">
-                                    Giữ yên để check-in...
-                                </p>
-                            </div>
-                        )}
-
-                        {/* Processing indicator */}
-                        {isProcessing && (
-                            <div className="absolute -bottom-8 left-0 right-0">
-                                <div className="flex items-center justify-center gap-2 text-indigo-400">
-                                    <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
-                                    <span className="text-sm font-medium">Đang xử lý...</span>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                {/* Status badges */}
-                <div className="absolute top-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
-                    <div className={`px-5 py-2 rounded-full backdrop-blur-md text-white text-sm font-bold shadow-lg ${event?.require_face ? 'bg-indigo-600/80' : 'bg-emerald-600/80'
-                        }`}>
-                        {event?.require_face ? (
-                            <span className="flex items-center gap-2">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                                </svg>
-                                Xác nhận khuôn mặt
+                {/* Sensitivity Slider Control - Absolute positioned at bottom center */}
+                <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-20 w-64 md:w-80">
+                    <div className="bg-black/40 backdrop-blur-md rounded-2xl p-4 border border-white/10 shadow-lg">
+                        <div className="flex justify-between items-center mb-2">
+                            <label className="text-white/90 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+                                <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
+                                Độ nhạy nhận diện
+                            </label>
+                            <span className={`text-sm font-bold ${sensitivity < 35 ? 'text-green-400' : (sensitivity > 50 ? 'text-amber-400' : 'text-blue-400')}`}>
+                                {sensitivity}%
                             </span>
-                        ) : 'Check-in nhanh'}
+                        </div>
+                        <input
+                            type="range"
+                            min="20"
+                            max="80"
+                            step="5"
+                            value={sensitivity}
+                            onChange={(e) => setSensitivity(parseInt(e.target.value))}
+                            className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400"
+                        />
+                        <div className="flex justify-between mt-1 text-[10px] text-white/40 font-medium">
+                            <span>Dễ (20%)</span>
+                            <span>Chuẩn (35-45%)</span>
+                            <span>Khắt khe (80%)</span>
+                        </div>
                     </div>
-
-                    {isLoadingModels && (
-                        <div className="px-4 py-2 bg-amber-500/80 backdrop-blur-md rounded-full text-white text-xs font-bold animate-pulse flex items-center gap-2">
-                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            Đang tải AI...
-                        </div>
-                    )}
-
-                    {modelsReady && event?.require_face && (
-                        <div className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 transition-all ${multipleFaces ? 'bg-red-500/90 text-white animate-pulse' :
-                            faceDetected ? 'bg-emerald-500/80 text-white scale-105' : 'bg-orange-500/80 text-white'
-                            }`}>
-                            {multipleFaces ? (
-                                <>
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                                    </svg>
-                                    Chỉ 1 người trong khung hình!
-                                </>
-                            ) : faceDetected ? (
-                                <>
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                                    </svg>
-                                    Đã nhận diện khuôn mặt
-                                </>
-                            ) : (
-                                <>
-                                    <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                                    </svg>
-                                    Đưa khuôn mặt vào khung
-                                </>
-                            )}
-                        </div>
-                    )}
-
-                    {/* Recognized Person Badge */}
-                    {recognizedPerson && faceDetected && !isProcessing && (
-                        <div className="px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl text-white shadow-lg animate-scale-in">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                                    </svg>
-                                </div>
-                                <div>
-                                    <p className="font-black text-lg">{recognizedPerson.name}</p>
-                                    <p className="text-white/70 text-xs">Độ chính xác: {Math.round(recognizedPerson.confidence)}%</p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* No match warning */}
-                    {faceDetected && facesLoaded && !recognizedPerson && !isProcessing && (
-                        <div className="px-4 py-2 bg-amber-500/90 rounded-full text-white text-xs font-bold flex items-center gap-2">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                            </svg>
-                            Không nhận ra - không có trong danh sách sự kiện
-                        </div>
-                    )}
-
-                    {/* Loading faces indicator */}
-                    {loadingFaces && (
-                        <div className="px-4 py-2 bg-indigo-500/80 rounded-full text-white text-xs font-bold flex items-center gap-2">
-                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            Đang tải ảnh người tham gia...
-                        </div>
-                    )}
                 </div>
 
-                {/* Manual Check-in Button (when auto mode is off) */}
-                {!autoCheckInMode && (
-                    <div className="absolute bottom-8 left-1/2 -translate-x-1/2">
-                        <button
-                            onClick={handleCheckIn}
-                            disabled={isProcessing || (event?.require_face && !faceDetected)}
-                            className={`px-12 py-5 rounded-2xl font-bold text-xl shadow-2xl transition-all transform ${isProcessing
-                                ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
-                                : faceDetected || !event?.require_face
-                                    ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:scale-105 hover:shadow-emerald-500/50'
-                                    : 'bg-slate-700 text-slate-400 cursor-not-allowed'
-                                }`}
-                        >
-                            {isProcessing ? (
-                                <span className="flex items-center gap-3">
-                                    <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin" />
-                                    Đang xử lý...
-                                </span>
-                            ) : (
-                                <span className="flex items-center gap-3">
-                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                    </svg>
-                                    CHECK-IN NGAY
-                                </span>
+                {/* Main Camera View */}
+                <div className="w-full h-full relative bg-black overflow-hidden group">
+                    {/* Video - object-contain to show full view without zoom/crop */}
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-contain scale-x-[-1] bg-black" />
+                    <canvas ref={canvasRef} className="hidden" />
+
+                    {/* Face Frame with progress */}
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <div className="relative">
+                            <div className={`w-72 h-80 border-4 rounded-[2.5rem] transition-all duration-300 ${isProcessing ? 'border-indigo-500 scale-105 animate-pulse' :
+                                faceDetected ? 'border-emerald-400 shadow-[0_0_60px_rgba(52,211,153,0.3)]' : 'border-white/40'
+                                }`}>
+                                <div className={`absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 rounded-tl-3xl transition-colors ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
+                                <div className={`absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 rounded-tr-3xl transition-colors ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
+                                <div className={`absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 rounded-bl-3xl transition-colors ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
+                                <div className={`absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 rounded-br-3xl transition-colors ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
+                            </div>
+
+                            {/* Auto check-in progress bar */}
+                            {autoCheckInMode && faceDetected && faceStableTime > 0 && !isProcessing && !result && (
+                                <div className="absolute -bottom-8 left-0 right-0">
+                                    <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full bg-gradient-to-r from-emerald-400 to-teal-400 rounded-full transition-all duration-150"
+                                            style={{ width: `${Math.min((faceStableTime / 1500) * 100, 100)}%` }}
+                                        />
+                                    </div>
+                                    <p className="text-center text-white/70 text-xs mt-1">
+                                        Giữ yên để check-in...
+                                    </p>
+                                </div>
                             )}
-                        </button>
+
+                            {/* Processing indicator */}
+                            {isProcessing && (
+                                <div className="absolute -bottom-8 left-0 right-0">
+                                    <div className="flex items-center justify-center gap-2 text-indigo-400">
+                                        <div className="w-4 h-4 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin" />
+                                        <span className="text-sm font-medium">Đang xử lý...</span>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
                     </div>
-                )}
+
+                    {/* Status badges */}
+                    <div className="absolute top-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
+                        <div className={`px-5 py-2 rounded-full backdrop-blur-md text-white text-sm font-bold shadow-lg ${event?.require_face ? 'bg-indigo-600/80' : 'bg-emerald-600/80'
+                            }`}>
+                            {event?.require_face ? (
+                                <span className="flex items-center gap-2">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                                    </svg>
+                                    Xác nhận khuôn mặt
+                                </span>
+                            ) : 'Check-in nhanh'}
+                        </div>
+
+                        {isLoadingModels && (
+                            <div className="px-4 py-2 bg-amber-500/80 backdrop-blur-md rounded-full text-white text-xs font-bold animate-pulse flex items-center gap-2">
+                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                Đang tải AI...
+                            </div>
+                        )}
+
+                        {modelsReady && event?.require_face && (
+                            <div className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 transition-all ${multipleFaces ? 'bg-red-500/90 text-white animate-pulse' :
+                                faceDetected ? 'bg-emerald-500/80 text-white scale-105' : 'bg-orange-500/80 text-white'
+                                }`}>
+                                {multipleFaces ? (
+                                    <>
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                        </svg>
+                                        Chỉ 1 người trong khung hình!
+                                    </>
+                                ) : faceDetected ? (
+                                    <>
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                        </svg>
+                                        Đã nhận diện khuôn mặt
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                        Đưa khuôn mặt vào khung
+                                    </>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Recognized Person Badge */}
+                        {recognizedPerson && faceDetected && !isProcessing && (
+                            <div className="px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl text-white shadow-lg animate-scale-in">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
+                                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                                        </svg>
+                                    </div>
+                                    <div>
+                                        <p className="font-black text-lg">{recognizedPerson.name}</p>
+                                        <p className="text-white/70 text-xs">Độ chính xác: {Math.round(recognizedPerson.confidence)}%</p>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        {/* No match warning */}
+                        {faceDetected && facesLoaded && !recognizedPerson && !isProcessing && (
+                            <div className="px-4 py-2 bg-amber-500/90 rounded-full text-white text-xs font-bold flex items-center gap-2">
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                                </svg>
+                                Không nhận ra - không có trong danh sách sự kiện
+                            </div>
+                        )}
+
+                        {/* Loading faces indicator */}
+                        {loadingFaces && (
+                            <div className="px-4 py-2 bg-indigo-500/80 rounded-full text-white text-xs font-bold flex items-center gap-2">
+                                <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                                Đang tải ảnh người tham gia...
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Manual Check-in Button (when auto mode is off) */}
+                    {
+                        !autoCheckInMode && (
+                            <div className="absolute bottom-8 left-1/2 -translate-x-1/2">
+                                <button
+                                    onClick={handleCheckIn}
+                                    disabled={isProcessing || (event?.require_face && !faceDetected)}
+                                    className={`px-12 py-5 rounded-2xl font-bold text-xl shadow-2xl transition-all transform ${isProcessing
+                                        ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                                        : faceDetected || !event?.require_face
+                                            ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:scale-105 hover:shadow-emerald-500/50'
+                                            : 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                                        }`}
+                                >
+                                    {isProcessing ? (
+                                        <span className="flex items-center gap-3">
+                                            <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin" />
+                                            Đang xử lý...
+                                        </span>
+                                    ) : (
+                                        <span className="flex items-center gap-3">
+                                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                            </svg>
+                                            CHECK-IN NGAY
+                                        </span>
+                                    )}
+                                </button>
+                            </div>
+                        )
+                    }
+                </div>
             </div>
 
             {/* Right Side - Info Panel */}
@@ -851,7 +908,6 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     </div>
                 </div>
             </div>
-
             {/* CSS Animations */}
             <style>{`
                 @keyframes fade-in {

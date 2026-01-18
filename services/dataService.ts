@@ -174,7 +174,8 @@ async function getMe(): Promise<ApiResponse<User>> {
 // =====================================================
 async function getUsers(filters?: { role?: string; status?: string }): Promise<ApiResponse<User[]>> {
     try {
-        let query = supabase.from('users').select('*');
+        // Select only necessary fields for faster loading
+        let query = supabase.from('users').select('id, full_name, email, role, avatar_url, status, created_at');
 
         if (filters?.role) {
             query = query.eq('role', filters.role);
@@ -448,7 +449,7 @@ async function getEventParticipants(eventId: string): Promise<ApiResponse<EventP
     try {
         const { data, error } = await supabase
             .from('event_participants')
-            .select('*')
+            .select('id, event_id, full_name, avatar_url, birth_date, organization') // Select only necessary columns
             .eq('event_id', eventId)
             .order('full_name', { ascending: true });
 
