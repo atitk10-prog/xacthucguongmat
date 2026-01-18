@@ -100,10 +100,16 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     const [lastFaceDetectedTime, setLastFaceDetectedTime] = useState<number | null>(null);
     const lastFaceDetectedTimeRef = useRef<number | null>(null); // Ref for stale closure fix
     const [recentCheckins, setRecentCheckins] = useState<Array<{ name: string; time: string; image?: string; status: string }>>([]);
+
+    // Check-in cooldown map (userId -> timestamp)
+    const [checkinCooldowns, setCheckinCooldowns] = useState<Map<string, number>>(new Map());
+    const COOLDOWN_PERIOD = 60000; // 60 seconds cooldown
     const [sensitivity, setSensitivity] = useState(35); // Default 35%
 
     // New states for improvements
     const [autoCheckInMode, setAutoCheckInMode] = useState(true);
+    const [checkinMode, setCheckinMode] = useState<'student' | 'event'>('student'); // 'student' (points) or 'event' (no points)
+    const [enableSuccessPopup, setEnableSuccessPopup] = useState(true);
     const [faceStableTime, setFaceStableTime] = useState(0);
     const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
     // lastFaceDetectedTime removed (duplicate)
@@ -219,8 +225,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 const mediaStream = await navigator.mediaDevices.getUserMedia({
                     video: {
                         facingMode: 'user',
-                        width: { ideal: 1920, min: 640 },
-                        height: { ideal: 1080, min: 480 }
+                        width: { ideal: 1280 }, // Lower resolution to prevent zoom/crop on some devices
+                        height: { ideal: 720 }
                     }
                 });
                 setStream(mediaStream);
@@ -278,39 +284,58 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 faceDetectedRef.current = singleFaceDetected;
 
                 // Try to recognize person if faces are loaded
-
-                // Try to recognize person if faces are loaded
                 let currentMatch: { userId: string; name: string; confidence: number } | null = null;
+                let isAlreadyCheckedIn = false;
 
                 if (singleFaceDetected && facesLoaded && detections.length > 0) {
                     const descriptor = detections[0].descriptor;
                     if (descriptor) {
                         // Use local sensitivity state slider
                         const threshold = sensitivity;
-                        const registeredCount = faceMatcher.getCount();
                         const match = faceMatcher.findMatch(descriptor, threshold);
                         currentMatch = match;
 
-                        if (!match && registeredCount > 0) {
-                            // Debug: no match found
-                            console.log(`🔍 No match found (threshold: ${threshold}%, registered: ${registeredCount} faces)`);
+                        // Check cooldown
+                        if (match) {
+                            const lastCheckin = checkinCooldowns.get(match.userId);
+                            if (lastCheckin && Date.now() - lastCheckin < COOLDOWN_PERIOD) {
+                                isAlreadyCheckedIn = true;
+                            }
                         }
 
+                        // Throttle state updates to prevent UI jumping
+                        // Only update if person changed or confidence changed significantly (>5%)
                         if (match) {
-                            setRecognizedPerson({ id: match.userId, name: match.name, confidence: match.confidence });
+                            const prev = recognizedPersonRef.current;
+                            if (!prev || prev.id !== match.userId || Math.abs(prev.confidence - match.confidence) > 5) {
+                                setRecognizedPerson({ id: match.userId, name: match.name, confidence: match.confidence });
+                            }
                         } else {
-                            setRecognizedPerson(null);
+                            if (recognizedPersonRef.current !== null) {
+                                setRecognizedPerson(null);
+                            }
                         }
                     }
                 } else {
-                    setRecognizedPerson(null);
+                    if (recognizedPersonRef.current !== null) {
+                        setRecognizedPerson(null);
+                    }
                 }
 
-                // Auto check-in logic - INSTANT when face recognized
+                // Auto check-in logic
                 const hasMatch = currentMatch !== null;
                 const canAutoCheckin = singleFaceDetected && (facesLoaded ? hasMatch : true);
 
-                if (canAutoCheckin && autoCheckInMode && !isProcessing && !result && !autoCheckInRef.current) {
+                // If already checked in within cooldown, show visual feedback but DON'T check in again
+                if (isAlreadyCheckedIn && hasMatch && !result) {
+                    // Optionally show a "Checked in" badge on the face box (can be added in render)
+                    if (!result) {
+                        // Maybe just log for now, or we can use a small toast?
+                        // For now, prevent auto check-in
+                    }
+                }
+
+                if (canAutoCheckin && autoCheckInMode && !isProcessing && !result && !autoCheckInRef.current && !isAlreadyCheckedIn) {
                     // Check-in instantly when face is recognized
                     const lastTime = lastFaceDetectedTimeRef.current;
 
@@ -318,17 +343,16 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         const stableMs = Date.now() - lastTime;
                         setFaceStableTime(Math.min(stableMs, 500));
 
-                        // Only 500ms delay for face match - much faster!
                         if (stableMs >= 500) {
-                            console.log('🚀 INSTANT Check-in for:', currentMatch?.name, 'confidence:', currentMatch?.confidence);
+                            console.log('🚀 INSTANT Check-in for:', currentMatch?.name);
                             autoCheckInRef.current = true;
                             handleCheckIn();
                         }
                     } else if (!facesLoaded && lastTime) {
-                        // For non-face events, keep original 1500ms
+                        // Non-face event
                         const stableMs = Date.now() - lastTime;
-                        setFaceStableTime(Math.min(stableMs, 1500));
-                        if (stableMs >= 1500) {
+                        setFaceStableTime(Math.min(stableMs, 1000)); // Reduced from 1500
+                        if (stableMs >= 1000) {
                             autoCheckInRef.current = true;
                             handleCheckIn();
                         }
@@ -345,7 +369,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
             setTimeout(() => {
                 animationId = requestAnimationFrame(detectLoop);
-            }, 150);
+            }, 100); // 100ms throttle for loop
         };
 
         detectLoop();
@@ -430,7 +454,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 event_id: event.id,
                 user_id: checkInUserId,
                 face_confidence: faceConfidence,
-                face_verified: faceVerified || !event.require_face
+                face_verified: faceVerified || !event.require_face,
+                checkin_mode: checkinMode
             });
 
             if (checkinResult.success && checkinResult.data) {
@@ -443,25 +468,27 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     userName: checkInUserName
                 });
 
-                // Show fullscreen success overlay
-                setShowSuccessOverlay(true);
-
-                // Add to recent checkins
-                setRecentCheckins(prev => [{
-                    name: checkInUserName,
-                    time: new Date().toLocaleTimeString('vi-VN'),
-                    image: capturedImage || undefined,
-                    status: checkinResult.data?.checkin.status || 'on_time'
-                }, ...prev.slice(0, 4)]);
-
-                // Auto hide success overlay after 4 seconds
-                setTimeout(() => {
-                    setShowSuccessOverlay(false);
-                    setResult(null);
-                    autoCheckInRef.current = false;
-                    setLastFaceDetectedTime(null);
-                    setFaceStableTime(0);
-                }, 4000);
+                // Show fullscreen success overlay if enabled
+                if (enableSuccessPopup) {
+                    setShowSuccessOverlay(true);
+                    // Auto hide success overlay after 2 seconds (faster)
+                    setTimeout(() => {
+                        setShowSuccessOverlay(false);
+                        setResult(null);
+                        autoCheckInRef.current = false;
+                        setLastFaceDetectedTime(null);
+                        setFaceStableTime(0);
+                    }, 2000);
+                } else {
+                    // If popup disabled, just show a quick toast/badge via result and reset correctly
+                    // We rely on the result state being set locally, but we need to auto-clear it to allow next checkin
+                    setTimeout(() => {
+                        setResult(null);
+                        autoCheckInRef.current = false;
+                        setLastFaceDetectedTime(null);
+                        setFaceStableTime(0);
+                    }, 2000);
+                }
             } else {
                 playSound('error');
                 // Check for already checked-in message
@@ -659,6 +686,42 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     </div>
                 </div>
 
+                {/* Advanced Settings Controls - Bottom Right */}
+                <div className="absolute bottom-6 right-6 z-20 flex flex-col gap-2">
+                    {/* Check-in Mode Toggle */}
+                    <div className="bg-black/40 backdrop-blur-md rounded-xl p-2 border border-white/10 shadow-lg cursor-pointer hover:bg-black/50 transition-colors"
+                        onClick={() => setCheckinMode(prev => prev === 'student' ? 'event' : 'student')}
+                    >
+                        <p className="text-[10px] text-white/50 font-bold uppercase mb-1 px-1">Chế độ</p>
+                        <div className="flex items-center gap-2">
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${checkinMode === 'student' ? 'bg-indigo-500 text-white' : 'bg-white/10 text-white/40'}`}>
+                                <span className="text-lg">🎓</span>
+                            </div>
+                            <div className="pr-2">
+                                <p className={`text-sm font-bold ${checkinMode === 'student' ? 'text-white' : 'text-white/60'}`}>Học sinh</p>
+                                <p className="text-[10px] text-white/40">{checkinMode === 'student' ? 'Tính điểm' : 'Không điểm'}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Popup Toggle */}
+                    <div className="bg-black/40 backdrop-blur-md rounded-xl p-2 border border-white/10 shadow-lg cursor-pointer hover:bg-black/50 transition-colors"
+                        onClick={() => setEnableSuccessPopup(prev => !prev)}
+                    >
+                        <div className="flex items-center justify-between gap-3">
+                            <div>
+                                <p className="text-[10px] text-white/50 font-bold uppercase mb-0.5 px-1">Popup</p>
+                                <p className={`text-sm font-bold px-1 ${enableSuccessPopup ? 'text-emerald-400' : 'text-white/40'}`}>
+                                    {enableSuccessPopup ? 'Bật' : 'Tắt'}
+                                </p>
+                            </div>
+                            <div className={`w-10 h-6 rounded-full p-1 transition-colors ${enableSuccessPopup ? 'bg-emerald-500' : 'bg-white/20'}`}>
+                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${enableSuccessPopup ? 'translate-x-4' : 'translate-x-0'}`} />
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 {/* Main Camera View */}
                 <div className="w-full h-full relative bg-black overflow-hidden group">
                     {/* Video - object-contain to show full view without zoom/crop */}
@@ -780,7 +843,19 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 </svg>
                                 Không nhận ra - không có trong danh sách sự kiện
                             </div>
+
                         )}
+
+                        {/* Already Checked-in Warning */}
+                        {faceDetected && facesLoaded && recognizedPerson && checkinCooldowns.has(recognizedPerson.id) &&
+                            (Date.now() - (checkinCooldowns.get(recognizedPerson.id) || 0) < COOLDOWN_PERIOD) && (
+                                <div className="px-4 py-2 bg-emerald-500/90 rounded-full text-white text-xs font-bold flex items-center gap-2 animate-bounce-once">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    </svg>
+                                    Đã check-in! Vui lòng rời khỏi camera
+                                </div>
+                            )}
 
                         {/* Loading faces indicator */}
                         {loadingFaces && (
@@ -941,7 +1016,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 .animate-shrink { animation: shrink 4s linear forwards; }
                 .animate-slide-in { animation: slide-in 0.3s ease-out; }
             `}</style>
-        </div>
+        </div >
     );
 };
 

@@ -344,11 +344,14 @@ async function deleteEvent(id: string): Promise<ApiResponse<void>> {
 // =====================================================
 // CHECK-IN API
 // =====================================================
+
+
 async function checkin(data: {
     event_id: string;
     user_id: string;
     face_confidence?: number;
     face_verified?: boolean;
+    checkin_mode?: 'student' | 'event'; // New parameter
 }): Promise<ApiResponse<{ checkin: EventCheckin; event: Event }>> {
     try {
         // Get event first
@@ -381,9 +384,14 @@ async function checkin(data: {
         const diffMinutes = (checkinTime.getTime() - eventStartTime.getTime()) / (1000 * 60);
 
         const status = diffMinutes > lateThreshold ? 'late' : 'on_time';
-        const points = status === 'on_time'
-            ? (event.points_on_time || 10)
-            : (event.points_late || -5);
+
+        // Calculate points based on mode
+        let points = 0;
+        if (data.checkin_mode !== 'event') {
+            points = status === 'on_time'
+                ? (event.points_on_time || 10)
+                : (event.points_late || -5);
+        }
 
         // Create checkin
         const { data: newCheckin, error: checkinError } = await supabase
@@ -407,9 +415,9 @@ async function checkin(data: {
         return {
             success: true,
             data: { checkin: newCheckin as EventCheckin, event: event as Event },
-            message: status === 'on_time'
-                ? `Check-in đúng giờ! +${points} điểm`
-                : `Check-in muộn. ${points} điểm`
+            message: data.checkin_mode === 'event'
+                ? 'Check-in thành công!'
+                : (status === 'on_time' ? `Check-in đúng giờ! +${points} điểm` : `Check-in muộn. ${points} điểm`)
         };
     } catch (err) {
         return { success: false, error: 'Lỗi check-in' };
@@ -855,44 +863,58 @@ interface EventReport {
 
 async function getEventReport(eventId: string): Promise<ApiResponse<EventReport>> {
     try {
-        // Get event
-        const { data: event, error: eventError } = await supabase
-            .from('events')
-            .select('*')
-            .eq('id', eventId)
-            .single();
+        // Optimize: Fetch everything in parallel
+        const [eventRes, participantsRes, checkinsRes] = await Promise.all([
+            // 1. Get Event Details
+            supabase.from('events').select('*').eq('id', eventId).single(),
 
-        if (eventError) return { success: false, error: eventError.message };
+            // 2. Get Participants (Lightweight)
+            supabase.from('event_participants').select('id, full_name, organization').eq('event_id', eventId),
 
-        // Get participants
-        const { data: participants } = await supabase
-            .from('event_participants')
-            .select('*')
-            .eq('event_id', eventId);
+            // 3. Get Checkins with joined participant data (if View exists, use View, else Join)
+            // For now, allow client-side join to be safe if SQL view script isn't run, 
+            // but fetch ONLY needed columns
+            supabase.from('checkins')
+                .select('id, participant_id, checkin_time, status, points_earned')
+                .eq('event_id', eventId)
+        ]);
 
-        // Get checkins
-        const { data: checkins } = await supabase
-            .from('checkins')
-            .select('*')
-            .eq('event_id', eventId);
+        if (eventRes.error) return { success: false, error: eventRes.error.message };
 
-        const checkinData = checkins || [];
-        const onTimeCount = checkinData.filter(c => c.status === 'on_time').length;
-        const lateCount = checkinData.filter(c => c.status === 'late').length;
+        const event = eventRes.data as Event;
+        const participants = (participantsRes.data || []) as any[];
+        const rawCheckins = (checkinsRes.data || []) as any[];
+
+        // Create a fast lookup map for participants
+        const participantMap = new Map(participants.map(p => [p.id, p]));
+
+        // Enrich checkins with participant data
+        const checkins: Checkin[] = rawCheckins.map(c => {
+            const p = participantMap.get(c.participant_id);
+            return {
+                ...c,
+                user_name: p?.full_name,
+                class_id: p?.organization
+            };
+        });
+
+        const onTimeCount = checkins.filter(c => c.status === 'on_time').length;
+        const lateCount = checkins.filter(c => c.status === 'late').length;
 
         return {
             success: true,
             data: {
-                event: event as Event,
-                totalParticipants: (participants || []).length,
-                totalCheckins: checkinData.length,
+                event: event,
+                totalParticipants: participants.length,
+                totalCheckins: checkins.length,
                 onTimeCount,
                 lateCount,
-                absentCount: (participants || []).length - checkinData.length,
-                checkins: checkinData as Checkin[]
+                absentCount: participants.length - checkins.length,
+                checkins: checkins
             }
         };
     } catch (err) {
+        console.error('Report Error:', err);
         return { success: false, error: 'Lỗi tải báo cáo sự kiện' };
     }
 }

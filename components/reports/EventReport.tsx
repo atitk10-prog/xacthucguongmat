@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../../services/dataService';
 import { Event, EventCheckin } from '../../types';
+import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
+import * as XLSX from 'xlsx';
 
 interface EventReportProps {
     eventId?: string;
@@ -25,6 +27,8 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
     const [selectedEventId, setSelectedEventId] = useState<string>(eventId || '');
     const [reportData, setReportData] = useState<EventReportData | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [activeTab, setActiveTab] = useState<'overview' | 'list'>('overview');
+    const [filterClass, setFilterClass] = useState<string>('all');
 
     useEffect(() => {
         loadEvents();
@@ -55,7 +59,27 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
         try {
             const result = await dataService.getEventReport(eventId);
             if (result.success && result.data) {
-                setReportData(result.data as EventReportData);
+                const apiData = result.data;
+                // Calculate attendance rate locally since API doesn't return it directly in correct math format sometimes
+                // or just to be safe and match the interface
+                const totalParticipants = apiData.totalParticipants;
+                const totalCheckins = apiData.totalCheckins;
+                const attendanceRate = totalParticipants > 0
+                    ? Math.round((totalCheckins / totalParticipants) * 100)
+                    : 0;
+
+                setReportData({
+                    event: apiData.event,
+                    stats: {
+                        total_expected: totalParticipants,
+                        total_checkins: totalCheckins,
+                        on_time: apiData.onTimeCount,
+                        late: apiData.lateCount,
+                        absent: apiData.absentCount,
+                        attendance_rate: attendanceRate
+                    },
+                    checkins: apiData.checkins
+                });
             }
         } catch (error) {
             console.error('Failed to load report:', error);
@@ -64,27 +88,67 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
         }
     };
 
-    const exportToCSV = () => {
+    const exportToExcel = () => {
         if (!reportData) return;
 
-        const headers = ['STT', 'Họ tên', 'Lớp', 'Thời gian check-in', 'Trạng thái', 'Điểm'];
-        const rows = reportData.checkins.map((checkin, index) => [
-            index + 1,
-            checkin.user_name || checkin.user_id,
-            checkin.class_id || '',
-            new Date(checkin.checkin_time).toLocaleString('vi-VN'),
-            checkin.status === 'on_time' ? 'Đúng giờ' : checkin.status === 'late' ? 'Muộn' : 'Vắng',
-            checkin.points_earned
-        ]);
+        // Sheet 1: Overview
+        const overviewData = [
+            ['BÁO CÁO SỰ KIỆN', reportData.event.name],
+            ['Thời gian tổ chức', new Date(reportData.event.start_time).toLocaleString('vi-VN')],
+            ['Địa điểm', reportData.event.location || 'N/A'],
+            [''],
+            ['THỐNG KÊ TỔNG QUAN', ''],
+            ['Tổng số người dự kiến', reportData.stats.total_expected],
+            ['Tổng số đã check-in', reportData.stats.total_checkins],
+            ['Đúng giờ', reportData.stats.on_time],
+            ['Đi muộn', reportData.stats.late],
+            ['Vắng mặt', reportData.stats.absent],
+            ['Tỷ lệ tham gia', `${reportData.stats.attendance_rate}%`]
+        ];
+        const wsOverview = XLSX.utils.aoa_to_sheet(overviewData);
 
-        const csvContent = [headers, ...rows].map(row => row.join(',')).join('\n');
-        const blob = new Blob(['\ufeff' + csvContent], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = `bao_cao_${reportData.event.name}_${new Date().toISOString().split('T')[0]}.csv`;
-        link.click();
+        // Sheet 2: Detailed Check-in List
+        const checkinRows = reportData.checkins.map((checkin, index) => ({
+            STT: index + 1,
+            'Họ và tên': checkin.user_name || checkin.user_id,
+            'Lớp/Đơn vị': checkin.class_id || '',
+            'Thời gian check-in': new Date(checkin.checkin_time).toLocaleString('vi-VN'),
+            'Trạng thái': checkin.status === 'on_time' ? 'Đúng giờ' : 'Muộn',
+            'Điểm số': checkin.points_earned
+        }));
+        const wsCheckins = XLSX.utils.json_to_sheet(checkinRows);
+
+        // Create Workbook
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, wsOverview, "Tổng quan");
+        XLSX.utils.book_append_sheet(wb, wsCheckins, "Danh sách điểm danh");
+
+        // Save file
+        const fileName = `BaoCao_${reportData.event.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        XLSX.writeFile(wb, fileName);
     };
+
+    // Derived data for charts
+    const chartData = useMemo(() => {
+        if (!reportData) return [];
+        return [
+            { name: 'Đúng giờ', value: reportData.stats.on_time, color: '#10B981' },
+            { name: 'Đi muộn', value: reportData.stats.late, color: '#F59E0B' },
+            { name: 'Vắng mặt', value: reportData.stats.absent, color: '#EF4444' }
+        ];
+    }, [reportData]);
+
+    const uniqueClasses = useMemo(() => {
+        if (!reportData) return [];
+        const classes = new Set(reportData.checkins.map(c => c.class_id).filter(Boolean));
+        return Array.from(classes).sort();
+    }, [reportData]);
+
+    const filteredCheckins = useMemo(() => {
+        if (!reportData) return [];
+        if (filterClass === 'all') return reportData.checkins;
+        return reportData.checkins.filter(c => c.class_id === filterClass);
+    }, [reportData, filterClass]);
 
     if (isLoading) {
         return (
@@ -109,11 +173,11 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                         </button>
                     )}
                     <button
-                        onClick={exportToCSV}
+                        onClick={exportToExcel}
                         disabled={!reportData}
-                        className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 disabled:opacity-50"
+                        className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 disabled:opacity-50 flex items-center gap-2"
                     >
-                        📥 Xuất CSV
+                        <span>📥</span> Xuất Excel
                     </button>
                 </div>
             </div>
@@ -135,81 +199,156 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
 
             {reportData && (
                 <>
-                    {/* Stats Cards */}
-                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                        <StatCard label="Dự kiến" value={reportData.stats.total_expected} icon="👥" color="slate" />
-                        <StatCard label="Đã check-in" value={reportData.stats.total_checkins} icon="✅" color="indigo" />
-                        <StatCard label="Đúng giờ" value={reportData.stats.on_time} icon="⏰" color="emerald" />
-                        <StatCard label="Đi muộn" value={reportData.stats.late} icon="⚠️" color="amber" />
-                        <StatCard label="Vắng mặt" value={reportData.stats.absent} icon="❌" color="red" />
+                    {/* Tabs */}
+                    <div className="flex gap-4 border-b border-slate-200">
+                        <button
+                            onClick={() => setActiveTab('overview')}
+                            className={`px-4 py-2 font-bold text-sm transition-colors border-b-2 ${activeTab === 'overview' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Tổng quan & Biểu đồ
+                        </button>
+                        <button
+                            onClick={() => setActiveTab('list')}
+                            className={`px-4 py-2 font-bold text-sm transition-colors border-b-2 ${activeTab === 'list' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
+                        >
+                            Danh sách chi tiết
+                        </button>
                     </div>
 
-                    {/* Attendance Rate */}
-                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="font-bold text-slate-900">Tỷ lệ tham gia</h3>
-                            <span className="text-3xl font-black text-indigo-600">{reportData.stats.attendance_rate}%</span>
-                        </div>
-                        <div className="h-4 bg-slate-100 rounded-full overflow-hidden">
-                            <div
-                                className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all"
-                                style={{ width: `${reportData.stats.attendance_rate}%` }}
-                            ></div>
-                        </div>
-                    </div>
+                    {activeTab === 'overview' ? (
+                        <div className="space-y-6 animate-fade-in">
+                            {/* Stats Cards */}
+                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                                <StatCard label="Dự kiến" value={reportData.stats.total_expected} icon="👥" color="slate" />
+                                <StatCard label="Đã check-in" value={reportData.stats.total_checkins} icon="✅" color="indigo" />
+                                <StatCard label="Đúng giờ" value={reportData.stats.on_time} icon="⏰" color="emerald" />
+                                <StatCard label="Đi muộn" value={reportData.stats.late} icon="⚠️" color="amber" />
+                                <StatCard label="Vắng mặt" value={reportData.stats.absent} icon="❌" color="red" />
+                            </div>
 
-                    {/* Check-in List */}
-                    <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-                        <div className="p-4 border-b border-slate-100">
-                            <h3 className="font-bold text-slate-900">Danh sách điểm danh ({reportData.checkins.length})</h3>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                {/* Chart 1: Attendance Distribution */}
+                                <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 h-80">
+                                    <h3 className="font-bold text-slate-900 mb-4">Phân bố điểm danh</h3>
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <PieChart>
+                                            <Pie
+                                                data={chartData}
+                                                cx="50%"
+                                                cy="50%"
+                                                innerRadius={60}
+                                                outerRadius={80}
+                                                paddingAngle={5}
+                                                dataKey="value"
+                                            >
+                                                {chartData.map((entry, index) => (
+                                                    <Cell key={`cell-${index}`} fill={entry.color} />
+                                                ))}
+                                            </Pie>
+                                            <Tooltip formatter={(value: number) => [value, 'Số lượng']} />
+                                            <Legend />
+                                        </PieChart>
+                                    </ResponsiveContainer>
+                                </div>
+
+                                {/* Attendance Rate Bar */}
+                                <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100 flex flex-col justify-center">
+                                    <div className="text-center mb-6">
+                                        <h3 className="font-bold text-slate-900">Tỷ lệ tham gia</h3>
+                                        <p className="text-5xl font-black text-indigo-600 mt-2">{reportData.stats.attendance_rate}%</p>
+                                        <p className="text-slate-500 text-sm mt-1">trên tổng số {reportData.stats.total_expected} người</p>
+                                    </div>
+                                    <div className="h-6 bg-slate-100 rounded-full overflow-hidden relative">
+                                        <div
+                                            className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-1000 ease-out"
+                                            style={{ width: `${reportData.stats.attendance_rate}%` }}
+                                        />
+                                    </div>
+                                    <div className="mt-6 space-y-2">
+                                        <div className="flex justify-between text-sm">
+                                            <span className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-emerald-500" /> Đúng giờ</span>
+                                            <span className="font-bold">{reportData.stats.on_time}</span>
+                                        </div>
+                                        <div className="flex justify-between text-sm">
+                                            <span className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-amber-500" /> Đi muộn</span>
+                                            <span className="font-bold">{reportData.stats.late}</span>
+                                        </div>
+                                        <div className="flex justify-between text-sm">
+                                            <span className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-red-500" /> Vắng mặt</span>
+                                            <span className="font-bold">{reportData.stats.absent}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
-                        <div className="overflow-x-auto">
-                            <table className="w-full">
-                                <thead>
-                                    <tr className="bg-slate-50 text-left">
-                                        <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">STT</th>
-                                        <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Họ tên</th>
-                                        <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Lớp</th>
-                                        <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Thời gian</th>
-                                        <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Trạng thái</th>
-                                        <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase text-right">Điểm</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-slate-100">
-                                    {reportData.checkins.length === 0 ? (
-                                        <tr>
-                                            <td colSpan={6} className="px-4 py-12 text-center text-slate-400">
-                                                <span className="text-4xl">📋</span>
-                                                <p className="mt-2">Chưa có dữ liệu check-in</p>
-                                            </td>
-                                        </tr>
-                                    ) : (
-                                        reportData.checkins.map((checkin, index) => (
-                                            <tr key={checkin.id} className="hover:bg-slate-50">
-                                                <td className="px-4 py-3 text-slate-500">{index + 1}</td>
-                                                <td className="px-4 py-3 font-bold text-slate-900">{checkin.user_name || checkin.user_id}</td>
-                                                <td className="px-4 py-3 text-slate-500">{checkin.class_id || '—'}</td>
-                                                <td className="px-4 py-3 text-slate-500">{new Date(checkin.checkin_time).toLocaleString('vi-VN')}</td>
-                                                <td className="px-4 py-3">
-                                                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${checkin.status === 'on_time' ? 'bg-emerald-100 text-emerald-600' :
-                                                            checkin.status === 'late' ? 'bg-amber-100 text-amber-600' :
-                                                                'bg-red-100 text-red-600'
-                                                        }`}>
-                                                        {checkin.status === 'on_time' ? '✓ Đúng giờ' : checkin.status === 'late' ? '⚠ Muộn' : '✗ Vắng'}
-                                                    </span>
-                                                </td>
-                                                <td className="px-4 py-3 text-right">
-                                                    <span className={`font-bold ${checkin.points_earned >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                                        {checkin.points_earned >= 0 ? '+' : ''}{checkin.points_earned}
-                                                    </span>
-                                                </td>
+                    ) : (
+                        <div className="space-y-4 animate-fade-in">
+                            {/* Filters */}
+                            <div className="flex justify-end">
+                                <select
+                                    className="px-4 py-2 border border-slate-200 rounded-lg text-sm focus:outline-none focus:border-indigo-500"
+                                    value={filterClass}
+                                    onChange={(e) => setFilterClass(e.target.value)}
+                                >
+                                    <option value="all">Tất cả lớp/đơn vị</option>
+                                    {uniqueClasses.map(c => <option key={c} value={c as string}>{c}</option>)}
+                                </select>
+                            </div>
+
+                            {/* Check-in List */}
+                            <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                                <div className="p-4 border-b border-slate-100 flex justify-between items-center">
+                                    <h3 className="font-bold text-slate-900">Danh sách điểm danh ({filteredCheckins.length})</h3>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full">
+                                        <thead>
+                                            <tr className="bg-slate-50 text-left">
+                                                <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">STT</th>
+                                                <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Họ tên</th>
+                                                <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Lớp</th>
+                                                <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Thời gian</th>
+                                                <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase">Trạng thái</th>
+                                                <th className="px-4 py-3 text-xs font-bold text-slate-400 uppercase text-right">Điểm</th>
                                             </tr>
-                                        ))
-                                    )}
-                                </tbody>
-                            </table>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {filteredCheckins.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={6} className="px-4 py-12 text-center text-slate-400">
+                                                        <span className="text-4xl">📋</span>
+                                                        <p className="mt-2">Không tìm thấy dữ liệu</p>
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                filteredCheckins.map((checkin, index) => (
+                                                    <tr key={checkin.id} className="hover:bg-slate-50">
+                                                        <td className="px-4 py-3 text-slate-500">{index + 1}</td>
+                                                        <td className="px-4 py-3 font-bold text-slate-900">{checkin.user_name || checkin.user_id}</td>
+                                                        <td className="px-4 py-3 text-slate-500">{checkin.class_id || '—'}</td>
+                                                        <td className="px-4 py-3 text-slate-500">{new Date(checkin.checkin_time).toLocaleString('vi-VN')}</td>
+                                                        <td className="px-4 py-3">
+                                                            <span className={`px-2 py-1 rounded-full text-xs font-bold ${checkin.status === 'on_time' ? 'bg-emerald-100 text-emerald-600' :
+                                                                checkin.status === 'late' ? 'bg-amber-100 text-amber-600' :
+                                                                    'bg-red-100 text-red-600'
+                                                                }`}>
+                                                                {checkin.status === 'on_time' ? '✓ Đúng giờ' : checkin.status === 'late' ? '⚠ Muộn' : '✗ Vắng'}
+                                                            </span>
+                                                        </td>
+                                                        <td className="px-4 py-3 text-right">
+                                                            <span className={`font-bold ${checkin.points_earned >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                                                {checkin.points_earned >= 0 ? '+' : ''}{checkin.points_earned}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </>
             )}
         </div>
