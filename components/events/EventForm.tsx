@@ -40,7 +40,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
     const [formData, setFormData] = useState({
         name: '', type: 'học_tập' as EventType, start_time: '', end_time: '', location: '',
         target_audience: 'all', late_threshold_mins: 15, points_on_time: 10, points_late: -5,
-        points_absent: -10, require_face: false, face_threshold: 60
+        points_absent: -10, require_face: false, face_threshold: 40
     });
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);

@@ -265,8 +265,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 if (singleFaceDetected && facesLoaded && detections.length > 0) {
                     const descriptor = detections[0].descriptor;
                     if (descriptor) {
-                        // Use event threshold or default 35% for lenient matching
-                        const threshold = event?.face_threshold || 35;
+                        // Use event threshold or default 35%. 
+                        // Auto-fix: If threshold is set to old default 60%, lower it to 40% for better UX
+                        let threshold = event?.face_threshold || 35;
+                        if (threshold >= 60) threshold = 40;
                         const registeredCount = faceMatcher.getCount();
                         const match = faceMatcher.findMatch(descriptor, threshold);
                         currentMatch = match;
