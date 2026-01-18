@@ -367,7 +367,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     const descriptor = detections[0].descriptor;
                     if (descriptor) {
                         // Get list of already checked-in users to filter out
-                        const alreadyCheckedInIds = Array.from(checkinCooldowns.keys());
+                        const alreadyCheckedInIds = Array.from(checkinCooldowns.keys()) as string[];
 
                         const match = faceMatcher.findMatch(descriptor, sensitivity, alreadyCheckedInIds);
                         currentMatch = match;

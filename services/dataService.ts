@@ -456,7 +456,12 @@ async function getEventCheckins(eventId: string): Promise<ApiResponse<EventCheck
             .eq('event_id', eventId)
             .order('checkin_time', { ascending: false });
 
-        if (error) return { success: false, error: error.message };
+        if (error) {
+            console.error('getEventCheckins ERROR:', error);
+            return { success: false, error: error.message };
+        }
+
+        console.log(`getEventCheckins: Loaded ${data?.length || 0} rows for event ${eventId}`);
         return { success: true, data: data as EventCheckin[] };
     } catch (err) {
         return { success: false, error: 'Lỗi tải danh sách check-in' };

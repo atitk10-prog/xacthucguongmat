@@ -185,7 +185,7 @@ class FaceMatcherService {
         // Log optimization: Only log if there are candidates
         if (allScores.length > 0) {
             const scoresStr = topScores.map(s => `${s.name}: ${s.confidence}%`).join(', ');
-            console.log(`📊 Face scores (th=${threshold}%): ${scoresStr}${allScores.length > 5 ? '...' : ''} → ${bestMatch ? `MATCH: ${bestMatch.name}` : 'NO MATCH'}`);
+            console.log(`📊 Điểm tương đồng (ngưỡng=${threshold}%): ${scoresStr}${allScores.length > 5 ? '...' : ''} → ${bestMatch ? `KẾT QUẢ: ${bestMatch.name}` : 'KHÔNG TÌM THẤY'}`);
         }
 
         return bestMatch;
