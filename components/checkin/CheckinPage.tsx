@@ -110,7 +110,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     // Check-in cooldown map (userId -> timestamp)
     const [checkinCooldowns, setCheckinCooldowns] = useState<Map<string, number>>(new Map());
     const COOLDOWN_PERIOD = 60000; // 60 seconds cooldown
-    const [sensitivity, setSensitivity] = useState(35); // Default 35%
+    const [sensitivity, setSensitivity] = useState(30); // Default 30% (dễ nhận dạng hơn)
 
     // New states for improvements
     const [autoCheckInMode, setAutoCheckInMode] = useState(true);
@@ -769,10 +769,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 {/* Advanced Settings Controls - Bottom Right */}
                 {/* Advanced Settings Controls REMOVED - Managed in Event Settings */}
 
-                {/* Main Camera View */}
-                <div className="w-full h-full relative bg-black overflow-hidden group flex items-center justify-center">
-                    {/* Video - object-contain to show full view without zoom/crop, NO mirror flip */}
-                    <video ref={videoRef} autoPlay playsInline muted className="max-w-full max-h-full object-contain bg-black" />
+                {/* Main Camera View - FULLSCREEN */}
+                <div className="w-full h-full relative bg-black overflow-hidden">
+                    {/* Video - FULLSCREEN with object-cover */}
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover bg-black" />
                     {/* Ensure canvas matches video size visually */}
                     <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
 
@@ -794,7 +794,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                     <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
                                         <div
                                             className="h-full bg-gradient-to-r from-emerald-400 to-teal-400 rounded-full transition-all duration-150"
-                                            style={{ width: `${Math.min((faceStableTime / 3000) * 100, 100)}%` }}
+                                            style={{ width: `${Math.min((faceStableTime / 1000) * 100, 100)}%` }}
                                         />
                                     </div>
                                     <p className="text-center text-white/70 text-xs mt-1">
@@ -948,8 +948,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 </div>
             </div>
 
-            {/* Right Side - Info Panel */}
-            <div className="w-96 bg-slate-800/95 backdrop-blur-xl p-6 flex flex-col border-l border-slate-700">
+            {/* Right Side - Info Panel (HIDDEN ON MOBILE) */}
+            <div className="hidden md:flex w-96 bg-slate-800/95 backdrop-blur-xl p-6 flex-col border-l border-slate-700">
                 {/* Event Info */}
                 <div className="bg-gradient-to-br from-indigo-600 to-purple-700 rounded-2xl p-5 mb-6 shadow-lg">
                     <div className="flex items-start justify-between mb-3">
