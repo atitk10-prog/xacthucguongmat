@@ -491,7 +491,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 const detections = await faceService.detectFaces(videoRef.current);
                 if (detections.length === 0) {
                     setResult({ success: false, message: 'Không nhận diện được khuôn mặt' });
-                    playSound('error');
+                    // playSound('error');
                     setIsProcessing(false);
                     autoCheckInRef.current = false;
                     return;
@@ -500,7 +500,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // If faces are loaded but no one recognized, show warning
                 if (facesLoaded && !latestRecognizedPerson) {
                     setResult({ success: false, message: '⚠️ Không nhận ra người này trong danh sách sự kiện!' });
-                    playSound('error');
+                    // playSound('error');
                     setIsProcessing(false);
                     autoCheckInRef.current = false;
                     return;
@@ -565,7 +565,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     }, 2000);
                 }
             } else {
-                playSound('error');
+                // playSound('error');
                 console.error('Check-in FAILED:', checkinResult);
 
                 const errorMsg = checkinResult.error || 'Check-in thất bại';
