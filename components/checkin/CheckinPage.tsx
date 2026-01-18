@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { dataService } from '../../services/dataService';
-import { faceService, faceMatcher, base64ToImage } from '../../services/faceService';
+import { faceService, faceMatcher, base64ToImage, stringToDescriptor, descriptorToString } from '../../services/faceService';
 import { Event, User, EventCheckin } from '../../types';
 
 // Interface for event participant with face data
@@ -11,6 +11,7 @@ interface EventParticipant {
     birth_date?: string;
     organization?: string;
     hasFaceDescriptor?: boolean;
+    face_descriptor?: string; // Stored JSON descriptor
 }
 
 interface CheckinPageProps {
@@ -181,28 +182,51 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 console.log('📋 getEventParticipants result:', result);
 
                 if (result.success && result.data) {
-                    const loadedParticipants: EventParticipant[] = result.data.map((p: { id: string; full_name: string; avatar_url?: string; birth_date?: string; organization?: string }) => ({
+                    const loadedParticipants: EventParticipant[] = result.data.map((p: { id: string; full_name: string; avatar_url?: string; birth_date?: string; organization?: string; face_descriptor?: string }) => ({
                         id: p.id,
                         full_name: p.full_name,
                         avatar_url: p.avatar_url,
                         birth_date: p.birth_date,
                         organization: p.organization,
+                        face_descriptor: p.face_descriptor,
                         hasFaceDescriptor: false
                     }));
 
                     console.log('👥 Loaded participants:', loadedParticipants.length, loadedParticipants.map(p => ({ name: p.full_name, hasAvatar: !!p.avatar_url, avatarLength: p.avatar_url?.length || 0 })));
                     setParticipants(loadedParticipants);
 
-                    // Generate face descriptors in PARALLEL (much faster!)
+                    // Generate face descriptors in PARALLEL with DB optimization
                     const participantsWithAvatars = loadedParticipants.filter(p => p.avatar_url);
 
                     const loadFacePromises = participantsWithAvatars.map(async (participant) => {
                         try {
+                            // 1. Try to use stored descriptor (INSTANT)
+                            if (participant.face_descriptor) {
+                                try {
+                                    const descriptor = stringToDescriptor(participant.face_descriptor);
+                                    faceMatcher.addFace(participant.id, descriptor, participant.full_name);
+                                    participant.hasFaceDescriptor = true;
+                                    return true;
+                                } catch (e) {
+                                    console.warn('Invalid stored descriptor for:', participant.full_name);
+                                }
+                            }
+
+                            // 2. Fallback: Compute from Image (SLOW) & Save to DB
                             const img = await base64ToImage(participant.avatar_url!);
                             const descriptor = await faceService.getFaceDescriptor(img);
                             if (descriptor) {
                                 faceMatcher.addFace(participant.id, descriptor, participant.full_name);
                                 participant.hasFaceDescriptor = true;
+
+                                // OPTIMIZATION: Save computed descriptor to DB for next time
+                                const descriptorStr = descriptorToString(descriptor);
+                                // Run in background, don't await
+                                dataService.updateParticipantFaceDescriptor(participant.id, descriptorStr)
+                                    .then(res => {
+                                        if (res.success) console.log(`💾 Saved face descriptor for ${participant.full_name}`);
+                                    });
+
                                 return true;
                             }
                         } catch (err) {

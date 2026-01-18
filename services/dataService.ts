@@ -457,7 +457,7 @@ async function getEventParticipants(eventId: string): Promise<ApiResponse<EventP
     try {
         const { data, error } = await supabase
             .from('event_participants')
-            .select('id, event_id, full_name, avatar_url, birth_date, organization') // Select only necessary columns
+            .select('id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor') // Select only necessary columns
             .eq('event_id', eventId)
             .order('full_name', { ascending: true });
 
@@ -479,6 +479,20 @@ async function getEventParticipantCount(eventId: string): Promise<ApiResponse<nu
         return { success: true, data: count || 0 };
     } catch (err) {
         return { success: false, error: 'Lỗi đếm số lượng người tham gia' };
+    }
+}
+
+async function updateParticipantFaceDescriptor(participantId: string, descriptor: string): Promise<ApiResponse<void>> {
+    try {
+        const { error } = await supabase
+            .from('event_participants')
+            .update({ face_descriptor: descriptor })
+            .eq('id', participantId);
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, message: 'Updated face descriptor' };
+    } catch (err) {
+        return { success: false, error: 'Failed to update face descriptor' };
     }
 }
 
@@ -1018,6 +1032,7 @@ export const dataService = {
     // Participants
     getEventParticipants,
     getEventParticipantCount,
+    updateParticipantFaceDescriptor,
     saveEventParticipants,
     deleteEventParticipant,
 
