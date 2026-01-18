@@ -235,11 +235,37 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
     const saveParticipants = async () => {
         if (!selectedEventForParticipants) return;
         try {
-            // Note: This is for adding existing users as participants
-            // For now just close modal - actual participant management is in EventForm
-            loadEvents();
-            setShowParticipantModal(false);
-        } catch (error) { console.error('Failed to save participants:', error); }
+            // Find selected users from allUsers
+            const selectedUserObjects = allUsers.filter(u => selectedParticipants.includes(u.id));
+
+            // Map to EventParticipant format (for saving)
+            const participantsToSave = selectedUserObjects.map(user => ({
+                full_name: user.full_name,
+                avatar_url: user.avatar_url,
+                organization: user.class_id || user.organization || user.role,
+                birth_date: '', // Placeholder
+                id: `new_${user.id}`
+            }));
+
+            if (participantsToSave.length === 0) {
+                setNotification({ type: 'success', message: 'Không có người tham gia nào được chọn.' });
+                setShowParticipantModal(false);
+                return;
+            }
+
+            const result = await dataService.saveEventParticipants(selectedEventForParticipants.id, participantsToSave);
+
+            if (result.success) {
+                setNotification({ type: 'success', message: `Đã thêm ${result.data?.length} người tham gia!` });
+                loadEvents();
+                setShowParticipantModal(false);
+            } else {
+                setNotification({ type: 'error', message: result.error || 'Lỗi lưu danh sách' });
+            }
+        } catch (error) {
+            console.error('Failed to save participants:', error);
+            setNotification({ type: 'error', message: 'Lỗi kết nối khi lưu' });
+        }
     };
 
     const toggleParticipant = (userId: string) => {

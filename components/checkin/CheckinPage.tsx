@@ -97,6 +97,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
+    const isProcessingRef = useRef(false); // Ref for loop access
+    useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
+
     const [isLoadingModels, setIsLoadingModels] = useState(false);
     const [modelsReady, setModelsReady] = useState(false);
     const [result, setResult] = useState<CheckinResult | null>(null);
@@ -344,6 +347,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         let animationId: number;
         let checkInAttempted = false; // Flag to prevent multiple attempts
 
+        let lastDetectionTime = 0;
+        const DETECTION_INTERVAL = 150; // ms (Limit to ~6-7 FPS to prevent freezing on mobile)
+
         const detectLoop = async () => {
             if (!videoRef.current || videoRef.current.readyState !== 4) {
                 animationId = requestAnimationFrame(detectLoop);
@@ -351,14 +357,29 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             }
 
             // Skip if already processing or attempted check-in
-            if (isProcessing || checkInAttempted) {
+            // Use ref to check instantaneous state (avoid closure staleness)
+            if (isProcessingRef.current || checkInAttempted) {
                 setTimeout(() => {
                     animationId = requestAnimationFrame(detectLoop);
                 }, 500);
                 return;
             }
 
+            // Throttling: Skip frames if interval hasn't passed
+            const now = Date.now();
+            if (now - lastDetectionTime < DETECTION_INTERVAL) {
+                animationId = requestAnimationFrame(detectLoop);
+                return;
+            }
+            lastDetectionTime = now;
+
             try {
+                // Performance Optimization: Check if video is actually playing
+                if (videoRef.current.paused || videoRef.current.ended) {
+                    animationId = requestAnimationFrame(detectLoop);
+                    return;
+                }
+
                 const detections = await faceService.detectFaces(videoRef.current);
 
                 // --- STRICT FACE SELECTION LOGIC ---
@@ -482,6 +503,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             const prev = recognizedPersonRef.current;
                             if (!prev || prev.id !== match.userId) {
                                 setRecognizedPerson({ id: match.userId, name: match.name, confidence: match.confidence });
+                                // CRITICAL FIX: Reset stability timer if person changes to prevent "glitch" check-ins
+                                setLastFaceDetectedTime(Date.now());
+                                lastFaceDetectedTimeRef.current = Date.now();
                             }
                         } else {
                             if (recognizedPersonRef.current !== null) {

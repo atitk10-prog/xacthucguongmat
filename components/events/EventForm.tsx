@@ -17,7 +17,12 @@ interface NewParticipant {
     organization?: string;
     avatar_url?: string;
     isNew: boolean;
+    user_id?: string;
 }
+
+// ... existing code ...
+
+
 
 // SVG Icons
 const Icons = {
@@ -235,9 +240,25 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
             // Combine existing user IDs and new participant IDs
             const allParticipantIds = [...selectedExistingUsers, ...newParticipants.map(p => p.id)];
 
+            // Validate dates
+            if (!formData.start_time || !formData.end_time) {
+                setError('Vui lòng chọn thời gian bắt đầu và kết thúc');
+                setIsLoading(false);
+                return;
+            }
+
+            const startDate = new Date(formData.start_time);
+            const endDate = new Date(formData.end_time);
+
+            if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+                setError('Thời gian không hợp lệ. Vui lòng kiểm tra lại.');
+                setIsLoading(false);
+                return;
+            }
+
             // Convert Local Time Strings back to UTC ISO Strings for DB
-            const startISO = new Date(formData.start_time).toISOString();
-            const endISO = new Date(formData.end_time).toISOString();
+            const startISO = startDate.toISOString();
+            const endISO = endDate.toISOString();
 
             const eventData = {
                 ...formData,
@@ -253,20 +274,35 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
             if (result.success && result.data) {
                 const savedEvent = result.data;
 
-                // Only save TRULY NEW participants (isNew = true)
+                // Combine manually added new participants AND selected existing users
                 const trulyNewParticipants = newParticipants.filter(p => p.isNew);
 
-                if (trulyNewParticipants.length > 0) {
-                    const participantsToSave = trulyNewParticipants.map(p => ({
-                        id: p.id, // Pass ID so backend knows it's new (starts with 'new_')
-                        full_name: p.full_name,
-                        birth_date: p.birth_date || '',
-                        organization: p.organization || '',
-                        address: p.address || '',
-                        avatar_url: p.avatar_url || ''
-                    }));
+                // Map selected existing users to EventParticipant format (treat as new inserts)
+                const selectedUsersToSave = selectedExistingUsers.map(userId => {
+                    const user = existingUsers.find(u => u.id === userId);
+                    if (!user) return null;
+                    return {
+                        id: `new_${user.id}`, // Prefix 'new_' to trigger INSERT in dataService
+                        full_name: user.full_name,
+                        birth_date: user.birth_date || '', // Use user's existing birth_date
+                        organization: user.class_id || user.organization || user.role,
+                        address: '', // User table doesn't have address
+                        avatar_url: user.avatar_url || '',
+                        user_id: user.id // Link to system user
+                    };
+                }).filter(Boolean) as any[];
 
-                    await dataService.saveEventParticipants(savedEvent.id, participantsToSave);
+                const allParticipantsToSave = [...trulyNewParticipants.map(p => ({
+                    id: p.id,
+                    full_name: p.full_name,
+                    birth_date: p.birth_date || '',
+                    organization: p.organization || '',
+                    address: p.address || '',
+                    avatar_url: p.avatar_url || ''
+                })), ...selectedUsersToSave];
+
+                if (allParticipantsToSave.length > 0) {
+                    await dataService.saveEventParticipants(savedEvent.id, allParticipantsToSave);
                 }
 
                 onSave(savedEvent);
@@ -325,7 +361,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                     birth_date: updatedParticipant.birth_date,
                     organization: updatedParticipant.organization,
                     address: updatedParticipant.address,
-                    avatar_url: updatedParticipant.avatar_url
+                    avatar_url: updatedParticipant.avatar_url,
+                    user_id: updatedParticipant.user_id
                 }]);
 
                 if (result.success) {
@@ -556,10 +593,24 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
         reader.readAsDataURL(file);
     };
 
-    const filteredUsers = existingUsers.filter(user =>
-        user.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        (user.class_id && user.class_id.toLowerCase().includes(searchQuery.toLowerCase()))
-    );
+    const filteredUsers = existingUsers.filter(user => {
+        // Exclude if already present in "Participants" list (loaded from event) by Name match
+        // (Heuristic to prevent duplicates since we don't have user_id link in event_participants)
+        const isAlreadyParticipant = newParticipants.some(p => p.full_name.toLowerCase() === user.full_name.toLowerCase());
+        if (isAlreadyParticipant) return false;
+
+        // Search query
+        return user.full_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+            (user.class_id && user.class_id.toLowerCase().includes(searchQuery.toLowerCase()));
+    }).sort((a, b) => {
+        // Sort selected users to the top
+        const aSelected = selectedExistingUsers.includes(a.id);
+        const bSelected = selectedExistingUsers.includes(b.id);
+
+        if (aSelected && !bSelected) return -1;
+        if (!aSelected && bSelected) return 1;
+        return 0;
+    });
 
     const eventTypes = [
         { value: 'học_tập', label: 'Học tập', icon: Icons.book },
@@ -1010,7 +1061,9 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                             </div>
                                             <div className="flex-1 min-w-0">
                                                 <p className="font-bold text-slate-900 truncate">{user.full_name}</p>
-                                                <p className="text-xs text-slate-500">{user.class_id || user.email || user.role}</p>
+                                                <p className="text-xs text-slate-500">
+                                                    {[user.class_id || user.organization || user.role, user.birth_date ? `Sinh: ${new Date(user.birth_date).toLocaleDateString('vi-VN')}` : ''].filter(Boolean).join(' • ')}
+                                                </p>
                                             </div>
                                             <span className={`px-2 py-1 rounded-full text-xs font-bold flex-shrink-0 ${user.role === 'student' ? 'bg-blue-100 text-blue-600' :
                                                 user.role === 'teacher' ? 'bg-purple-100 text-purple-600' :
@@ -1104,7 +1157,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                 <label className="block text-sm font-bold text-slate-600 mb-1">Ngày sinh</label>
                                 <input
                                     type="date"
-                                    value={editingParticipant.birth_date || ''}
+                                    value={editingParticipant.birth_date ? new Date(editingParticipant.birth_date).toISOString().split('T')[0] : ''}
                                     onChange={(e) => setEditingParticipant({ ...editingParticipant, birth_date: e.target.value })}
                                     className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                 />

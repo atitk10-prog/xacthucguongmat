@@ -44,7 +44,11 @@ export interface User {
   room_id?: string;
   zone?: string;
   avatar_url?: string;
+  birth_date?: string; // Added field
   face_vector?: string;
+  face_descriptor?: string; // New field for JSON array
+  student_code?: string; // Mã học sinh / nhân viên
+  organization?: string; // Lớp / Tổ chuyên môn
   qr_code?: string;
   status: UserStatus;
   created_at: string;
@@ -107,6 +111,8 @@ export interface BoardingCheckin {
   date: string;
   morning_in?: string;
   morning_out?: string;
+  noon_in?: string;
+  noon_out?: string;
   evening_in?: string;
   evening_out?: string;
   exit_permission: boolean;

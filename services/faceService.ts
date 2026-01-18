@@ -140,14 +140,19 @@ export interface RegisteredFace {
 }
 
 // Face matcher for comparing against multiple registered faces
+// Face matcher for comparing against multiple registered faces
 class FaceMatcherService {
     private registeredFaces: RegisteredFace[] = [];
 
-    // Add a registered face
-    addFace(userId: string, descriptor: Float32Array, name: string) {
-        // Remove existing if already registered
-        this.registeredFaces = this.registeredFaces.filter(f => f.userId !== userId);
+    // Register a face (same as addFace but more semantic)
+    registerFace(userId: string, descriptor: Float32Array, name: string) {
+        this.removeFace(userId); // Ensure no duplicates
         this.registeredFaces.push({ userId, descriptor, name });
+    }
+
+    // Add a face to the matcher
+    addFace(userId: string, descriptor: Float32Array, name: string) {
+        this.registerFace(userId, descriptor, name);
     }
 
     // Remove a registered face
@@ -190,8 +195,6 @@ class FaceMatcherService {
             const scoresStr = topScores.map(s => `${s.name}: ${s.confidence}%`).join(', ');
 
             // SECURITY CHECK: Ambiguity Detection
-            // If the top match is too close to the second best match (margin < 8%), we reject it to avoid false positives.
-            // Example: A (45%) vs B (43%) -> Reject.
             if (allScores.length >= 2) {
                 const margin = allScores[0].confidence - allScores[1].confidence;
                 if (margin < 8 && bestMatch) {

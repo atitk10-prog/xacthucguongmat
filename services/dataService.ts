@@ -175,7 +175,7 @@ async function getMe(): Promise<ApiResponse<User>> {
 async function getUsers(filters?: { role?: string; status?: string }): Promise<ApiResponse<User[]>> {
     try {
         // Select only necessary fields for faster loading
-        let query = supabase.from('users').select('id, full_name, email, role, avatar_url, status, created_at');
+        let query = supabase.from('users').select('id, full_name, email, role, avatar_url, status, student_code, organization, created_at, birth_date');
 
         if (filters?.role) {
             query = query.eq('role', filters.role);
@@ -210,11 +210,12 @@ async function getUser(id: string): Promise<ApiResponse<User>> {
 
 async function createUser(userData: Partial<User> & { password?: string }): Promise<ApiResponse<User>> {
     try {
+        const { password, ...rest } = userData; // Separate password
         const { data, error } = await supabase
             .from('users')
             .insert({
-                ...userData,
-                password_hash: userData.password
+                ...rest,
+                password_hash: password // Map to password_hash
             })
             .select()
             .single();
@@ -227,11 +228,19 @@ async function createUser(userData: Partial<User> & { password?: string }): Prom
     }
 }
 
-async function updateUser(id: string, userData: Partial<User>): Promise<ApiResponse<User>> {
+async function updateUser(id: string, userData: Partial<User> & { password?: string }): Promise<ApiResponse<User>> {
     try {
+        const { password, ...rest } = userData;
+        const updatePayload: any = { ...rest, updated_at: new Date().toISOString() };
+
+        // Only update password_hash if password is provided
+        if (password) {
+            updatePayload.password_hash = password;
+        }
+
         const { data, error } = await supabase
             .from('users')
-            .update({ ...userData, updated_at: new Date().toISOString() })
+            .update(updatePayload)
             .eq('id', id)
             .select()
             .single();
@@ -258,6 +267,21 @@ async function deleteUser(id: string): Promise<ApiResponse<void>> {
 // =====================================================
 // EVENTS API
 // =====================================================
+
+async function getAllStudentsForCheckin(): Promise<ApiResponse<User[]>> {
+    try {
+        const { data, error } = await supabase
+            .from('users')
+            .select('id, full_name, avatar_url, student_code, organization, face_descriptor, role')
+            .not('face_descriptor', 'is', null); // Only fetch users with face data
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: data as unknown as User[] };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tải danh sách học sinh' };
+    }
+}
+
 async function getEvents(filters?: { status?: string }): Promise<ApiResponse<Event[]>> {
     try {
         const cached = getFromCache<Event[]>('events');
@@ -480,13 +504,14 @@ interface EventParticipant {
     organization?: string;
     address?: string;
     created_at?: string;
+    user_id?: string; // Link to system user
 }
 
 async function getEventParticipants(eventId: string): Promise<ApiResponse<EventParticipant[]>> {
     try {
         const { data, error } = await supabase
             .from('event_participants')
-            .select('id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor') // Select only necessary columns
+            .select('id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor, user_id') // Select only necessary columns
             .eq('event_id', eventId)
             .order('full_name', { ascending: true });
 
@@ -544,7 +569,8 @@ async function saveEventParticipants(
                 avatar_url: p.avatar_url || null,
                 birth_date: p.birth_date || null,
                 organization: p.organization || null,
-                address: p.address || null
+                address: p.address || null,
+                user_id: p.user_id || null // Include user_id
             }));
 
             const { data, error } = await supabase
@@ -567,7 +593,8 @@ async function saveEventParticipants(
                         avatar_url: p.avatar_url,
                         birth_date: p.birth_date,
                         organization: p.organization,
-                        address: p.address
+                        address: p.address,
+                        user_id: p.user_id // Include user_id
                     })
                     .eq('id', p.id)
                     .select()
@@ -575,21 +602,41 @@ async function saveEventParticipants(
             );
 
             const results = await Promise.all(updatePromises);
-            results.forEach(r => {
-                if (!r.error && r.data) {
-                    savedParticipants.push(r.data as EventParticipant);
-                }
+            results.forEach(res => {
+                if (res.data) savedParticipants.push(res.data as EventParticipant);
             });
         }
 
-        clearCache('participants');
-        return {
-            success: true,
-            data: savedParticipants,
-            message: `Đã lưu ${savedParticipants.length} người tham gia`
-        };
+        // SYNC DATA TO USERS TABLE (New Requirement: Sync all fields)
+        // Filter participants that have user_id
+        const participantsToSync = participants.filter(p => p.user_id);
+
+        if (participantsToSync.length > 0) {
+            Promise.all(participantsToSync.map(p => {
+                // Prepare update payload with only defined values to avoid overwriting with nulls if not intended,
+                // but user request implies "take info from checkin system", so we update what is provided.
+                const userUpdatePayload: any = {};
+                if (p.full_name) userUpdatePayload.full_name = p.full_name;
+                if (p.birth_date) userUpdatePayload.birth_date = p.birth_date;
+                if (p.organization) userUpdatePayload.organization = p.organization;
+                // address is not in users table yet
+                if (p.avatar_url) userUpdatePayload.avatar_url = p.avatar_url;
+
+                // Only update if there are fields to update
+                if (Object.keys(userUpdatePayload).length > 0) {
+                    return supabase
+                        .from('users')
+                        .update(userUpdatePayload)
+                        .eq('id', p.user_id);
+                }
+                return Promise.resolve();
+            })).then(() => console.log('Synced participant data to users table'))
+                .catch(err => console.error('Error syncing participant data:', err));
+        }
+
+        return { success: true, data: savedParticipants };
     } catch (err) {
-        return { success: false, error: 'Lỗi lưu người tham gia' };
+        return { success: false, error: 'Lỗi lưu danh sách người tham gia' };
     }
 }
 
@@ -642,13 +689,15 @@ interface BoardingCheckinRecord {
     date: string;
     morning_in?: string;
     morning_out?: string;
+    noon_in?: string;
+    noon_out?: string;
     evening_in?: string;
     evening_out?: string;
     exit_permission: boolean;
     notes?: string;
 }
 
-type CheckinType = 'morning_in' | 'morning_out' | 'evening_in' | 'evening_out';
+export type CheckinType = 'morning_in' | 'morning_out' | 'noon_in' | 'noon_out' | 'evening_in' | 'evening_out';
 
 async function boardingCheckin(
     userId: string,
@@ -1095,5 +1144,6 @@ export const dataService = {
     createCertificate,
 
     // Cache
-    clearCache
+    clearCache,
+    getAllStudentsForCheckin // Export new function
 };

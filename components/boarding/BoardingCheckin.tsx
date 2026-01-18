@@ -1,304 +1,410 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { dataService } from '../../services/dataService';
+import { dataService, CheckinType } from '../../services/dataService';
 import { faceService } from '../../services/faceService';
 import { User, BoardingCheckin as BoardingCheckinType } from '../../types';
 
-type CheckinType = 'morning_in' | 'morning_out' | 'evening_in' | 'evening_out';
-
 interface BoardingCheckinProps {
-    currentUser?: User;
+    currentUser?: User; // Keep purely for prop compatibility, though we load all users now
     onBack?: () => void;
 }
 
-const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ currentUser, onBack }) => {
+const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
+    // Refs
     const videoRef = useRef<HTMLVideoElement>(null);
+    const checkinCooldownsRef = useRef<Map<string, number>>(new Map());
+    const lastFaceDetectedTimeRef = useRef<number | null>(null);
+    const recognizedPersonRef = useRef<{ id: string; name: string; confidence: number } | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const isProcessingRef = useRef(false);
+
+    // State
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [isProcessing, setIsProcessing] = useState(false);
     const [selectedType, setSelectedType] = useState<CheckinType>('morning_in');
-    const [faceDetected, setFaceDetected] = useState(false);
     const [modelsReady, setModelsReady] = useState(false);
-    const [result, setResult] = useState<{ success: boolean; message: string; data?: BoardingCheckinType } | null>(null);
-    const [todayRecord, setTodayRecord] = useState<BoardingCheckinType | null>(null);
+    const [studentsLoaded, setStudentsLoaded] = useState(false);
+    const [faceDetected, setFaceDetected] = useState(false);
+    const [detectedPerson, setDetectedPerson] = useState<{ name: string; confidence: number } | null>(null);
 
-    // Determine current time period
-    const getCurrentPeriod = (): CheckinType => {
-        const hour = new Date().getHours();
-        if (hour < 7) return 'morning_in';
-        if (hour < 12) return 'morning_out';
-        if (hour < 18) return 'evening_in';
-        return 'evening_out';
+    // Results
+    const [result, setResult] = useState<{ success: boolean; message: string; data?: BoardingCheckinType; user?: User } | null>(null);
+    const [recentCheckins, setRecentCheckins] = useState<Array<{ name: string; time: string; type: string; status: string; avatar?: string }>>([]);
+
+    // Sync ref
+    useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
+
+    // Initialize Audio
+    useEffect(() => {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        return () => { audioContextRef.current?.close(); };
+    }, []);
+
+    const playSound = (type: 'success' | 'error') => {
+        try {
+            const ctx = audioContextRef.current;
+            if (!ctx) return;
+            const oscillator = ctx.createOscillator();
+            const gainNode = ctx.createGain();
+            oscillator.connect(gainNode);
+            gainNode.connect(ctx.destination);
+
+            if (type === 'success') {
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+                oscillator.frequency.setValueAtTime(880, ctx.currentTime + 0.1); // A5
+                gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+                oscillator.start(ctx.currentTime);
+                oscillator.stop(ctx.currentTime + 0.3);
+            } else {
+                oscillator.type = 'sawtooth';
+                oscillator.frequency.setValueAtTime(150, ctx.currentTime);
+                gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
+                gainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.3);
+                oscillator.start(ctx.currentTime);
+                oscillator.stop(ctx.currentTime + 0.3);
+            }
+        } catch (e) { console.error('Audio error', e); }
     };
 
+    // Auto-select type based on time
     useEffect(() => {
-        setSelectedType(getCurrentPeriod());
+        const h = new Date().getHours();
+        if (h >= 5 && h < 11) setSelectedType('morning_in');
+        else if (h >= 11 && h < 12) setSelectedType('noon_in'); // 11h-12h
+        else if (h >= 12 && h < 14) setSelectedType('noon_out'); // 12h-14h
+        else if (h >= 14 && h < 18) setSelectedType('evening_in'); // Afternoon class? Or just reuse evening
+        else if (h >= 18) setSelectedType('evening_out'); // Night
+        else setSelectedType('morning_in');
     }, []);
 
-    // Load face models
+    // Load Models & Students
     useEffect(() => {
-        const loadModels = async () => {
+        const init = async () => {
             try {
+                // 1. Load Face Models
                 await faceService.loadModels();
                 setModelsReady(true);
+
+                // 2. Load Students
+                const response = await dataService.getAllStudentsForCheckin();
+                if (response.success && response.data) {
+                    faceService.faceMatcher.clearAll(); // Clear old faces
+                    let count = 0;
+                    for (const user of response.data) {
+                        if (user.face_descriptor) {
+                            try {
+                                const descriptor = new Float32Array(JSON.parse(user.face_descriptor));
+                                faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
+                                count++;
+                            } catch (e) { console.warn('Invalid descriptor for', user.full_name); }
+                        }
+                    }
+                    console.log(`Loaded ${count} student faces`);
+                    setStudentsLoaded(true);
+                }
             } catch (err) {
-                console.error('Failed to load face models:', err);
+                console.error('Initialization error:', err);
             }
         };
-        loadModels();
+        init();
     }, []);
 
-    // Start camera
+    // Camera
     useEffect(() => {
         const startCamera = async () => {
             try {
-                const mediaStream = await navigator.mediaDevices.getUserMedia({
+                const stream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
                 });
-                setStream(mediaStream);
-                if (videoRef.current) videoRef.current.srcObject = mediaStream;
-            } catch (err) {
-                console.error('Camera error:', err);
-            }
+                setStream(stream);
+                if (videoRef.current) videoRef.current.srcObject = stream;
+            } catch (err) { console.error('Camera error', err); }
         };
         startCamera();
-        return () => {
-            if (stream) stream.getTracks().forEach(track => track.stop());
-        };
+        return () => { stream?.getTracks().forEach(t => t.stop()); };
     }, []);
 
-    // Real-time face detection
+    // Detect Loop
     useEffect(() => {
-        if (!modelsReady || !videoRef.current) return;
+        if (!modelsReady || !studentsLoaded || !videoRef.current) return;
 
-        const detectLoop = async () => {
-            if (!videoRef.current || videoRef.current.readyState !== 4) {
-                requestAnimationFrame(detectLoop);
+        let animationId: number;
+        let lastDetectionTime = 0;
+        const DETECTION_INTERVAL = 150; // Throttling
+
+        const loop = async () => {
+            if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
+                animationId = requestAnimationFrame(loop);
                 return;
             }
+
+            // Block if processing
+            if (isProcessingRef.current) {
+                setTimeout(() => { animationId = requestAnimationFrame(loop); }, 200);
+                return;
+            }
+
+            // Throttle
+            if (Date.now() - lastDetectionTime < DETECTION_INTERVAL) {
+                animationId = requestAnimationFrame(loop);
+                return;
+            }
+            lastDetectionTime = Date.now();
 
             try {
                 const detections = await faceService.detectFaces(videoRef.current);
-                setFaceDetected(detections.length > 0);
-            } catch (err) {
-                console.error('Face detection error:', err);
-            }
 
-            setTimeout(() => requestAnimationFrame(detectLoop), 300);
+                // Get largest face
+                let primaryDetection = null;
+                if (detections.length > 0) {
+                    primaryDetection = detections.sort((a, b) =>
+                        (b.detection.box.width * b.detection.box.height) - (a.detection.box.width * a.detection.box.height)
+                    )[0];
+                }
+
+                const hasFace = !!primaryDetection;
+                setFaceDetected(hasFace);
+
+                if (hasFace && primaryDetection) {
+                    // Match
+                    const match = faceService.faceMatcher.findMatch(primaryDetection.descriptor, 45); // Threshold 45%
+
+                    if (match) {
+                        // Stability logic
+                        const prev = recognizedPersonRef.current;
+                        if (!prev || prev.id !== match.userId) {
+                            recognizedPersonRef.current = { id: match.userId, name: match.name, confidence: match.confidence };
+                            lastFaceDetectedTimeRef.current = Date.now(); // Reset timer on new person
+                            setDetectedPerson({ name: match.name, confidence: match.confidence });
+                        }
+
+                        // Check timer (1s stability)
+                        const stableTime = Date.now() - (lastFaceDetectedTimeRef.current || Date.now());
+
+                        // Check cooldown
+                        const cooldown = checkinCooldownsRef.current.get(match.userId);
+                        const isCool = !cooldown || (Date.now() - cooldown > 60000); // 1 min cooldown
+
+                        if (stableTime > 800 && isCool && !isProcessingRef.current) {
+                            handleAutoCheckin(match.userId, match.name, match.confidence);
+                        }
+                    } else {
+                        recognizedPersonRef.current = null;
+                        setDetectedPerson(null);
+                    }
+                } else {
+                    recognizedPersonRef.current = null;
+                    lastFaceDetectedTimeRef.current = null;
+                    setDetectedPerson(null);
+                }
+
+            } catch (e) { console.error('Detection loop error', e); }
+
+            animationId = requestAnimationFrame(loop);
         };
 
-        detectLoop();
-    }, [modelsReady]);
+        loop();
+        return () => cancelAnimationFrame(animationId);
+    }, [modelsReady, studentsLoaded]);
 
-    const handleCheckin = async () => {
-        if (!currentUser || isProcessing) return;
+    const handleAutoCheckin = async (userId: string, name: string, confidence: number) => {
         setIsProcessing(true);
-        setResult(null);
+        playSound('success');
 
         try {
-            // Verify face is detected
-            if (!faceDetected) {
-                setResult({ success: false, message: 'Không phát hiện khuôn mặt!' });
-                setIsProcessing(false);
-                return;
-            }
+            // Call API
+            const response = await dataService.boardingCheckin(userId, selectedType);
 
-            const response = await dataService.boardingCheckin(currentUser.id, selectedType);
-
-            if (response.success && response.data) {
+            if (response.success) {
                 setResult({
                     success: true,
                     message: `Check-in ${getTypeLabel(selectedType)} thành công!`,
-                    data: response.data
+                    data: response.data,
+                    user: { full_name: name } as any
                 });
-                setTodayRecord(response.data);
+
+                // Update recent list
+                const now = new Date();
+                setRecentCheckins(prev => [{
+                    name: name,
+                    time: now.toLocaleTimeString('vi-VN'),
+                    type: getTypeLabel(selectedType),
+                    status: 'success'
+                }, ...prev.slice(0, 9)]);
+
+                // Set Cooldown
+                checkinCooldownsRef.current.set(userId, Date.now());
+
+                // Auto close modal
+                setTimeout(() => {
+                    setResult(null);
+                    setIsProcessing(false);
+                }, 2000);
             } else {
-                setResult({ success: false, message: response.error || 'Check-in thất bại' });
+                // Error (e.g. already checking)
+                // Just cooldown to prevent spam
+                checkinCooldownsRef.current.set(userId, Date.now());
+                setIsProcessing(false);
             }
-        } catch (error) {
-            console.error('Boarding check-in error:', error);
-            setResult({ success: false, message: 'Có lỗi xảy ra' });
-        } finally {
+        } catch (e) {
+            console.error(e);
             setIsProcessing(false);
         }
     };
 
-    const getTypeLabel = (type: CheckinType): string => {
-        const labels: Record<CheckinType, string> = {
-            'morning_in': 'Vào buổi sáng',
-            'morning_out': 'Ra buổi sáng',
-            'evening_in': 'Vào buổi tối',
-            'evening_out': 'Ra buổi tối'
-        };
-        return labels[type];
+    const getTypeLabel = (type: string) => {
+        switch (type) {
+            case 'morning_in': return 'Sáng - Vào';
+            case 'morning_out': return 'Sáng - Ra';
+            case 'noon_in': return 'Trưa - Vào';
+            case 'noon_out': return 'Trưa - Ra';
+            case 'evening_in': return 'Tối - Vào';
+            case 'evening_out': return 'Tối - Ra';
+            default: return type;
+        }
     };
-
-    const TypeIconSVGs = {
-        morning_in: (
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
-            </svg>
-        ),
-        morning_out: (
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-4.773-4.227l-1.591 1.591M5.25 12H3m4.227-4.773L5.636 5.636M15.75 12a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0z" />
-            </svg>
-        ),
-        evening_in: (
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
-            </svg>
-        ),
-        evening_out: (
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21a9.753 9.753 0 009.002-5.998z" />
-            </svg>
-        )
-    };
-
-    const getTypeIcon = (type: CheckinType): React.ReactNode => TypeIconSVGs[type];
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-purple-900">
+        <div className="min-h-screen bg-slate-900 flex flex-col pt-16 px-4 pb-4 gap-4 lg:flex-row">
             {/* Header */}
-            <div className="absolute top-0 left-0 right-0 z-10 p-4 flex justify-between items-center">
-                {onBack && (
-                    <button onClick={onBack} className="px-4 py-2 bg-white/10 backdrop-blur-sm text-white rounded-xl font-bold text-sm hover:bg-white/20">
-                        ← Quay lại
-                    </button>
-                )}
-                <div className="bg-white/10 backdrop-blur-sm px-4 py-2 rounded-xl flex items-center gap-2">
-                    <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 12l8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.125c0 .621.504 1.125 1.125 1.125H9.75v-4.875c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21h4.125c.621 0 1.125-.504 1.125-1.125V9.75M8.25 21h8.25" />
-                    </svg>
-                    <p className="text-white text-sm font-bold">Check-in Nội trú</p>
-                </div>
-            </div>
-
-            {/* Main Content */}
-            <div className="flex flex-col lg:flex-row h-screen p-4 pt-20 gap-6">
-                {/* Camera View */}
-                <div className="flex-1 relative rounded-3xl overflow-hidden bg-black/30">
-                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
-
-                    {/* Face Detection Frame */}
-                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                        <div className={`w-64 h-72 border-2 transition-all ${faceDetected ? 'border-emerald-500' : 'border-white/30'} rounded-3xl`}>
-                            <div className={`absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 ${faceDetected ? 'border-emerald-500' : 'border-indigo-500'} rounded-tl-2xl`}></div>
-                            <div className={`absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 ${faceDetected ? 'border-emerald-500' : 'border-indigo-500'} rounded-tr-2xl`}></div>
-                            <div className={`absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 ${faceDetected ? 'border-emerald-500' : 'border-indigo-500'} rounded-bl-2xl`}></div>
-                            <div className={`absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 ${faceDetected ? 'border-emerald-500' : 'border-indigo-500'} rounded-br-2xl`}></div>
-                        </div>
-                    </div>
-
-                    {/* Face Status */}
-                    <div className="absolute top-4 left-1/2 -translate-x-1/2">
-                        <div className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 ${faceDetected ? 'bg-emerald-500/80 text-white' : 'bg-orange-500/80 text-white'}`}>
-                            {faceDetected ? (
-                                <><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" /></svg> Đã nhận diện khuôn mặt</>
-                            ) : (
-                                <><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg> Đưa khuôn mặt vào khung</>
-                            )}
-                        </div>
-                    </div>
-                </div>
-
-                {/* Control Panel */}
-                <div className="w-full lg:w-96 bg-white/10 backdrop-blur-xl rounded-3xl p-6 flex flex-col">
-                    {/* User Info */}
-                    {currentUser && (
-                        <div className="bg-white/10 rounded-2xl p-4 mb-6">
-                            <div className="flex items-center gap-4">
-                                <div className="w-14 h-14 bg-indigo-600 rounded-2xl flex items-center justify-center text-white">
-                                    <svg className="w-7 h-7" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                                    </svg>
-                                </div>
-                                <div>
-                                    <p className="text-white font-bold">{currentUser.full_name}</p>
-                                    <p className="text-indigo-200 text-sm">Phòng: {currentUser.room_id || 'Chưa xác định'}</p>
-                                    <p className="text-indigo-200 text-sm">Khu: {currentUser.zone || 'N/A'}</p>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Check-in Type Selection */}
-                    <div className="mb-6">
-                        <p className="text-white/60 text-xs uppercase font-bold mb-3">Loại check-in</p>
-                        <div className="grid grid-cols-2 gap-3">
-                            {(['morning_in', 'morning_out', 'evening_in', 'evening_out'] as CheckinType[]).map(type => (
-                                <button
-                                    key={type}
-                                    onClick={() => setSelectedType(type)}
-                                    className={`p-4 rounded-2xl text-left transition-all ${selectedType === type
-                                        ? 'bg-indigo-600 text-white ring-2 ring-indigo-400'
-                                        : 'bg-white/10 text-white/70 hover:bg-white/20'
-                                        }`}
-                                >
-                                    <span className="text-2xl">{getTypeIcon(type)}</span>
-                                    <p className="text-xs font-bold mt-2">{getTypeLabel(type)}</p>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Today's Record */}
-                    {todayRecord && (
-                        <div className="bg-emerald-500/20 rounded-2xl p-4 mb-6">
-                            <p className="text-emerald-300 text-xs uppercase font-bold mb-2">Hôm nay</p>
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                                <div className="text-white/60">Sáng vào: <span className="text-white">{todayRecord.morning_in ? '✅' : '—'}</span></div>
-                                <div className="text-white/60">Sáng ra: <span className="text-white">{todayRecord.morning_out ? '✅' : '—'}</span></div>
-                                <div className="text-white/60">Tối vào: <span className="text-white">{todayRecord.evening_in ? '✅' : '—'}</span></div>
-                                <div className="text-white/60">Tối ra: <span className="text-white">{todayRecord.evening_out ? '✅' : '—'}</span></div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Check-in Button */}
-                    <button
-                        onClick={handleCheckin}
-                        disabled={isProcessing || !faceDetected}
-                        className={`w-full py-5 rounded-2xl font-black text-lg flex items-center justify-center gap-3 transition-all mt-auto ${isProcessing || !faceDetected
-                            ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
-                            : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:scale-[1.02]'
-                            }`}
-                    >
-                        {isProcessing ? (
-                            <>
-                                <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin"></div>
-                                ĐANG XỬ LÝ...
-                            </>
-                        ) : (
-                            <>
-                                <span className="text-2xl">{getTypeIcon(selectedType)}</span>
-                                CHECK-IN {getTypeLabel(selectedType).toUpperCase()}
-                            </>
-                        )}
-                    </button>
-                </div>
-            </div>
-
-            {/* Result Modal */}
-            {result && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl">
-                        <div className={`w-24 h-24 rounded-full flex items-center justify-center mx-auto mb-6 ${result.success ? 'bg-emerald-50' : 'bg-red-50'}`}>
-                            {result.success ? (
-                                <svg className="w-12 h-12 text-emerald-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                            ) : (
-                                <svg className="w-12 h-12 text-red-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                            )}
-                        </div>
-                        <h2 className={`text-2xl font-black mb-2 ${result.success ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {result.success ? 'Thành công!' : 'Thất bại'}
-                        </h2>
-                        <p className="text-slate-500 mb-6">{result.message}</p>
-                        <button
-                            onClick={() => setResult(null)}
-                            className={`w-full py-4 rounded-2xl font-black ${result.success ? 'bg-emerald-600 text-white hover:bg-emerald-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
-                        >
-                            ĐÓNG
+            <div className="absolute top-0 left-0 right-0 h-16 bg-slate-800/80 backdrop-blur-md flex items-center justify-between px-4 z-20 border-b border-white/10">
+                <div className="flex items-center gap-3">
+                    {onBack && (
+                        <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-lg text-white transition-colors">
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
                         </button>
+                    )}
+                    <h1 className="text-xl font-bold text-white flex items-center gap-2">
+                        <span className="bg-indigo-600 p-1.5 rounded-lg"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" /></svg></span>
+                        Check-in Học sinh
+                    </h1>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+                    <span className="text-white/60 text-sm font-mono">{new Date().toLocaleTimeString('vi-VN')}</span>
+                </div>
+            </div>
+
+            {/* Left: Camera */}
+            <div className="flex-1 relative bg-black rounded-3xl overflow-hidden shadow-2xl border border-white/10 group">
+                <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+
+                {/* Overlay UI */}
+                <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-6">
+                    {/* Status Badge */}
+                    <div className="self-center">
+                        {isProcessing ? (
+                            <div className="bg-indigo-600/90 text-white px-6 py-2 rounded-full font-bold animate-pulse shadow-lg backdrop-blur-sm border border-indigo-400">
+                                🔄 Đang xử lý...
+                            </div>
+                        ) : detectedPerson ? (
+                            <div className="bg-emerald-600/90 text-white px-6 py-2 rounded-full font-bold shadow-lg backdrop-blur-sm border border-emerald-400 flex items-center gap-2">
+                                <span className="w-2 h-2 bg-white rounded-full animate-ping"></span>
+                                {detectedPerson.name} ({detectedPerson.confidence}%)
+                            </div>
+                        ) : (
+                            <div className="bg-slate-900/60 text-white/70 px-6 py-2 rounded-full text-sm backdrop-blur-sm border border-white/10">
+                                📷 Đang tìm khuôn mặt...
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Face Frame */}
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 border-2 border-white/30 rounded-3xl transition-all duration-300 group-hover:border-white/50">
+                        {faceDetected && !isProcessing && (
+                            <div className="absolute inset-0 border-4 border-emerald-500 rounded-3xl animate-pulse shadow-[0_0_30px_rgba(16,185,129,0.3)]"></div>
+                        )}
+                        <div className="absolute top-0 left-0 w-8 h-8 border-t-4 border-l-4 border-white rounded-tl-xl"></div>
+                        <div className="absolute top-0 right-0 w-8 h-8 border-t-4 border-r-4 border-white rounded-tr-xl"></div>
+                        <div className="absolute bottom-0 left-0 w-8 h-8 border-b-4 border-l-4 border-white rounded-bl-xl"></div>
+                        <div className="absolute bottom-0 right-0 w-8 h-8 border-b-4 border-r-4 border-white rounded-br-xl"></div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Right: Controls */}
+            <div className="w-full lg:w-96 flex flex-col gap-4">
+                {/* Mode Selector */}
+                <div className="bg-slate-800/50 backdrop-blur-md p-5 rounded-3xl border border-white/10 shadow-xl">
+                    <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2 text-sm uppercase tracking-wider">
+                        <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        Chọn khung giờ
+                    </h3>
+                    <div className="grid grid-cols-2 gap-3">
+                        {(['morning_in', 'morning_out', 'noon_in', 'noon_out', 'evening_in', 'evening_out'] as CheckinType[]).map(type => (
+                            <button
+                                key={type}
+                                onClick={() => setSelectedType(type)}
+                                className={`relative p-3 rounded-2xl text-left transition-all duration-200 border ${selectedType === type
+                                    ? 'bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-900/50 scale-[1.02]'
+                                    : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10'
+                                    }`}
+                            >
+                                <div className="text-xs font-bold uppercase mb-1 opacity-70">
+                                    {type.includes('morning') ? 'Sáng' : type.includes('noon') ? 'Trưa' : 'Tối'}
+                                </div>
+                                <div className={`text-lg font-black ${selectedType === type ? 'text-white' : 'text-slate-300'}`}>
+                                    {type.includes('in') ? 'Vào ⬇️' : 'Ra ⬆️'}
+                                </div>
+                                {selectedType === type && (
+                                    <div className="absolute top-2 right-2 w-2 h-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_10px_#34d399]"></div>
+                                )}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Recent Use */}
+                <div className="flex-1 bg-slate-800/50 backdrop-blur-md p-5 rounded-3xl border border-white/10 shadow-xl overflow-hidden flex flex-col">
+                    <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2 text-sm uppercase tracking-wider">
+                        <svg className="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        Vừa Check-in
+                    </h3>
+                    <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
+                        {recentCheckins.length === 0 ? (
+                            <div className="text-center text-slate-500 py-10 italic">
+                                Chưa có check-in nào
+                            </div>
+                        ) : (
+                            recentCheckins.map((item, i) => (
+                                <div key={i} className="flex items-center gap-3 bg-white/5 p-3 rounded-2xl hover:bg-white/10 transition-colors animate-fade-in-down border border-white/5">
+                                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white text-sm shadow-md">
+                                        {item.name.charAt(0)}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="text-white font-bold truncate">{item.name}</p>
+                                        <p className="text-indigo-300 text-xs flex items-center gap-1">
+                                            {item.type} • {item.time}
+                                        </p>
+                                    </div>
+                                    <div className="text-emerald-400">
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            </div>
+
+            {/* Success Popup */}
+            {result && result.success && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+                    <div className="bg-slate-800 border border-slate-700 p-8 rounded-[2rem] shadow-2xl max-w-sm w-full text-center relative overflow-hidden animate-scale-in">
+                        {/* Glow effect */}
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 bg-emerald-500/20 blur-[50px] rounded-full pointer-events-none"></div>
+
+                        <div className="w-24 h-24 mx-auto bg-gradient-to-br from-emerald-400 to-teal-500 rounded-full flex items-center justify-center mb-6 shadow-lg shadow-emerald-500/30">
+                            <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                        </div>
+
+                        <h2 className="text-3xl font-black text-white mb-2 tracking-tight">{result.user?.full_name}</h2>
+                        <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 px-4 py-1 rounded-full inline-block font-bold text-sm mb-6">
+                            {result.message}
+                        </div>
+
+                        <p className="text-slate-400 text-sm">Cửa sổ sẽ đóng tự động...</p>
                     </div>
                 </div>
             )}
