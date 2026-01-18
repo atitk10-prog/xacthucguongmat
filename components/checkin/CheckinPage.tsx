@@ -342,8 +342,16 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         if (match) {
                             const lastCheckin = checkinCooldowns.get(match.userId);
                             if (lastCheckin && Date.now() - lastCheckin < COOLDOWN_PERIOD) {
-                                // Already checked in - just show status, don't retry
+                                // Already checked in - show message and continue
                                 setRecognizedPerson({ id: match.userId, name: match.name, confidence: match.confidence });
+                                // Show "already checked in" message if not already showing
+                                if (!result) {
+                                    setResult({
+                                        success: true,
+                                        message: `✅ ${match.name} đã check-in sự kiện rồi!`,
+                                        userName: match.name
+                                    });
+                                }
                                 setTimeout(() => { animationId = requestAnimationFrame(detectLoop); }, 500);
                                 return;
                             }
