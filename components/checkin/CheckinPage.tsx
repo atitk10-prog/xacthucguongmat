@@ -108,8 +108,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
     // New states for improvements
     const [autoCheckInMode, setAutoCheckInMode] = useState(true);
-    const [checkinMode, setCheckinMode] = useState<'student' | 'event'>('student'); // 'student' (points) or 'event' (no points)
-    const [enableSuccessPopup, setEnableSuccessPopup] = useState(true);
+    // const [checkinMode, setCheckinMode] = useState<'student' | 'event'>('student'); // REMOVED: Using event.checkin_mode
+    // const [enableSuccessPopup, setEnableSuccessPopup] = useState(true); // REMOVED: Using event.enable_popup
     const [faceStableTime, setFaceStableTime] = useState(0);
     const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
     // lastFaceDetectedTime removed (duplicate)
@@ -341,9 +341,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                     if (hasMatch && lastTime) {
                         const stableMs = Date.now() - lastTime;
-                        setFaceStableTime(Math.min(stableMs, 500));
+                        setFaceStableTime(Math.min(stableMs, 3000));
 
-                        if (stableMs >= 500) {
+                        if (stableMs >= 3000) {
                             console.log('🚀 INSTANT Check-in for:', currentMatch?.name);
                             autoCheckInRef.current = true;
                             handleCheckIn();
@@ -351,8 +351,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     } else if (!facesLoaded && lastTime) {
                         // Non-face event
                         const stableMs = Date.now() - lastTime;
-                        setFaceStableTime(Math.min(stableMs, 1000)); // Reduced from 1500
-                        if (stableMs >= 1000) {
+                        setFaceStableTime(Math.min(stableMs, 3000));
+                        if (stableMs >= 3000) {
                             autoCheckInRef.current = true;
                             handleCheckIn();
                         }
@@ -455,7 +455,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 user_id: checkInUserId,
                 face_confidence: faceConfidence,
                 face_verified: faceVerified || !event.require_face,
-                checkin_mode: checkinMode
+                checkin_mode: event.checkin_mode || 'student'
             });
 
             if (checkinResult.success && checkinResult.data) {
@@ -469,7 +469,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 });
 
                 // Show fullscreen success overlay if enabled
-                if (enableSuccessPopup) {
+                const shouldShowPopup = event.enable_popup !== undefined ? event.enable_popup : true;
+                if (shouldShowPopup) {
                     setShowSuccessOverlay(true);
                     // Auto hide success overlay after 2 seconds (faster)
                     setTimeout(() => {
@@ -687,40 +688,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 </div>
 
                 {/* Advanced Settings Controls - Bottom Right */}
-                <div className="absolute bottom-6 right-6 z-20 flex flex-col gap-2">
-                    {/* Check-in Mode Toggle */}
-                    <div className="bg-black/40 backdrop-blur-md rounded-xl p-2 border border-white/10 shadow-lg cursor-pointer hover:bg-black/50 transition-colors"
-                        onClick={() => setCheckinMode(prev => prev === 'student' ? 'event' : 'student')}
-                    >
-                        <p className="text-[10px] text-white/50 font-bold uppercase mb-1 px-1">Chế độ</p>
-                        <div className="flex items-center gap-2">
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center transition-colors ${checkinMode === 'student' ? 'bg-indigo-500 text-white' : 'bg-white/10 text-white/40'}`}>
-                                <span className="text-lg">🎓</span>
-                            </div>
-                            <div className="pr-2">
-                                <p className={`text-sm font-bold ${checkinMode === 'student' ? 'text-white' : 'text-white/60'}`}>Học sinh</p>
-                                <p className="text-[10px] text-white/40">{checkinMode === 'student' ? 'Tính điểm' : 'Không điểm'}</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Popup Toggle */}
-                    <div className="bg-black/40 backdrop-blur-md rounded-xl p-2 border border-white/10 shadow-lg cursor-pointer hover:bg-black/50 transition-colors"
-                        onClick={() => setEnableSuccessPopup(prev => !prev)}
-                    >
-                        <div className="flex items-center justify-between gap-3">
-                            <div>
-                                <p className="text-[10px] text-white/50 font-bold uppercase mb-0.5 px-1">Popup</p>
-                                <p className={`text-sm font-bold px-1 ${enableSuccessPopup ? 'text-emerald-400' : 'text-white/40'}`}>
-                                    {enableSuccessPopup ? 'Bật' : 'Tắt'}
-                                </p>
-                            </div>
-                            <div className={`w-10 h-6 rounded-full p-1 transition-colors ${enableSuccessPopup ? 'bg-emerald-500' : 'bg-white/20'}`}>
-                                <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-transform ${enableSuccessPopup ? 'translate-x-4' : 'translate-x-0'}`} />
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                {/* Advanced Settings Controls REMOVED - Managed in Event Settings */}
 
                 {/* Main Camera View */}
                 <div className="w-full h-full relative bg-black overflow-hidden group">
@@ -746,7 +714,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                     <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
                                         <div
                                             className="h-full bg-gradient-to-r from-emerald-400 to-teal-400 rounded-full transition-all duration-150"
-                                            style={{ width: `${Math.min((faceStableTime / 1500) * 100, 100)}%` }}
+                                            style={{ width: `${Math.min((faceStableTime / 3000) * 100, 100)}%` }}
                                         />
                                     </div>
                                     <p className="text-center text-white/70 text-xs mt-1">

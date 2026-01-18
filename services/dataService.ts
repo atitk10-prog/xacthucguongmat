@@ -468,6 +468,20 @@ async function getEventParticipants(eventId: string): Promise<ApiResponse<EventP
     }
 }
 
+async function getEventParticipantCount(eventId: string): Promise<ApiResponse<number>> {
+    try {
+        const { count, error } = await supabase
+            .from('event_participants')
+            .select('*', { count: 'exact', head: true })
+            .eq('event_id', eventId);
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: count || 0 };
+    } catch (err) {
+        return { success: false, error: 'Lỗi đếm số lượng người tham gia' };
+    }
+}
+
 async function saveEventParticipants(
     eventId: string,
     participants: Partial<EventParticipant>[]
@@ -1003,6 +1017,7 @@ export const dataService = {
 
     // Participants
     getEventParticipants,
+    getEventParticipantCount,
     saveEventParticipants,
     deleteEventParticipant,
 

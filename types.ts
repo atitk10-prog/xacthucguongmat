@@ -74,6 +74,8 @@ export interface Event {
   created_by: string;
   status: EventStatus;
   participants?: string[]; // Array of user IDs
+  checkin_mode?: 'student' | 'event';
+  enable_popup?: boolean;
 }
 
 export type CheckinStatus = 'on_time' | 'late' | 'absent';

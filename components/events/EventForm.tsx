@@ -40,7 +40,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
     const [formData, setFormData] = useState({
         name: '', type: 'học_tập' as EventType, start_time: '', end_time: '', location: '',
         target_audience: 'all', late_threshold_mins: 15, points_on_time: 10, points_late: -5,
-        points_absent: -10, require_face: false, face_threshold: 40
+        points_absent: -10, require_face: false, face_threshold: 40, checkin_mode: 'student' as 'student' | 'event',
+        enable_popup: true
     });
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
@@ -69,7 +70,9 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                 end_time: editingEvent.end_time.slice(0, 16), location: editingEvent.location, target_audience: editingEvent.target_audience,
                 late_threshold_mins: editingEvent.late_threshold_mins, points_on_time: editingEvent.points_on_time,
                 points_late: editingEvent.points_late, points_absent: editingEvent.points_absent,
-                require_face: editingEvent.require_face, face_threshold: editingEvent.face_threshold
+                require_face: editingEvent.require_face, face_threshold: editingEvent.face_threshold,
+                checkin_mode: editingEvent.checkin_mode || 'student',
+                enable_popup: editingEvent.enable_popup !== undefined ? editingEvent.enable_popup : true
             });
             if (editingEvent.participants) {
                 setSelectedExistingUsers(editingEvent.participants);
@@ -571,24 +574,56 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                             <div className="border-t border-slate-100 pt-6">
                                 <h3 className="text-lg font-black text-slate-900 mb-4 flex items-center gap-2"><span className="w-1 h-6 bg-indigo-600 rounded-full"></span>Cài đặt Check-in</h3>
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    <div className="md:col-span-3 mb-4">
+                                        <label className="block text-xs font-black text-slate-400 uppercase mb-2">Chế độ điểm danh</label>
+                                        <div className="flex bg-slate-100 p-1 rounded-xl w-fit">
+                                            <button
+                                                type="button"
+                                                onClick={() => setFormData({ ...formData, checkin_mode: 'student' })}
+                                                className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all ${!formData.checkin_mode || formData.checkin_mode === 'student' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+                                            >
+                                                <span className="text-lg">🎓</span> Học sinh (Tính điểm)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setFormData({ ...formData, checkin_mode: 'event' })}
+                                                className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 transition-all ${formData.checkin_mode === 'event' ? 'bg-white shadow-sm text-indigo-600' : 'text-slate-500 hover:text-slate-700'}`}
+                                            >
+                                                <span className="text-lg">📅</span> Sự kiện (Không điểm)
+                                            </button>
+                                        </div>
+                                    </div>
+
                                     <div>
                                         <label className="block text-xs font-black text-slate-400 uppercase mb-2">Thời gian đi muộn (phút)</label>
                                         <input type="number" value={formData.late_threshold_mins} onChange={(e) => setFormData({ ...formData, late_threshold_mins: parseInt(e.target.value) })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
                                     </div>
-                                    <div>
-                                        <label className="block text-xs font-black text-slate-400 uppercase mb-2">Điểm đúng giờ</label>
-                                        <input type="number" value={formData.points_on_time} onChange={(e) => setFormData({ ...formData, points_on_time: parseInt(e.target.value) })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
-                                    </div>
-                                    <div>
-                                        <label className="block text-xs font-black text-slate-400 uppercase mb-2">Điểm đi muộn</label>
-                                        <input type="number" value={formData.points_late} onChange={(e) => setFormData({ ...formData, points_late: parseInt(e.target.value) })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
-                                    </div>
+
+                                    {(!formData.checkin_mode || formData.checkin_mode === 'student') && (
+                                        <>
+                                            <div>
+                                                <label className="block text-xs font-black text-slate-400 uppercase mb-2">Điểm đúng giờ</label>
+                                                <input type="number" value={formData.points_on_time} onChange={(e) => setFormData({ ...formData, points_on_time: parseInt(e.target.value) })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-black text-slate-400 uppercase mb-2">Điểm đi muộn</label>
+                                                <input type="number" value={formData.points_late} onChange={(e) => setFormData({ ...formData, points_late: parseInt(e.target.value) })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
 
                                 <div className="mt-6 p-4 bg-indigo-50 rounded-2xl">
                                     <label className="flex items-center justify-between cursor-pointer">
                                         <div><p className="font-bold text-slate-900">Xác nhận khuôn mặt</p><p className="text-sm text-slate-500">Yêu cầu quét khuôn mặt khi check-in</p></div>
                                         <input type="checkbox" checked={formData.require_face} onChange={(e) => setFormData({ ...formData, require_face: e.target.checked })} className="w-6 h-6 rounded accent-indigo-600" />
+                                    </label>
+                                </div>
+
+                                <div className="mt-4 p-4 bg-emerald-50 rounded-2xl">
+                                    <label className="flex items-center justify-between cursor-pointer">
+                                        <div><p className="font-bold text-slate-900">Popup thành công</p><p className="text-sm text-slate-500">Hiển thị màn hình chúc mừng khi check-in</p></div>
+                                        <input type="checkbox" checked={formData.enable_popup} onChange={(e) => setFormData({ ...formData, enable_popup: e.target.checked })} className="w-6 h-6 rounded accent-emerald-600" />
                                     </label>
                                 </div>
                             </div>
