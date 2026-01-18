@@ -156,27 +156,26 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     console.log('👥 Loaded participants:', loadedParticipants.length, loadedParticipants.map(p => ({ name: p.full_name, hasAvatar: !!p.avatar_url, avatarLength: p.avatar_url?.length || 0 })));
                     setParticipants(loadedParticipants);
 
-                    // Generate face descriptors for each participant with avatar
-                    let loadedCount = 0;
-                    for (const participant of loadedParticipants) {
-                        if (participant.avatar_url) {
-                            try {
-                                console.log(`🖼️ Loading face for: ${participant.full_name}`);
-                                const img = await base64ToImage(participant.avatar_url);
-                                const descriptor = await faceService.getFaceDescriptor(img);
-                                if (descriptor) {
-                                    faceMatcher.addFace(participant.id, descriptor, participant.full_name);
-                                    participant.hasFaceDescriptor = true;
-                                    loadedCount++;
-                                    console.log(`✅ Face loaded for: ${participant.full_name}`);
-                                } else {
-                                    console.warn(`⚠️ No face detected in image for: ${participant.full_name}`);
-                                }
-                            } catch (err) {
-                                console.error(`❌ Failed to load face for ${participant.full_name}:`, err);
+                    // Generate face descriptors in PARALLEL (much faster!)
+                    const participantsWithAvatars = loadedParticipants.filter(p => p.avatar_url);
+
+                    const loadFacePromises = participantsWithAvatars.map(async (participant) => {
+                        try {
+                            const img = await base64ToImage(participant.avatar_url!);
+                            const descriptor = await faceService.getFaceDescriptor(img);
+                            if (descriptor) {
+                                faceMatcher.addFace(participant.id, descriptor, participant.full_name);
+                                participant.hasFaceDescriptor = true;
+                                return true;
                             }
+                        } catch (err) {
+                            console.error(`❌ Failed to load face for ${participant.full_name}:`, err);
                         }
-                    }
+                        return false;
+                    });
+
+                    const results = await Promise.all(loadFacePromises);
+                    const loadedCount = results.filter(Boolean).length;
 
                     console.log(`✅ Total: Loaded ${loadedCount} face descriptors for ${loadedParticipants.length} participants`);
                     setFacesLoaded(true);
@@ -212,7 +211,16 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 setStream(mediaStream);
                 if (videoRef.current) videoRef.current.srcObject = mediaStream;
             } catch (err) {
-                setCameraError('Không thể truy cập camera.');
+                const errorMessage = err instanceof Error ? err.message : 'Lỗi không xác định';
+                if (errorMessage.includes('Permission denied') || errorMessage.includes('NotAllowedError')) {
+                    setCameraError('Vui lòng cho phép truy cập camera trong cài đặt trình duyệt.');
+                } else if (errorMessage.includes('NotFoundError')) {
+                    setCameraError('Không tìm thấy camera. Vui lòng kiểm tra thiết bị.');
+                } else if (!window.location.protocol.includes('https') && !window.location.hostname.includes('localhost')) {
+                    setCameraError('Camera yêu cầu HTTPS. Vui lòng truy cập qua HTTPS.');
+                } else {
+                    setCameraError('Không thể truy cập camera. Vui lòng kiểm tra quyền truy cập trong trình duyệt.');
+                }
             }
         };
         startCamera();

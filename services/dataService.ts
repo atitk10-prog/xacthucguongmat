@@ -464,32 +464,37 @@ async function saveEventParticipants(
     participants: Partial<EventParticipant>[]
 ): Promise<ApiResponse<EventParticipant[]>> {
     try {
+        // Separate new and existing participants
+        const newParticipants = participants.filter(p => !p.id || p.id.startsWith('new_') || p.id.startsWith('import_'));
+        const existingParticipants = participants.filter(p => p.id && !p.id.startsWith('new_') && !p.id.startsWith('import_'));
+
         const savedParticipants: EventParticipant[] = [];
 
-        for (const p of participants) {
-            const isNew = !p.id || p.id.startsWith('new_') || p.id.startsWith('import_');
+        // Batch insert new participants (much faster!)
+        if (newParticipants.length > 0) {
+            const insertData = newParticipants.map(p => ({
+                event_id: eventId,
+                full_name: p.full_name,
+                avatar_url: p.avatar_url || null,
+                birth_date: p.birth_date || null,
+                organization: p.organization || null,
+                address: p.address || null
+            }));
 
-            if (isNew) {
-                // Insert new participant
-                const { data, error } = await supabase
-                    .from('event_participants')
-                    .insert({
-                        event_id: eventId,
-                        full_name: p.full_name,
-                        avatar_url: p.avatar_url,
-                        birth_date: p.birth_date,
-                        organization: p.organization,
-                        address: p.address
-                    })
-                    .select()
-                    .single();
+            const { data, error } = await supabase
+                .from('event_participants')
+                .insert(insertData)
+                .select();
 
-                if (!error && data) {
-                    savedParticipants.push(data as EventParticipant);
-                }
-            } else {
-                // Update existing participant
-                const { data, error } = await supabase
+            if (!error && data) {
+                savedParticipants.push(...(data as EventParticipant[]));
+            }
+        }
+
+        // Update existing participants in parallel
+        if (existingParticipants.length > 0) {
+            const updatePromises = existingParticipants.map(p =>
+                supabase
                     .from('event_participants')
                     .update({
                         full_name: p.full_name,
@@ -500,12 +505,15 @@ async function saveEventParticipants(
                     })
                     .eq('id', p.id)
                     .select()
-                    .single();
+                    .single()
+            );
 
-                if (!error && data) {
-                    savedParticipants.push(data as EventParticipant);
+            const results = await Promise.all(updatePromises);
+            results.forEach(r => {
+                if (!r.error && r.data) {
+                    savedParticipants.push(r.data as EventParticipant);
                 }
-            }
+            });
         }
 
         clearCache('participants');
