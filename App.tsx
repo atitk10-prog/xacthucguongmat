@@ -263,16 +263,15 @@ const App: React.FC = () => {
 // Dashboard
 const DashboardView: React.FC<{ setView: (view: AppView) => void; currentUser: User }> = ({ setView, currentUser }) => {
   const [stats, setStats] = useState<{
-    total_users: number;
-    total_students: number;
-    total_events: number;
-    active_events: number;
-    today_checkins: number;
+    totalUsers: number;
+    totalEvents: number;
+    totalCheckins: number;
+    todayCheckins: number;
   } | null>(null);
 
   useEffect(() => {
     const loadStats = async () => {
-      const result = await dataService.getDashboard();
+      const result = await dataService.getDashboardStats();
       if (result.success && result.data) setStats(result.data);
     };
     loadStats();
@@ -293,10 +292,10 @@ const DashboardView: React.FC<{ setView: (view: AppView) => void; currentUser: U
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={Icons.users} label="Tổng người dùng" value={stats?.total_users || 0} color="indigo" />
-        <StatCard icon={Icons.student} label="Học sinh" value={stats?.total_students || 0} color="emerald" />
-        <StatCard icon={Icons.events} label="Tổng sự kiện" value={stats?.total_events || 0} color="amber" />
-        <StatCard icon={Icons.checkin} label="Check-in hôm nay" value={stats?.today_checkins || 0} color="purple" />
+        <StatCard icon={Icons.users} label="Tổng người dùng" value={stats?.totalUsers || 0} color="indigo" />
+        <StatCard icon={Icons.events} label="Tổng sự kiện" value={stats?.totalEvents || 0} color="emerald" />
+        <StatCard icon={Icons.checkin} label="Tổng check-in" value={stats?.totalCheckins || 0} color="amber" />
+        <StatCard icon={Icons.checkin} label="Check-in hôm nay" value={stats?.todayCheckins || 0} color="purple" />
       </div>
 
       {/* Quick Actions */}
