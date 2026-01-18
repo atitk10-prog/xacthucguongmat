@@ -304,8 +304,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 return;
             }
 
-            // Skip if already processing or showing result
-            if (isProcessing || result || checkInAttempted) {
+            // Skip if already processing or attempted
+            if (isProcessing || checkInAttempted) {
                 setTimeout(() => {
                     animationId = requestAnimationFrame(detectLoop);
                 }, 500);
