@@ -200,17 +200,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                     const loadFacePromises = participantsWithAvatars.map(async (participant) => {
                         try {
-                            // 1. Try to use stored descriptor (INSTANT)
-                            if (participant.face_descriptor) {
-                                try {
-                                    const descriptor = stringToDescriptor(participant.face_descriptor);
-                                    faceMatcher.addFace(participant.id, descriptor, participant.full_name);
-                                    participant.hasFaceDescriptor = true;
-                                    return true;
-                                } catch (e) {
-                                    console.warn('Invalid stored descriptor for:', participant.full_name);
-                                }
-                            }
+                            // ALWAYS compute from image to ensure using correct model (ssdMobilenetv1)
+                            // Previously stored descriptors may be from different model (TinyFaceDetector)
 
                             // 2. Fallback: Compute from Image (SLOW) & Save to DB
                             const img = await base64ToImage(participant.avatar_url!);
