@@ -295,7 +295,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 return;
             }
 
-            // Skip if already processing or attempted
+            // Skip if already processing or attempted check-in
             if (isProcessing || checkInAttempted) {
                 setTimeout(() => {
                     animationId = requestAnimationFrame(detectLoop);
@@ -306,6 +306,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             try {
                 const detections = await faceService.detectFaces(videoRef.current);
                 const faceCount = detections.length;
+                console.log(`👁️ Detected ${faceCount} face(s), facesLoaded=${facesLoaded}, modelsReady=${modelsReady}`);
 
                 setMultipleFaces(faceCount > 1);
                 const singleFaceDetected = faceCount === 1;
