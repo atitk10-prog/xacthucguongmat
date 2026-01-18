@@ -95,6 +95,8 @@ export interface EventCheckin {
   participants?: {
     full_name: string;
     avatar_url?: string;
+    student_code?: string;
+    organization?: string;
   };
 }
 

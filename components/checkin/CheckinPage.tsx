@@ -134,6 +134,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         }
     }, [notification]);
 
+    // Modal state for user details
+    const [selectedUser, setSelectedUser] = useState<any>(null);
+
     // States for face recognition check-in
     const [participants, setParticipants] = useState<EventParticipant[]>([]);
     const [loadingFaces, setLoadingFaces] = useState(false);
@@ -259,7 +262,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         name: c.participants?.full_name || 'Unknown',
                         time: new Date(c.checkin_time).toLocaleTimeString('vi-VN'),
                         image: c.participants?.avatar_url,
-                        status: c.status
+                        status: c.status,
+                        // Extra fields for details modal
+                        student_code: c.participants?.student_code || 'N/A',
+                        organization: c.participants?.organization || 'N/A',
+                        points: c.points_earned
                     }));
                     setRecentCheckins(mapped);
                     console.log(`📋 Loaded ${mapped.length} recent check-ins`);
@@ -1003,8 +1010,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             </div>
                         ) : (
                             recentCheckins.map((item, idx) => (
-                                <div key={idx} className={`flex items-center gap-3 rounded-xl p-3 transition-all ${idx === 0 ? 'bg-emerald-900/50 border border-emerald-700/50 animate-slide-in' : 'bg-slate-700/50'
-                                    }`}>
+                                <div key={idx}
+                                    onClick={() => setSelectedUser(item)}
+                                    className={`flex items-center gap-3 rounded-xl p-3 transition-all cursor-pointer hover:bg-slate-600/50 ${idx === 0 ? 'bg-emerald-900/50 border border-emerald-700/50 animate-slide-in' : 'bg-slate-700/50'
+                                        }`}>
                                     {item.image ? (
                                         <img src={item.image} alt={item.name} className="w-12 h-12 rounded-xl object-cover" />
                                     ) : (
@@ -1075,6 +1084,45 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 .animate-shrink { animation: shrink 4s linear forwards; }
                 .animate-slide-in { animation: slide-in 0.3s ease-out; }
             `}</style>
+            {/* User Details Modal */}
+            {selectedUser && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in" onClick={() => setSelectedUser(null)}>
+                    <div className="bg-slate-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-slate-700 animate-scale-in" onClick={e => e.stopPropagation()}>
+                        <div className="text-center">
+                            {selectedUser.image ? (
+                                <img src={selectedUser.image} alt={selectedUser.name} className="w-32 h-32 rounded-full object-cover mx-auto mb-4 border-4 border-indigo-500 shadow-xl" />
+                            ) : (
+                                <div className="w-32 h-32 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white font-black text-4xl mx-auto mb-4 shadow-xl border-4 border-white/10">
+                                    {selectedUser.name?.charAt(0)}
+                                </div>
+                            )}
+
+                            <h3 className="text-2xl font-bold text-white mb-1">{selectedUser.name}</h3>
+                            <p className="text-indigo-300 font-medium mb-4">{selectedUser.student_code} • {selectedUser.organization}</p>
+
+                            <div className="grid grid-cols-2 gap-3 mb-6">
+                                <div className="bg-slate-700/50 p-3 rounded-xl border border-slate-600">
+                                    <p className="text-slate-400 text-xs">Thời gian check-in</p>
+                                    <p className="text-white font-bold">{selectedUser.time}</p>
+                                </div>
+                                <div className="bg-slate-700/50 p-3 rounded-xl border border-slate-600">
+                                    <p className="text-slate-400 text-xs">Trạng thái</p>
+                                    <p className={`${selectedUser.status === 'on_time' ? 'text-emerald-400' : 'text-amber-400'} font-bold`}>
+                                        {selectedUser.status === 'on_time' ? 'Đúng giờ' : 'Đi muộn'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            <button
+                                onClick={() => setSelectedUser(null)}
+                                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-colors"
+                            >
+                                Đóng
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
     );
 };

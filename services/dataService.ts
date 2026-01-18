@@ -398,7 +398,7 @@ async function checkin(data: {
         // Check if user_id looks like a UUID (36 chars with dashes)
         const isValidUUID = data.user_id && data.user_id.length === 36 && data.user_id.includes('-');
 
-        const { data: newCheckin, error: checkinError } = await supabase
+        let { data: newCheckin, error: checkinError } = await supabase
             .from('checkins')
             .insert({
                 event_id: data.event_id,
@@ -411,6 +411,26 @@ async function checkin(data: {
             })
             .select()
             .single();
+
+        // RETRY: If Foreign Key violation (user not in event_participants), try inserting with null participant_id
+        if (checkinError && checkinError.code === '23503') {
+            const { data: retryData, error: retryError } = await supabase
+                .from('checkins')
+                .insert({
+                    event_id: data.event_id,
+                    participant_id: null, // Set to null to fallback
+                    checkin_time: checkinTime.toISOString(),
+                    status,
+                    face_confidence: data.face_confidence || 0,
+                    face_verified: data.face_verified || false,
+                    points_earned: points
+                })
+                .select()
+                .single();
+
+            newCheckin = retryData;
+            checkinError = retryError;
+        }
 
         if (checkinError) {
             return { success: false, error: checkinError.message };
@@ -432,7 +452,7 @@ async function getEventCheckins(eventId: string): Promise<ApiResponse<EventCheck
     try {
         const { data, error } = await supabase
             .from('checkins')
-            .select('*')
+            .select('*, participants:event_participants(full_name, avatar_url, student_code, organization)')
             .eq('event_id', eventId)
             .order('checkin_time', { ascending: false });
 
