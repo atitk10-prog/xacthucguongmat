@@ -145,16 +145,20 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
 
     const loadParticipantCounts = async (eventList: Event[]) => {
         try {
-            const counts: Record<string, number> = {};
-            // Load participant counts for each event
-            for (const event of eventList) {
+            // Load participant counts in PARALLEL (much faster!)
+            const countPromises = eventList.map(async (event) => {
                 const result = await dataService.getEventParticipants(event.id);
-                if (result.success && result.data) {
-                    counts[event.id] = result.data.length;
-                } else {
-                    counts[event.id] = 0;
-                }
-            }
+                return {
+                    eventId: event.id,
+                    count: result.success && result.data ? result.data.length : 0
+                };
+            });
+
+            const results = await Promise.all(countPromises);
+            const counts: Record<string, number> = {};
+            results.forEach(r => {
+                counts[r.eventId] = r.count;
+            });
             setParticipantCounts(counts);
         } catch (error) { console.error('Failed to load participant counts:', error); }
     };

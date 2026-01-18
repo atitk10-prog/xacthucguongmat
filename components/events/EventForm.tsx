@@ -160,9 +160,12 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
             if (result.success && result.data) {
                 const savedEvent = result.data;
 
-                // Save new participants to Event_Participants sheet
-                if (newParticipants.length > 0) {
-                    const participantsToSave = newParticipants.map(p => ({
+                // Only save TRULY NEW participants (isNew = true)
+                const trulyNewParticipants = newParticipants.filter(p => p.isNew);
+
+                if (trulyNewParticipants.length > 0) {
+                    const participantsToSave = trulyNewParticipants.map(p => ({
+                        id: p.id, // Pass ID so backend knows it's new (starts with 'new_')
                         full_name: p.full_name,
                         birth_date: p.birth_date || '',
                         organization: p.organization || '',
