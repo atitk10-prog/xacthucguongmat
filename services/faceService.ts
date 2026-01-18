@@ -123,9 +123,12 @@ export async function detectFaces(input: HTMLImageElement | HTMLVideoElement | H
 export function compareFaces(descriptor1: Float32Array, descriptor2: Float32Array): number {
     const distance = faceapi.euclideanDistance(descriptor1, descriptor2);
     // Convert distance to confidence percentage (0-100)
-    // Distance of 0 = 100% match, distance of 1.0 = 0% match (more lenient than before)
-    // Lower distance = higher confidence
-    const confidence = Math.max(0, Math.min(100, (1 - distance / 1.0) * 100));
+    // Distance of 0 = 100% match.
+    // We use 0.8 as the max acceptable distance for "some" confidence.
+    // Stricter than default (1.0).
+    // Threshold 40% => Distance < 0.48. (Very safe)
+    // Threshold 50% => Distance < 0.40. (Extremely safe)
+    const confidence = Math.max(0, Math.min(100, (1 - distance / 0.8) * 100));
     return Math.round(confidence);
 }
 
@@ -185,6 +188,18 @@ class FaceMatcherService {
         // Log optimization: Only log if there are candidates
         if (allScores.length > 0) {
             const scoresStr = topScores.map(s => `${s.name}: ${s.confidence}%`).join(', ');
+
+            // SECURITY CHECK: Ambiguity Detection
+            // If the top match is too close to the second best match (margin < 8%), we reject it to avoid false positives.
+            // Example: A (45%) vs B (43%) -> Reject.
+            if (allScores.length >= 2) {
+                const margin = allScores[0].confidence - allScores[1].confidence;
+                if (margin < 8 && bestMatch) {
+                    console.log(`⚠️ AMBIGUOUS MATCH IGNORED (Margin ${margin}% < 8%): ${scoresStr}`);
+                    return null; // Force retry
+                }
+            }
+
             console.log(`📊 Điểm tương đồng (ngưỡng=${threshold}%): ${scoresStr}${allScores.length > 5 ? '...' : ''} → ${bestMatch ? `KẾT QUẢ: ${bestMatch.name}` : 'KHÔNG TÌM THẤY'}`);
         }
 

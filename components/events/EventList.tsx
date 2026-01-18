@@ -474,7 +474,7 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                                 </div>
                                 <div className="flex items-center gap-2 text-slate-500">
                                     <span className="text-indigo-400">{Icons.clock}</span>
-                                    <span className="font-medium">{new Date(event.start_time).toLocaleString('vi-VN')}</span>
+                                    <span className="font-medium">{new Date(event.start_time).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric', hour12: true }).replace('am', 'AM').replace('pm', 'PM')}</span>
                                 </div>
                                 <div className="flex items-center gap-2 text-slate-500">
                                     <span className="text-indigo-400">{Icons.users}</span>
@@ -601,7 +601,7 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                         {/* Event Info */}
                         <div className="bg-slate-50 rounded-xl p-4 mb-4">
                             <p className="font-bold text-slate-900">{selectedEventForParticipants.name}</p>
-                            <p className="text-sm text-slate-500">{new Date(selectedEventForParticipants.start_time).toLocaleString('vi-VN')}</p>
+                            <p className="text-sm text-slate-500">{new Date(selectedEventForParticipants.start_time).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric', hour12: true }).replace('am', 'AM').replace('pm', 'PM')}</p>
                         </div>
 
                         {/* Quick Selection */}

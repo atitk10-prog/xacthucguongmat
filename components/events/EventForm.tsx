@@ -35,6 +35,76 @@ const Icons = {
     upload: <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>,
 };
 
+// Custom Time Input Component for AM/PM support
+const TimeInput = ({ value, onChange }: { value: string, onChange: (val: string) => void }) => {
+    // value is "HH:mm" (24h)
+    // Parse
+    let [h, m] = value && value.includes(':') ? value.split(':').map(Number) : [7, 0];
+    if (isNaN(h)) h = 7;
+    if (isNaN(m)) m = 0;
+
+    const period = h >= 12 ? 'PM' : 'AM';
+    let displayH = h % 12;
+    if (displayH === 0) displayH = 12;
+
+    const handleChange = (newH: number, newM: number, currentPeriod: string) => {
+        let hour = newH;
+        // Clamp values
+        if (hour < 1) hour = 1;
+        if (hour > 12) hour = 12;
+
+        let minute = newM;
+        if (minute < 0) minute = 0;
+        if (minute > 59) minute = 59;
+
+        let finalHour = hour;
+        if (currentPeriod === 'PM' && finalHour < 12) finalHour += 12;
+        if (currentPeriod === 'AM' && finalHour === 12) finalHour = 0;
+
+        onChange(`${finalHour.toString().padStart(2, '0')}:${minute.toString().padStart(2, '0')}`);
+    };
+
+    const togglePeriod = () => {
+        const newPeriod = period === 'AM' ? 'PM' : 'AM';
+        // Reuse handleChange logic which handles correct fullHour reconstruction
+        handleChange(displayH, m, newPeriod);
+    };
+
+    return (
+        <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-4 w-fit h-[58px]">
+            <input
+                type="number" min="1" max="12"
+                value={displayH}
+                onChange={e => handleChange(parseInt(e.target.value) || 0, m, period)}
+                className="w-10 bg-transparent text-center font-bold text-lg focus:outline-none p-0 border-none appearance-none"
+                style={{ MozAppearance: 'textfield' }}
+            />
+            <span className="text-slate-400 font-bold mb-1">:</span>
+            <input
+                type="number" min="0" max="59"
+                value={m.toString().padStart(2, '0')}
+                onChange={e => handleChange(displayH, parseInt(e.target.value) || 0, period)}
+                className="w-10 bg-transparent text-center font-bold text-lg focus:outline-none p-0 border-none appearance-none"
+                style={{ MozAppearance: 'textfield' }}
+            />
+            <button
+                type="button"
+                onClick={togglePeriod}
+                className={`ml-2 px-3 py-1.5 rounded-lg text-xs font-black transition-colors ${period === 'AM' ? 'bg-orange-100 text-orange-600 hover:bg-orange-200' : 'bg-indigo-100 text-indigo-600 hover:bg-indigo-200'}`}
+            >
+                {period}
+            </button>
+            <style>{`
+                input[type=number]::-webkit-inner-spin-button, 
+                input[type=number]::-webkit-outer-spin-button { 
+                  -webkit-appearance: none; 
+                  margin: 0; 
+                }
+            `}</style>
+        </div>
+    );
+};
+
 const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel }) => {
     const [activeTab, setActiveTab] = useState<'info' | 'participants'>('info');
     const [formData, setFormData] = useState({
@@ -65,9 +135,18 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
     useEffect(() => {
         loadExistingUsers();
         if (editingEvent) {
+            // Convert UTC to Local for input fields
+            const toLocalISOString = (dateStr: string) => {
+                const date = new Date(dateStr);
+                const pad = (num: number) => num.toString().padStart(2, '0');
+                return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+            };
+
             setFormData({
-                name: editingEvent.name, type: editingEvent.type, start_time: editingEvent.start_time.slice(0, 16),
-                end_time: editingEvent.end_time.slice(0, 16), location: editingEvent.location, target_audience: editingEvent.target_audience,
+                name: editingEvent.name, type: editingEvent.type,
+                start_time: toLocalISOString(editingEvent.start_time),
+                end_time: toLocalISOString(editingEvent.end_time),
+                location: editingEvent.location, target_audience: editingEvent.target_audience,
                 late_threshold_mins: editingEvent.late_threshold_mins, points_on_time: editingEvent.points_on_time,
                 points_late: editingEvent.points_late, points_absent: editingEvent.points_absent,
                 require_face: editingEvent.require_face, face_threshold: editingEvent.face_threshold,
@@ -153,8 +232,19 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
         setIsLoading(true);
         try {
             // Combine existing user IDs and new participant IDs
+            // Combine existing user IDs and new participant IDs
             const allParticipantIds = [...selectedExistingUsers, ...newParticipants.map(p => p.id)];
-            const eventData = { ...formData, participants: allParticipantIds };
+
+            // Convert Local Time Strings back to UTC ISO Strings for DB
+            const startISO = new Date(formData.start_time).toISOString();
+            const endISO = new Date(formData.end_time).toISOString();
+
+            const eventData = {
+                ...formData,
+                start_time: startISO,
+                end_time: endISO,
+                participants: allParticipantIds
+            };
 
             const result = editingEvent
                 ? await dataService.updateEvent(editingEvent.id, eventData)
@@ -574,16 +664,12 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                             }}
                                             className="flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                                         />
-                                        <input
-                                            type="time"
-                                            required
-                                            value={formData.start_time && formData.start_time.includes('T') ? formData.start_time.split('T')[1] : ''}
-                                            onChange={(e) => {
-                                                const time = e.target.value;
+                                        <TimeInput
+                                            value={formData.start_time && formData.start_time.includes('T') ? formData.start_time.split('T')[1] : '07:00'}
+                                            onChange={(newTime) => {
                                                 const date = formData.start_time ? formData.start_time.split('T')[0] : new Date().toISOString().split('T')[0];
-                                                setFormData({ ...formData, start_time: `${date}T${time}` });
+                                                setFormData({ ...formData, start_time: `${date}T${newTime}` });
                                             }}
-                                            className="w-36 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-center"
                                         />
                                     </div>
                                 </div>
@@ -602,16 +688,12 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                             }}
                                             className="flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                                         />
-                                        <input
-                                            type="time"
-                                            required
-                                            value={formData.end_time && formData.end_time.includes('T') ? formData.end_time.split('T')[1] : ''}
-                                            onChange={(e) => {
-                                                const time = e.target.value;
+                                        <TimeInput
+                                            value={formData.end_time && formData.end_time.includes('T') ? formData.end_time.split('T')[1] : '17:00'}
+                                            onChange={(newTime) => {
                                                 const date = formData.end_time ? formData.end_time.split('T')[0] : new Date().toISOString().split('T')[0];
-                                                setFormData({ ...formData, end_time: `${date}T${time}` });
+                                                setFormData({ ...formData, end_time: `${date}T${newTime}` });
                                             }}
-                                            className="w-36 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium text-center"
                                         />
                                     </div>
                                 </div>

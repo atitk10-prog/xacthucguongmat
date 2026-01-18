@@ -108,7 +108,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     const [recentCheckins, setRecentCheckins] = useState<Array<{ name: string; time: string; image?: string; status: string }>>([]);
 
     // Check-in cooldown map (userId -> timestamp)
-    const [checkinCooldowns, setCheckinCooldowns] = useState<Map<string, number>>(new Map());
+    const checkinCooldownsRef = useRef<Map<string, number>>(new Map());
     const COOLDOWN_PERIOD = 60000; // 60 seconds cooldown
     const [sensitivity, setSensitivity] = useState(55); // Default 55% (Khắt khe hơn để tránh ghost)
 
@@ -171,11 +171,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     // Initialize sensitivity from event settings
     useEffect(() => {
         if (event?.face_threshold) {
-            // Auto-fix: If threshold is set to old default 60% or high, lower it to 40% for better UX
-            let threshold = event.face_threshold;
-            if (threshold >= 60) threshold = 40;
-            // If it's very low, keep it (e.g. 35)
-            setSensitivity(threshold);
+            // Respect the event setting directly
+            setSensitivity(event.face_threshold);
         }
     }, [event]);
 
@@ -265,15 +262,27 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // Get checkins from API
                 const result = await dataService.getEventCheckins(event.id);
                 if (result.success && result.data) {
+                    // 1. Populate Cooldowns/Existing Check-ins Map with ALL data
+                    // This ensures we know who checked in even after refresh
+                    result.data.forEach(c => {
+                        if (c.user_id) {
+                            // Store check-in timestamp (or Date.now() if we want to treat them as 'just checked in')
+                            // Storing actual time is better for data integrity, but for UX 'blocking', presence in Map is key.
+                            checkinCooldownsRef.current.set(c.user_id, new Date(c.checkin_time).getTime());
+                        }
+                    });
+
                     const mapped = result.data.slice(0, 15).map(c => ({
                         name: c.participants?.full_name || 'Unknown',
-                        time: new Date(c.checkin_time).toLocaleTimeString('vi-VN'),
+                        time: new Date(c.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
                         image: c.participants?.avatar_url,
                         status: c.status,
                         // Extra fields for details modal
                         student_code: c.participants?.student_code || 'N/A',
                         organization: c.participants?.organization || 'N/A',
-                        birth_date: c.participants?.birth_date ? new Date(c.participants.birth_date).toLocaleDateString('vi-VN') : 'N/A',
+                        birth_date: c.participants?.birth_date
+                            ? (isNaN(new Date(c.participants.birth_date).getTime()) ? c.participants.birth_date : new Date(c.participants.birth_date).toLocaleDateString('vi-VN'))
+                            : 'N/A',
                         points: c.points_earned
                     }));
                     setRecentCheckins(mapped);
@@ -433,18 +442,13 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 if (singleFaceDetected && facesLoadedRef.current && primaryDetection) {
                     const descriptor = primaryDetection.descriptor;
                     if (descriptor) {
-                        // Get list of already checked-in users to filter out
-                        const alreadyCheckedInIds = Array.from(checkinCooldowns.keys()) as string[];
-
-                        // Use HIGHER SENSITIVITY from state (default 40% instead of 30%)
-                        // Note: In findMatch, threshold is "minimum confidence to match"
-                        // So HIGHER threshold means STRICTER matching
-                        const match = faceMatcher.findMatch(descriptor, sensitivity, alreadyCheckedInIds);
+                        // FIX: Do NOT exclude checked-in users. We need to find them to show "Already Checked In" status.
+                        const match = faceMatcher.findMatch(descriptor, sensitivity);
                         currentMatch = match;
 
                         // Check cooldown (double check just in case)
                         if (match) {
-                            const lastCheckin = checkinCooldowns.get(match.userId);
+                            const lastCheckin = checkinCooldownsRef.current.get(match.userId);
                             if (lastCheckin && Date.now() - lastCheckin < COOLDOWN_PERIOD) {
                                 // Already checked in - logic to prevent repetitive alerts
 
@@ -502,7 +506,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 const lastTime = lastFaceDetectedTimeRef.current;
 
                 // Only auto check-in if NOT recently checked in (cooldown)
-                const isCooldown = currentMatch ? checkinCooldowns.has(currentMatch.userId) : false;
+                const isCooldown = currentMatch ? checkinCooldownsRef.current.has(currentMatch.userId) : false;
 
                 if (autoCheckInMode && singleFaceDetected && currentMatch && lastTime && !checkInAttempted && !isCooldown) {
                     const stableMs = Date.now() - lastTime;
@@ -573,7 +577,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         setIsProcessing(true);
 
         // OPTIMISTIC UPDATE: Add to cooldown immediately to prevent double-submit loop from rapid frames
-        setCheckinCooldowns(prev => new Map(prev).set(checkInUserId, Date.now()));
+        checkinCooldownsRef.current.set(checkInUserId, Date.now());
 
         // DISABLED: No longer capturing image for check-in to save generic storage
         const capturedImage = undefined;
@@ -636,17 +640,19 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // Update recent checkins list for right sidebar
                 setRecentCheckins(prev => [{
                     name: checkInUserName,
-                    time: new Date().toLocaleTimeString('vi-VN'),
+                    time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
                     image: displayAvatar, // Use avatar
                     status: checkinResult.data.checkin.status,
                     full_name: participant?.full_name, // Add these for details
                     organization: participant?.organization,
                     student_code: (participant as any).student_code, // Cast if needed or update interface
                     birth_date: participant?.birth_date
+                        ? (isNaN(new Date(participant.birth_date).getTime()) ? participant.birth_date : new Date(participant.birth_date).toLocaleDateString('vi-VN'))
+                        : 'N/A'
                 } as any, ...prev.slice(0, 9)]); // Keep last 10
 
                 // Add to cooldown to prevent duplicate check-in attempts
-                setCheckinCooldowns(prev => new Map(prev).set(checkInUserId, Date.now()));
+                checkinCooldownsRef.current.set(checkInUserId, Date.now());
 
                 // Show fullscreen success overlay if enabled
                 const shouldShowPopup = event.enable_popup !== undefined ? event.enable_popup : true;
@@ -693,7 +699,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                 // If already checked in, add to cooldown to prevent retries
                 if (isAlreadyCheckedIn) {
-                    setCheckinCooldowns(prev => new Map(prev).set(checkInUserId, Date.now()));
+                    checkinCooldownsRef.current.set(checkInUserId, Date.now());
                 }
 
                 // Auto clear error after 3 seconds
@@ -972,8 +978,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     </div>
                 )}
 
-                {/* Status badges */}
-                <div className="absolute top-20 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
+                {/* Status badges - LEFT CORNER */}
+                <div className="absolute top-20 left-4 flex flex-col items-start gap-2 z-10">
                     <div className={`px-5 py-2 rounded-full backdrop-blur-md text-white text-sm font-bold shadow-lg ${event?.require_face ? 'bg-indigo-600/80' : 'bg-emerald-600/80'
                         }`}>
                         {event?.require_face ? (
@@ -1022,6 +1028,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             )}
                         </div>
                     )}
+                </div>
+
+                {/* ALERTS & RESULTS - CENTER SCREEN */}
+                {/* ALERTS & RESULTS - TOP CENTER */}
+                <div className="absolute top-32 left-1/2 -translate-x-1/2 flex flex-col items-center gap-4 z-20 w-full max-w-md px-4 pointer-events-none">
 
                     {/* Recognized Person Badge */}
                     {recognizedPerson && faceDetected && !isProcessing && (
@@ -1052,8 +1063,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     )}
 
                     {/* Already Checked-in Warning */}
-                    {faceDetected && facesLoaded && recognizedPerson && checkinCooldowns.has(recognizedPerson.id) &&
-                        (Date.now() - (checkinCooldowns.get(recognizedPerson.id) || 0) < COOLDOWN_PERIOD) && (
+                    {faceDetected && facesLoaded && recognizedPerson && checkinCooldownsRef.current.has(recognizedPerson.id) &&
+                        (Date.now() - (checkinCooldownsRef.current.get(recognizedPerson.id) || 0) < COOLDOWN_PERIOD) && (
                             <div className="px-4 py-2 bg-emerald-500/90 rounded-full text-white text-xs font-bold flex items-center gap-2 animate-bounce-once">
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -1129,7 +1140,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
-                            {event?.start_time ? new Date(event.start_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : 'N/A'}
+                            {event?.start_time ? new Date(event.start_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: true }).toUpperCase() : 'N/A'}
                         </span>
                     </div>
                 </div>
