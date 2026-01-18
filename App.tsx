@@ -40,13 +40,51 @@ const App: React.FC = () => {
   const [allUsers, setAllUsers] = useState<User[]>([]);
 
   useEffect(() => {
-    const storedUser = dataService.getStoredUser();
-    if (storedUser && dataService.isAuthenticated()) {
-      setCurrentUser(storedUser);
-      setView('dashboard');
-      loadUsers();
-    }
-    setIsLoading(false);
+    const initApp = async () => {
+      const storedUser = dataService.getStoredUser();
+
+      // Check for Check-in URL parsing FIRST
+      const path = window.location.pathname;
+      if (path.startsWith('/checkin/')) {
+        const eventId = path.split('/')[2];
+        if (eventId) {
+          // It's a check-in link, verify user logged in or allow simplified check-in access?
+          // For now assume must be logged in as per existing logic, but we route to checkin view
+
+          if (storedUser && dataService.isAuthenticated()) {
+            setCurrentUser(storedUser);
+
+            // Fetch event details
+            try {
+              const res = await dataService.getEvent(eventId);
+              if (res.success && res.data) {
+                setSelectedEvent(res.data);
+                setView('checkin');
+              } else {
+                // Event not found, go to dashboard
+                setView('dashboard');
+              }
+            } catch (error) {
+              setView('dashboard');
+            }
+
+            loadUsers();
+            setIsLoading(false);
+            return; // Exit early to skip default dashboard routing
+          }
+        }
+      }
+
+      // Default routing
+      if (storedUser && dataService.isAuthenticated()) {
+        setCurrentUser(storedUser);
+        setView('dashboard');
+        loadUsers();
+      }
+      setIsLoading(false);
+    };
+
+    initApp();
   }, []);
 
   const loadUsers = async () => {
