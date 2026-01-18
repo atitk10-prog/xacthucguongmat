@@ -510,6 +510,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     userName: checkInUserName
                 });
 
+                // Update recent checkins list for right sidebar
+                setRecentCheckins(prev => [{
+                    name: checkInUserName,
+                    time: new Date().toLocaleTimeString('vi-VN'),
+                    image: capturedImage || undefined,
+                    status: checkinResult.data.checkin.status
+                }, ...prev.slice(0, 9)]); // Keep last 10
+
+                // Add to cooldown to prevent duplicate check-in attempts
+                setCheckinCooldowns(prev => new Map(prev).set(checkInUserId, Date.now()));
+
                 // Show fullscreen success overlay if enabled
                 const shouldShowPopup = event.enable_popup !== undefined ? event.enable_popup : true;
                 if (shouldShowPopup) {
@@ -763,8 +774,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                 {/* Main Camera View */}
                 <div className="w-full h-full relative bg-black overflow-hidden group flex items-center justify-center">
-                    {/* Video - object-contain to show full view without zoom/crop */}
-                    <video ref={videoRef} autoPlay playsInline muted className="max-w-full max-h-full object-contain scale-x-[-1] bg-black" />
+                    {/* Video - object-contain to show full view without zoom/crop, NO mirror flip */}
+                    <video ref={videoRef} autoPlay playsInline muted className="max-w-full max-h-full object-contain bg-black" />
                     {/* Ensure canvas matches video size visually */}
                     <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
 
