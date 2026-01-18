@@ -292,9 +292,12 @@ async function getEvent(id: string): Promise<ApiResponse<Event>> {
 
 async function createEvent(eventData: Partial<Event>): Promise<ApiResponse<Event>> {
     try {
+        // Remove participants field as it's managed in event_participants table
+        const { participants, ...dataToInsert } = eventData as Partial<Event> & { participants?: string[] };
+
         const { data, error } = await supabase
             .from('events')
-            .insert(eventData)
+            .insert(dataToInsert)
             .select()
             .single();
 
@@ -308,9 +311,12 @@ async function createEvent(eventData: Partial<Event>): Promise<ApiResponse<Event
 
 async function updateEvent(id: string, eventData: Partial<Event>): Promise<ApiResponse<Event>> {
     try {
+        // Remove participants field as it's managed in event_participants table
+        const { participants, ...dataToUpdate } = eventData as Partial<Event> & { participants?: string[] };
+
         const { data, error } = await supabase
             .from('events')
-            .update(eventData)
+            .update(dataToUpdate)
             .eq('id', id)
             .select()
             .single();
