@@ -702,50 +702,43 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             )}
 
             {/* Left Side - Camera & Check-in */}
-            <div className="flex-1 relative">
-                {/* Header */}
-                <div className="absolute top-0 left-0 right-0 z-10 p-4 flex justify-between items-center">
-                    <button onClick={onBack} className="px-4 py-2 bg-white/10 backdrop-blur-md text-white rounded-xl font-semibold text-sm hover:bg-white/20 flex items-center gap-2 transition-all">
+            <div className="flex-1 relative h-screen">
+                {/* Header - Mobile Responsive */}
+                <div className="absolute top-0 left-0 right-0 z-10 p-2 md:p-4 flex justify-between items-center">
+                    <button onClick={onBack} className="px-3 py-2 bg-white/10 backdrop-blur-md text-white rounded-xl font-semibold text-xs md:text-sm hover:bg-white/20 flex items-center gap-1 transition-all">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                         </svg>
-                        Quay lại
+                        <span className="hidden md:inline">Quay lại</span>
                     </button>
 
-                    <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
                         {/* Auto check-in toggle */}
                         <button
                             onClick={() => setAutoCheckInMode(!autoCheckInMode)}
-                            className={`px-4 py-2 backdrop-blur-md rounded-xl font-semibold text-sm transition-all flex items-center gap-2 ${autoCheckInMode
+                            className={`px-3 py-2 backdrop-blur-md rounded-xl font-semibold text-xs transition-all flex items-center gap-1 ${autoCheckInMode
                                 ? 'bg-emerald-500/80 text-white'
                                 : 'bg-white/10 text-white/70'
                                 }`}
                         >
-                            <div className={`w-4 h-4 rounded-full border-2 ${autoCheckInMode ? 'bg-white border-white' : 'border-white/50'}`}>
-                                {autoCheckInMode && <div className="w-full h-full rounded-full bg-emerald-500 scale-50" />}
-                            </div>
-                            Auto Check-in
+                            <div className={`w-3 h-3 rounded-full border-2 ${autoCheckInMode ? 'bg-white border-white' : 'border-white/50'}`} />
+                            <span className="hidden md:inline">Auto</span>
                         </button>
 
                         {event && (
-                            <div className="bg-white/10 backdrop-blur-md px-3 py-1 rounded-xl flex items-center gap-2">
-                                <p className="text-white text-sm font-bold">{event.name}</p>
-                                <span className="text-white/50 text-xs">|</span>
-                                <span className="text-white/90 text-xs font-medium">{sensitivity}% độ nhạy</span>
+                            <div className="bg-white/10 backdrop-blur-md px-2 py-1 rounded-xl">
+                                <p className="text-white text-xs font-bold truncate max-w-[100px] md:max-w-none">{event.name}</p>
                             </div>
                         )}
                     </div>
                 </div>
 
-                {/* Sensitivity Slider Control - Absolute positioned at bottom center */}
-                <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-20 w-64 md:w-80">
-                    <div className="bg-black/40 backdrop-blur-md rounded-2xl p-4 border border-white/10 shadow-lg">
-                        <div className="flex justify-between items-center mb-2">
-                            <label className="text-white/90 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
-                                <svg className="w-4 h-4 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg>
-                                Độ nhạy nhận diện
-                            </label>
-                            <span className={`text-sm font-bold ${sensitivity < 35 ? 'text-green-400' : (sensitivity > 50 ? 'text-amber-400' : 'text-blue-400')}`}>
+                {/* Sensitivity Slider - Mobile Friendly */}
+                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 w-[90%] max-w-xs">
+                    <div className="bg-black/60 backdrop-blur-md rounded-xl p-3 border border-white/10">
+                        <div className="flex justify-between items-center mb-1">
+                            <span className="text-white/70 text-xs">Độ nhạy</span>
+                            <span className={`text-sm font-bold ${sensitivity < 35 ? 'text-green-400' : 'text-blue-400'}`}>
                                 {sensitivity}%
                             </span>
                         </div>
@@ -756,13 +749,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             step="5"
                             value={sensitivity}
                             onChange={(e) => setSensitivity(parseInt(e.target.value))}
-                            className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400"
+                            className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-500"
                         />
-                        <div className="flex justify-between mt-1 text-[10px] text-white/40 font-medium">
-                            <span>Dễ (20%)</span>
-                            <span>Chuẩn (35-45%)</span>
-                            <span>Khắt khe (80%)</span>
-                        </div>
                     </div>
                 </div>
 
