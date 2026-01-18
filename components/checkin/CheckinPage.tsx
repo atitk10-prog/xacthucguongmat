@@ -307,21 +307,23 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 const detections = await faceService.detectFaces(videoRef.current);
                 const faceCount = detections.length;
 
-                // Check for multiple faces
                 setMultipleFaces(faceCount > 1);
 
                 // Only accept exactly 1 face for check-in
                 const singleFaceDetected = faceCount === 1;
 
-                if (singleFaceDetected && !faceDetectedRef.current) {
-                    // First time detecting single face
-                    const now = Date.now();
-                    setLastFaceDetectedTime(now);
-                    lastFaceDetectedTimeRef.current = now;
+                // Debounce face detection state to reduce flickering
+                if (singleFaceDetected !== faceDetectedRef.current) {
+                    // Only update if state actually changed
+                    if (singleFaceDetected && !faceDetectedRef.current) {
+                        // First time detecting single face
+                        const now = Date.now();
+                        setLastFaceDetectedTime(now);
+                        lastFaceDetectedTimeRef.current = now;
+                    }
+                    setFaceDetected(singleFaceDetected);
+                    faceDetectedRef.current = singleFaceDetected;
                 }
-
-                setFaceDetected(singleFaceDetected);
-                faceDetectedRef.current = singleFaceDetected;
 
                 // Try to recognize person if faces are loaded
                 let currentMatch: { userId: string; name: string; confidence: number } | null = null;
@@ -409,7 +411,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
             setTimeout(() => {
                 animationId = requestAnimationFrame(detectLoop);
-            }, 100); // 100ms throttle for loop
+            }, 300); // 300ms throttle for loop (giảm lag, ổn định hơn)
         };
 
         detectLoop();
@@ -562,6 +564,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     type: 'error',
                     message: isAlreadyCheckedIn ? 'Người này đã check-in rồi' : errorMsg
                 });
+
+                // If already checked in, add to cooldown to prevent retries
+                if (isAlreadyCheckedIn) {
+                    setCheckinCooldowns(prev => new Map(prev).set(checkInUserId, Date.now()));
+                }
 
                 // Auto clear error after 3 seconds
                 setTimeout(() => {
