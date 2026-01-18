@@ -1,29 +1,97 @@
 /**
  * EduCheck - Face Recognition Service (using face-api.js)
+ * TinyFaceDetector for FAST detection + FaceRecognitionNet for ACCURATE matching
+ * Includes model warmup to eliminate first-inference delay
  * Chạy offline, không cần API key
  */
 
 import * as faceapi from 'face-api.js';
 
 let modelsLoaded = false;
+let modelsLoading = false;
+let modelsWarmedUp = false;
+
 // Use CDN for models (no need to download manually)
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
 
-// Load face-api.js models
+// TinyFaceDetector options - optimized for realtime
+const TINY_OPTIONS = new faceapi.TinyFaceDetectorOptions({
+    inputSize: 320,      // Lower for faster detection (was 416)
+    scoreThreshold: 0.4  // Lower threshold to detect more faces
+});
+
+/**
+ * Warm up the models by running a dummy inference
+ * This eliminates the "first inference" delay with TensorFlow.js
+ */
+const warmupModels = async (): Promise<void> => {
+    if (modelsWarmedUp) return;
+
+    try {
+        console.log('🔥 Warming up face models...');
+        const startTime = performance.now();
+
+        // Create a canvas with realistic dimensions (640x480 VGA)
+        const dummyCanvas = document.createElement('canvas');
+        dummyCanvas.width = 640;
+        dummyCanvas.height = 480;
+        const ctx = dummyCanvas.getContext('2d');
+        if (ctx) {
+            // Draw face-like oval for better warmup
+            ctx.fillStyle = '#d0d0d0';
+            ctx.fillRect(0, 0, 640, 480);
+            ctx.fillStyle = '#ffcc99';
+            ctx.beginPath();
+            ctx.ellipse(320, 240, 80, 100, 0, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+
+        // Run detection to warm up all networks
+        await faceapi
+            .detectSingleFace(dummyCanvas, TINY_OPTIONS)
+            .withFaceLandmarks(true)
+            .withFaceDescriptor();
+
+        modelsWarmedUp = true;
+        console.log(`✅ Face models warmed up in ${Math.round(performance.now() - startTime)}ms`);
+    } catch (error) {
+        console.warn('⚠️ Warmup failed (non-critical):', error);
+        modelsWarmedUp = true; // Mark as done to avoid retrying
+    }
+};
+
+// Load face-api.js models - using TinyFaceDetector for speed
 export async function loadModels(): Promise<void> {
     if (modelsLoaded) return;
 
+    // Prevent multiple concurrent loads
+    if (modelsLoading) {
+        while (modelsLoading) {
+            await new Promise(resolve => setTimeout(resolve, 50));
+        }
+        return;
+    }
+
+    modelsLoading = true;
+
     try {
+        console.log('🔄 Loading face models (TinyFaceDetector + Recognition)...');
         await Promise.all([
-            faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
-            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
-            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),   // FAST detection
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL), // FAST landmarks
+            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)  // Accurate recognition
         ]);
+
+        // Warmup BEFORE marking as loaded
+        await warmupModels();
+
         modelsLoaded = true;
-        console.log('✅ Face-api.js models loaded');
+        console.log('✅ Face models loaded and warmed up!');
     } catch (error) {
-        console.error('❌ Failed to load face-api.js models:', error);
+        console.error('❌ Failed to load face models:', error);
         throw error;
+    } finally {
+        modelsLoading = false;
     }
 }
 
@@ -32,26 +100,26 @@ export function isModelsLoaded(): boolean {
     return modelsLoaded;
 }
 
-// Detect face and get descriptor from image (HTMLImageElement or HTMLVideoElement)
+// Detect face and get descriptor from image (for registration)
 export async function getFaceDescriptor(input: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement): Promise<Float32Array | null> {
     if (!modelsLoaded) await loadModels();
 
     const detection = await faceapi
-        .detectSingleFace(input)
-        .withFaceLandmarks()
+        .detectSingleFace(input, TINY_OPTIONS)
+        .withFaceLandmarks(true) // true = use tiny landmarks
         .withFaceDescriptor();
 
     if (!detection) return null;
     return detection.descriptor;
 }
 
-// Detect all faces in an image
+// Detect all faces in realtime (FAST)
 export async function detectFaces(input: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement) {
     if (!modelsLoaded) await loadModels();
 
     const detections = await faceapi
-        .detectAllFaces(input)
-        .withFaceLandmarks()
+        .detectAllFaces(input, TINY_OPTIONS)
+        .withFaceLandmarks(true) // true = use tiny landmarks for speed
         .withFaceDescriptors();
 
     return detections;
