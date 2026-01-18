@@ -470,12 +470,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             checkInUserId = latestRecognizedPerson.id;
             checkInUserName = latestRecognizedPerson.name;
             console.log('✅ Check-in for recognized person:', checkInUserName);
-        } else if (currentUser) {
-            // Fallback to current user (admin mode) - only if no face match
-            checkInUserId = currentUser.id;
-            checkInUserName = currentUser.full_name;
-            console.log('⚠️ Fallback to admin user:', checkInUserName);
         } else {
+            // No face recognized and no fallback allowed for Face ID mode
             setResult({ success: false, message: 'Không xác định được người check-in' });
             return;
         }
