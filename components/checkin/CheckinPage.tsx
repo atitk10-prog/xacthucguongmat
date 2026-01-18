@@ -290,16 +290,25 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         };
     }, []);
 
-    // Real-time face detection with auto check-in
+    // SIMPLIFIED Real-time face detection with auto check-in
+    // Logic: Detect face -> Wait 1s stable -> Check-in once -> Show result
     useEffect(() => {
         if (!event?.require_face || !modelsReady || !videoRef.current) return;
 
         let animationId: number;
-        let lastDetectSound = 0;
+        let checkInAttempted = false; // Flag to prevent multiple attempts
 
         const detectLoop = async () => {
             if (!videoRef.current || videoRef.current.readyState !== 4) {
                 animationId = requestAnimationFrame(detectLoop);
+                return;
+            }
+
+            // Skip if already processing or showing result
+            if (isProcessing || result || checkInAttempted) {
+                setTimeout(() => {
+                    animationId = requestAnimationFrame(detectLoop);
+                }, 500);
                 return;
             }
 
@@ -308,48 +317,42 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 const faceCount = detections.length;
 
                 setMultipleFaces(faceCount > 1);
-
-                // Only accept exactly 1 face for check-in
                 const singleFaceDetected = faceCount === 1;
 
-                // Debounce face detection state to reduce flickering
+                // Update face detected state
                 if (singleFaceDetected !== faceDetectedRef.current) {
-                    // Only update if state actually changed
                     if (singleFaceDetected && !faceDetectedRef.current) {
-                        // First time detecting single face
-                        const now = Date.now();
-                        setLastFaceDetectedTime(now);
-                        lastFaceDetectedTimeRef.current = now;
+                        setLastFaceDetectedTime(Date.now());
+                        lastFaceDetectedTimeRef.current = Date.now();
                     }
                     setFaceDetected(singleFaceDetected);
                     faceDetectedRef.current = singleFaceDetected;
                 }
 
-                // Try to recognize person if faces are loaded
+                // Try to recognize person
                 let currentMatch: { userId: string; name: string; confidence: number } | null = null;
-                let isAlreadyCheckedIn = false;
 
                 if (singleFaceDetected && facesLoaded && detections.length > 0) {
                     const descriptor = detections[0].descriptor;
                     if (descriptor) {
-                        // Use local sensitivity state slider
-                        const threshold = sensitivity;
-                        const match = faceMatcher.findMatch(descriptor, threshold);
+                        const match = faceMatcher.findMatch(descriptor, sensitivity);
                         currentMatch = match;
 
                         // Check cooldown
                         if (match) {
                             const lastCheckin = checkinCooldowns.get(match.userId);
                             if (lastCheckin && Date.now() - lastCheckin < COOLDOWN_PERIOD) {
-                                isAlreadyCheckedIn = true;
+                                // Already checked in - just show status, don't retry
+                                setRecognizedPerson({ id: match.userId, name: match.name, confidence: match.confidence });
+                                setTimeout(() => { animationId = requestAnimationFrame(detectLoop); }, 500);
+                                return;
                             }
                         }
 
-                        // Throttle state updates to prevent UI jumping
-                        // Only update if person changed or confidence changed significantly (>5%)
+                        // Update recognized person (with debounce for stability)
                         if (match) {
                             const prev = recognizedPersonRef.current;
-                            if (!prev || prev.id !== match.userId || Math.abs(prev.confidence - match.confidence) > 5) {
+                            if (!prev || prev.id !== match.userId) {
                                 setRecognizedPerson({ id: match.userId, name: match.name, confidence: match.confidence });
                             }
                         } else {
@@ -358,60 +361,39 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             }
                         }
                     }
-                } else {
+                } else if (!singleFaceDetected) {
                     if (recognizedPersonRef.current !== null) {
                         setRecognizedPerson(null);
                     }
-                }
-
-                // Auto check-in logic
-                const hasMatch = currentMatch !== null;
-                const canAutoCheckin = singleFaceDetected && (facesLoaded ? hasMatch : true);
-
-                // If already checked in within cooldown, show visual feedback but DON'T check in again
-                if (isAlreadyCheckedIn && hasMatch && !result) {
-                    // Optionally show a "Checked in" badge on the face box (can be added in render)
-                    if (!result) {
-                        // Maybe just log for now, or we can use a small toast?
-                        // For now, prevent auto check-in
-                    }
-                }
-
-                if (canAutoCheckin && autoCheckInMode && !isProcessing && !result && !autoCheckInRef.current && !isAlreadyCheckedIn) {
-                    // Check-in instantly when face is recognized
-                    const lastTime = lastFaceDetectedTimeRef.current;
-
-                    if (hasMatch && lastTime) {
-                        const stableMs = Date.now() - lastTime;
-                        setFaceStableTime(Math.min(stableMs, 3000));
-
-                        if (stableMs >= 3000) {
-                            console.log('🚀 INSTANT Check-in for:', currentMatch?.name);
-                            autoCheckInRef.current = true;
-                            handleCheckIn();
-                        }
-                    } else if (!facesLoaded && lastTime) {
-                        // Non-face event
-                        const stableMs = Date.now() - lastTime;
-                        setFaceStableTime(Math.min(stableMs, 3000));
-                        if (stableMs >= 3000) {
-                            autoCheckInRef.current = true;
-                            handleCheckIn();
-                        }
-                    }
-                } else if (!singleFaceDetected) {
                     setLastFaceDetectedTime(null);
                     lastFaceDetectedTimeRef.current = null;
                     setFaceStableTime(0);
-                    setRecognizedPerson(null);
                 }
+
+                // AUTO CHECK-IN: After 1 second stable with recognized face
+                const lastTime = lastFaceDetectedTimeRef.current;
+                if (autoCheckInMode && singleFaceDetected && currentMatch && lastTime && !checkInAttempted) {
+                    const stableMs = Date.now() - lastTime;
+                    setFaceStableTime(Math.min(stableMs, 1000));
+
+                    if (stableMs >= 1000) {
+                        console.log('🚀 Check-in after 1s stable:', currentMatch.name);
+                        checkInAttempted = true;
+                        autoCheckInRef.current = true;
+                        handleCheckIn();
+                        // Don't continue loop, wait for check-in to complete
+                        return;
+                    }
+                }
+
             } catch (err) {
                 console.error('Face detection error:', err);
             }
 
+            // Continue loop with 500ms delay for smoother performance
             setTimeout(() => {
                 animationId = requestAnimationFrame(detectLoop);
-            }, 300); // 300ms throttle for loop (giảm lag, ổn định hơn)
+            }, 500);
         };
 
         detectLoop();
@@ -419,7 +401,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         return () => {
             if (animationId) cancelAnimationFrame(animationId);
         };
-    }, [modelsReady, event?.require_face, autoCheckInMode, isProcessing, result, lastFaceDetectedTime]);
+    }, [modelsReady, event?.require_face, autoCheckInMode, isProcessing, result]);
 
     // Capture image from video
     const captureImage = (): string | null => {
