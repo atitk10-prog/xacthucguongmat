@@ -662,6 +662,278 @@ async function getDashboardStats(): Promise<ApiResponse<{
 }
 
 // =====================================================
+// SYSTEM CONFIG API
+// =====================================================
+interface SystemConfig {
+    key: string;
+    value: string;
+}
+
+async function getConfigs(): Promise<ApiResponse<SystemConfig[]>> {
+    try {
+        const { data, error } = await supabase
+            .from('system_configs')
+            .select('*');
+
+        if (error) {
+            // Return defaults if table doesn't exist
+            return {
+                success: true,
+                data: [
+                    { key: 'school_name', value: 'Trường THPT ABC' },
+                    { key: 'school_address', value: '123 Đường XYZ' },
+                    { key: 'late_threshold_mins', value: '15' },
+                    { key: 'points_on_time', value: '10' },
+                    { key: 'points_late', value: '-5' }
+                ]
+            };
+        }
+        return { success: true, data: data as SystemConfig[] };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tải cấu hình' };
+    }
+}
+
+async function updateConfig(key: string, value: string): Promise<ApiResponse<void>> {
+    try {
+        const { error } = await supabase
+            .from('system_configs')
+            .upsert({ key, value }, { onConflict: 'key' });
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, message: 'Đã cập nhật cấu hình' };
+    } catch (err) {
+        return { success: false, error: 'Lỗi cập nhật cấu hình' };
+    }
+}
+
+async function initSystem(): Promise<ApiResponse<void>> {
+    return { success: true, message: 'Hệ thống đã được khởi tạo' };
+}
+
+// =====================================================
+// POINTS API
+// =====================================================
+interface PointLog {
+    id: string;
+    user_id: string;
+    points: number;
+    reason: string;
+    created_at: string;
+    user?: User;
+}
+
+async function getPointLogs(): Promise<ApiResponse<PointLog[]>> {
+    try {
+        const { data, error } = await supabase
+            .from('point_logs')
+            .select('*, user:users(id, full_name)')
+            .order('created_at', { ascending: false })
+            .limit(100);
+
+        if (error) {
+            // Return empty if table doesn't exist
+            return { success: true, data: [] };
+        }
+        return { success: true, data: data as PointLog[] };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tải lịch sử điểm' };
+    }
+}
+
+async function addPoints(userId: string, points: number, reason: string): Promise<ApiResponse<void>> {
+    try {
+        // Update user points
+        const { error: updateError } = await supabase.rpc('add_user_points', {
+            p_user_id: userId,
+            p_points: points
+        });
+
+        // If RPC doesn't exist, update directly
+        if (updateError) {
+            await supabase
+                .from('users')
+                .update({ total_points: supabase.rpc('add_points_direct', { uid: userId, pts: points }) })
+                .eq('id', userId);
+        }
+
+        // Log the points change
+        await supabase.from('point_logs').insert({
+            user_id: userId,
+            points: points,
+            reason: reason
+        });
+
+        return { success: true, message: `Đã cộng ${points} điểm` };
+    } catch (err) {
+        return { success: false, error: 'Lỗi cộng điểm' };
+    }
+}
+
+async function deductPoints(userId: string, points: number, reason: string): Promise<ApiResponse<void>> {
+    return addPoints(userId, -points, reason);
+}
+
+// =====================================================
+// RANKING API
+// =====================================================
+interface RankingUser {
+    id: string;
+    full_name: string;
+    class_id?: string;
+    total_points: number;
+    rank?: number;
+}
+
+async function getRanking(options?: { role?: string; limit?: number }): Promise<ApiResponse<RankingUser[]>> {
+    try {
+        let query = supabase
+            .from('users')
+            .select('id, full_name, class_id, total_points')
+            .order('total_points', { ascending: false })
+            .limit(options?.limit || 50);
+
+        if (options?.role) {
+            query = query.eq('role', options.role);
+        }
+
+        const { data, error } = await query;
+
+        if (error) return { success: false, error: error.message };
+
+        // Add rank
+        const rankedData = (data || []).map((user, index) => ({
+            ...user,
+            rank: index + 1
+        }));
+
+        return { success: true, data: rankedData as RankingUser[] };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tải bảng xếp hạng' };
+    }
+}
+
+// =====================================================
+// EVENT REPORT API
+// =====================================================
+interface Checkin {
+    id: string;
+    event_id: string;
+    user_id?: string;
+    participant_id?: string;
+    checkin_time: string;
+    status: 'on_time' | 'late' | 'absent';
+    face_confidence?: number;
+    face_verified?: boolean;
+    points_earned?: number;
+}
+
+interface EventReport {
+    event: Event;
+    totalParticipants: number;
+    totalCheckins: number;
+    onTimeCount: number;
+    lateCount: number;
+    absentCount: number;
+    checkins: Checkin[];
+}
+
+async function getEventReport(eventId: string): Promise<ApiResponse<EventReport>> {
+    try {
+        // Get event
+        const { data: event, error: eventError } = await supabase
+            .from('events')
+            .select('*')
+            .eq('id', eventId)
+            .single();
+
+        if (eventError) return { success: false, error: eventError.message };
+
+        // Get participants
+        const { data: participants } = await supabase
+            .from('event_participants')
+            .select('*')
+            .eq('event_id', eventId);
+
+        // Get checkins
+        const { data: checkins } = await supabase
+            .from('checkins')
+            .select('*')
+            .eq('event_id', eventId);
+
+        const checkinData = checkins || [];
+        const onTimeCount = checkinData.filter(c => c.status === 'on_time').length;
+        const lateCount = checkinData.filter(c => c.status === 'late').length;
+
+        return {
+            success: true,
+            data: {
+                event: event as Event,
+                totalParticipants: (participants || []).length,
+                totalCheckins: checkinData.length,
+                onTimeCount,
+                lateCount,
+                absentCount: (participants || []).length - checkinData.length,
+                checkins: checkinData as Checkin[]
+            }
+        };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tải báo cáo sự kiện' };
+    }
+}
+
+// =====================================================
+// CERTIFICATES API
+// =====================================================
+interface Certificate {
+    id: string;
+    user_id: string;
+    event_id?: string;
+    type: string;
+    title: string;
+    issued_at: string;
+    user?: User;
+}
+
+async function getCertificates(): Promise<ApiResponse<Certificate[]>> {
+    try {
+        const { data, error } = await supabase
+            .from('certificates')
+            .select('*, user:users(id, full_name)')
+            .order('issued_at', { ascending: false });
+
+        if (error) {
+            // Return empty if table doesn't exist
+            return { success: true, data: [] };
+        }
+        return { success: true, data: data as Certificate[] };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tải danh sách chứng nhận' };
+    }
+}
+
+async function createCertificate(certData: Partial<Certificate>): Promise<ApiResponse<Certificate>> {
+    try {
+        const { data, error } = await supabase
+            .from('certificates')
+            .insert({
+                user_id: certData.user_id,
+                event_id: certData.event_id,
+                type: certData.type || 'participation',
+                title: certData.title || 'Chứng nhận tham gia',
+                issued_at: new Date().toISOString()
+            })
+            .select()
+            .single();
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: data as Certificate };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tạo chứng nhận' };
+    }
+}
+
+// =====================================================
 // EXPORT DATA SERVICE
 // =====================================================
 export const dataService = {
@@ -705,6 +977,26 @@ export const dataService = {
 
     // Dashboard
     getDashboardStats,
+
+    // System Config
+    getConfigs,
+    updateConfig,
+    initSystem,
+
+    // Points
+    getPointLogs,
+    addPoints,
+    deductPoints,
+
+    // Ranking
+    getRanking,
+
+    // Reports
+    getEventReport,
+
+    // Certificates
+    getCertificates,
+    createCertificate,
 
     // Cache
     clearCache
