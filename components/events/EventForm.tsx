@@ -212,12 +212,40 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
     };
 
     // Update participant info
-    const updateParticipant = (updatedParticipant: NewParticipant) => {
+    const updateParticipant = async (updatedParticipant: NewParticipant) => {
+        // Update local state first for immediate UI feedback
         setNewParticipants(prev => prev.map(p =>
             p.id === updatedParticipant.id ? updatedParticipant : p
         ));
         setEditingParticipant(null);
-        setImportNotification({ type: 'success', message: 'Đã cập nhật thông tin người tham gia' });
+
+        // If participant already exists in DB (has real UUID), update it immediately
+        const isExisting = updatedParticipant.id &&
+            !updatedParticipant.id.startsWith('new_') &&
+            !updatedParticipant.id.startsWith('import_');
+
+        if (isExisting && editingEvent?.id) {
+            try {
+                const result = await dataService.saveEventParticipants(editingEvent.id, [{
+                    id: updatedParticipant.id,
+                    full_name: updatedParticipant.full_name,
+                    birth_date: updatedParticipant.birth_date,
+                    organization: updatedParticipant.organization,
+                    address: updatedParticipant.address,
+                    avatar_url: updatedParticipant.avatar_url
+                }]);
+
+                if (result.success) {
+                    setImportNotification({ type: 'success', message: 'Đã cập nhật thông tin vào cơ sở dữ liệu' });
+                } else {
+                    setImportNotification({ type: 'error', message: 'Lỗi lưu vào DB: ' + result.error });
+                }
+            } catch (err) {
+                setImportNotification({ type: 'error', message: 'Lỗi kết nối khi lưu' });
+            }
+        } else {
+            setImportNotification({ type: 'success', message: 'Đã cập nhật thông tin (sẽ lưu khi nhấn Cập nhật)' });
+        }
         setTimeout(() => setImportNotification(null), 2000);
     };
 

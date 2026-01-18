@@ -61,8 +61,9 @@ export async function detectFaces(input: HTMLImageElement | HTMLVideoElement | H
 export function compareFaces(descriptor1: Float32Array, descriptor2: Float32Array): number {
     const distance = faceapi.euclideanDistance(descriptor1, descriptor2);
     // Convert distance to confidence percentage (0-100)
-    // Distance of 0 = 100% match, distance of 0.6 = 0% match
-    const confidence = Math.max(0, Math.min(100, (1 - distance / 0.6) * 100));
+    // Distance of 0 = 100% match, distance of 0.8 = 0% match (more lenient)
+    // Lower distance = higher confidence
+    const confidence = Math.max(0, Math.min(100, (1 - distance / 0.8) * 100));
     return Math.round(confidence);
 }
 
@@ -95,7 +96,7 @@ class FaceMatcherService {
     }
 
     // Find best match for a face descriptor
-    findMatch(descriptor: Float32Array, threshold: number = 60): { userId: string; name: string; confidence: number } | null {
+    findMatch(descriptor: Float32Array, threshold: number = 35): { userId: string; name: string; confidence: number } | null {
         if (this.registeredFaces.length === 0) return null;
 
         let bestMatch: { userId: string; name: string; confidence: number } | null = null;
@@ -150,7 +151,7 @@ export function stringToDescriptor(str: string): Float32Array {
 // Main function: Verify face from video/image against registered users
 export async function verifyFace(
     input: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement,
-    threshold: number = 60
+    threshold: number = 35
 ): Promise<{ matched: boolean; userId?: string; name?: string; confidence: number }> {
     const descriptor = await getFaceDescriptor(input);
 
