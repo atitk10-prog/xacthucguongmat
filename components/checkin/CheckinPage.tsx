@@ -27,7 +27,12 @@ interface CheckinResult {
     userName?: string;
 }
 
-// Sound effects using Web Audio API - reuse single context to prevent errors
+// Sound effects using Web Audio API
+interface NotificationState {
+    type: 'success' | 'error' | 'warning';
+    message: string;
+}
+
 let audioContext: AudioContext | null = null;
 let audioEnabled = true;
 
@@ -115,6 +120,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     // lastFaceDetectedTime removed (duplicate)
     const [multipleFaces, setMultipleFaces] = useState(false);
     const autoCheckInRef = useRef<boolean>(false);
+
+    // Notification state
+    const [notification, setNotification] = useState<NotificationState | null>(null);
+
+    // Auto clear notification
+    useEffect(() => {
+        if (notification) {
+            const timer = setTimeout(() => setNotification(null), 3000);
+            return () => clearTimeout(timer);
+        }
+    }, [notification]);
 
     // States for face recognition check-in
     const [participants, setParticipants] = useState<EventParticipant[]>([]);
@@ -460,6 +476,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
             if (checkinResult.success && checkinResult.data) {
                 playSound('success');
+                console.log('Check-in SUCCESS:', checkinResult);
+
                 setResult({
                     success: true,
                     message: `Check-in lúc ${new Date().toLocaleTimeString('vi-VN')}${latestRecognizedPerson ? ` (${Math.round(latestRecognizedPerson.confidence)}% match)` : ''}`,
@@ -472,7 +490,6 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 const shouldShowPopup = event.enable_popup !== undefined ? event.enable_popup : true;
                 if (shouldShowPopup) {
                     setShowSuccessOverlay(true);
-                    // Auto hide success overlay after 2 seconds (faster)
                     setTimeout(() => {
                         setShowSuccessOverlay(false);
                         setResult(null);
@@ -481,8 +498,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         setFaceStableTime(0);
                     }, 2000);
                 } else {
-                    // If popup disabled, just show a quick toast/badge via result and reset correctly
-                    // We rely on the result state being set locally, but we need to auto-clear it to allow next checkin
+                    // Quick reset if popup disabled
+                    setNotification({ type: 'success', message: 'Check-in thành công!' });
                     setTimeout(() => {
                         setResult(null);
                         autoCheckInRef.current = false;
@@ -492,7 +509,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 }
             } else {
                 playSound('error');
-                // Check for already checked-in message
+                console.error('Check-in FAILED:', checkinResult);
+
                 const errorMsg = checkinResult.error || 'Check-in thất bại';
                 const isAlreadyCheckedIn = errorMsg.toLowerCase().includes('already') ||
                     errorMsg.toLowerCase().includes('đã check-in') ||
@@ -504,6 +522,12 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     userName: checkInUserName
                 });
 
+                // Show notification for visibility
+                setNotification({
+                    type: 'error',
+                    message: isAlreadyCheckedIn ? 'Người này đã check-in rồi' : errorMsg
+                });
+
                 // Auto clear error after 3 seconds
                 setTimeout(() => {
                     setResult(null);
@@ -512,10 +536,13 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     setFaceStableTime(0);
                 }, 3000);
             }
-        } catch (error) {
+        } catch (error: any) {
+            console.error('Check-in EXCEPTION:', error);
             playSound('error');
-            setResult({ success: false, message: 'Có lỗi xảy ra.' });
+            setResult({ success: false, message: 'Lỗi hệ thống: ' + (error.message || 'Unknown') });
+            setNotification({ type: 'error', message: 'Lỗi kết nối khi check-in' });
             autoCheckInRef.current = false;
+            setIsProcessing(false);
         } finally {
             setIsProcessing(false);
         }
@@ -542,6 +569,26 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex">
+            {/* Notification Toast */}
+            {notification && (
+                <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-slide-in ${notification.type === 'success' ? 'bg-emerald-500 text-white' :
+                    notification.type === 'error' ? 'bg-red-500 text-white' :
+                        'bg-amber-500 text-white'
+                    }`}>
+                    {notification.type === 'success' ? (
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                    ) : notification.type === 'error' ? (
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                    ) : (
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                    )}
+                    <div>
+                        <p className="font-bold">{notification.type === 'success' ? 'Thành công' : notification.type === 'error' ? 'Lỗi' : 'Chú ý'}</p>
+                        <p className="text-sm opacity-90">{notification.message}</p>
+                    </div>
+                </div>
+            )}
+
             {/* Fullscreen Success Overlay */}
             {showSuccessOverlay && result?.success && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-600 animate-fade-in">
@@ -691,10 +738,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 {/* Advanced Settings Controls REMOVED - Managed in Event Settings */}
 
                 {/* Main Camera View */}
-                <div className="w-full h-full relative bg-black overflow-hidden group">
+                <div className="w-full h-full relative bg-black overflow-hidden group flex items-center justify-center">
                     {/* Video - object-contain to show full view without zoom/crop */}
-                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-contain scale-x-[-1] bg-black" />
-                    <canvas ref={canvasRef} className="hidden" />
+                    <video ref={videoRef} autoPlay playsInline muted className="max-w-full max-h-full object-contain scale-x-[-1] bg-black" />
+                    {/* Ensure canvas matches video size visually */}
+                    <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
 
                     {/* Face Frame with progress */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
