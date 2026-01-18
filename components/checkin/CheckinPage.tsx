@@ -245,6 +245,35 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
         loadParticipantsAndFaces();
     }, [event?.id, modelsReady]);
+
+    // OPTIMIZED: Load existing check-ins (limit 15)
+    useEffect(() => {
+        if (!event?.id) return;
+
+        const loadCheckins = async () => {
+            try {
+                // Get checkins from API
+                const result = await dataService.getEventCheckins(event.id);
+                if (result.success && result.data) {
+                    const mapped = result.data.slice(0, 15).map(c => ({
+                        name: c.participants?.full_name || 'Unknown',
+                        time: new Date(c.checkin_time).toLocaleTimeString('vi-VN'),
+                        image: c.participants?.avatar_url,
+                        status: c.status
+                    }));
+                    setRecentCheckins(mapped);
+                    console.log(`📋 Loaded ${mapped.length} recent check-ins`);
+                }
+            } catch (err) {
+                console.error('Failed to load check-ins:', err);
+            }
+        };
+
+        loadCheckins();
+
+        // Subscribe to realtime changes (optional but good)
+        // For now, simpler to just load once
+    }, [event?.id]);
     // Store recognizedPerson in ref to avoid race conditions during check-in
     const recognizedPersonRef = useRef<{ id: string; name: string; confidence: number } | null>(null);
     useEffect(() => {
@@ -755,8 +784,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 <div className="w-full h-full relative bg-black overflow-hidden">
                     {/* Video - FULLSCREEN with object-cover */}
                     <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover bg-black" />
-                    {/* Ensure canvas matches video size visually */}
-                    <canvas ref={canvasRef} className="absolute inset-0 w-full h-full object-contain pointer-events-none" />
+                    {/* Hidden canvas for image capture */}
+                    <canvas ref={canvasRef} className="hidden" />
 
                     {/* Face Frame with progress */}
                     <div className="absolute inset-0 flex items-center justify-center pointer-events-none">

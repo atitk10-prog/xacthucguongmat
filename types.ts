@@ -92,6 +92,10 @@ export interface EventCheckin {
   photo_url?: string;
   device_info?: string;
   ip_address?: string;
+  participants?: {
+    full_name: string;
+    avatar_url?: string;
+  };
 }
 
 export interface BoardingCheckin {
