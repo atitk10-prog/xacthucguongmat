@@ -1,6 +1,6 @@
 /**
  * EduCheck - Face Recognition Service (using face-api.js)
- * TinyFaceDetector for FAST detection + FaceRecognitionNet for ACCURATE matching
+ * Using ssdMobilenetv1 for ACCURATE detection (same as working old version)
  * Includes model warmup to eliminate first-inference delay
  * Chạy offline, không cần API key
  */
@@ -11,14 +11,8 @@ let modelsLoaded = false;
 let modelsLoading = false;
 let modelsWarmedUp = false;
 
-// Use CDN for models (no need to download manually)
+// Use CDN for models
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
-
-// TinyFaceDetector options - optimized for realtime
-const TINY_OPTIONS = new faceapi.TinyFaceDetectorOptions({
-    inputSize: 320,      // Lower for faster detection (was 416)
-    scoreThreshold: 0.4  // Lower threshold to detect more faces
-});
 
 /**
  * Warm up the models by running a dummy inference
@@ -48,8 +42,8 @@ const warmupModels = async (): Promise<void> => {
 
         // Run detection to warm up all networks
         await faceapi
-            .detectSingleFace(dummyCanvas, TINY_OPTIONS)
-            .withFaceLandmarks(true)
+            .detectSingleFace(dummyCanvas)
+            .withFaceLandmarks()
             .withFaceDescriptor();
 
         modelsWarmedUp = true;
@@ -60,7 +54,7 @@ const warmupModels = async (): Promise<void> => {
     }
 };
 
-// Load face-api.js models - using TinyFaceDetector for speed
+// Load face-api.js models - using ssdMobilenetv1 for ACCURACY (same as old working version)
 export async function loadModels(): Promise<void> {
     if (modelsLoaded) return;
 
@@ -75,11 +69,11 @@ export async function loadModels(): Promise<void> {
     modelsLoading = true;
 
     try {
-        console.log('🔄 Loading face models (TinyFaceDetector + Recognition)...');
+        console.log('🔄 Loading face models (ssdMobilenetv1 + Recognition)...');
         await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),   // FAST detection
-            faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL), // FAST landmarks
-            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)  // Accurate recognition
+            faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),    // ACCURATE detection (like old version)
+            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), // ACCURATE landmarks
+            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL) // Recognition
         ]);
 
         // Warmup BEFORE marking as loaded
@@ -105,21 +99,21 @@ export async function getFaceDescriptor(input: HTMLImageElement | HTMLVideoEleme
     if (!modelsLoaded) await loadModels();
 
     const detection = await faceapi
-        .detectSingleFace(input, TINY_OPTIONS)
-        .withFaceLandmarks(true) // true = use tiny landmarks
+        .detectSingleFace(input)
+        .withFaceLandmarks()
         .withFaceDescriptor();
 
     if (!detection) return null;
     return detection.descriptor;
 }
 
-// Detect all faces in realtime (FAST)
+// Detect all faces in realtime
 export async function detectFaces(input: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement) {
     if (!modelsLoaded) await loadModels();
 
     const detections = await faceapi
-        .detectAllFaces(input, TINY_OPTIONS)
-        .withFaceLandmarks(true) // true = use tiny landmarks for speed
+        .detectAllFaces(input)
+        .withFaceLandmarks()
         .withFaceDescriptors();
 
     return detections;
