@@ -121,6 +121,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     // lastFaceDetectedTime removed (duplicate)
     const [multipleFaces, setMultipleFaces] = useState(false);
     const autoCheckInRef = useRef<boolean>(false);
+    const facesLoadedRef = useRef<boolean>(false); // Ref for closure fix
 
     // Notification state
     const [notification, setNotification] = useState<NotificationState | null>(null);
@@ -230,6 +231,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     const loadedCount = results.filter(Boolean).length;
 
                     console.log(`✅ Total: Loaded ${loadedCount} face descriptors for ${loadedParticipants.length} participants`);
+                    facesLoadedRef.current = true; // Update ref for closure
                     setFacesLoaded(true);
                 } else {
                     console.error('❌ Failed to load participants:', result.error);
@@ -324,7 +326,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // Try to recognize person
                 let currentMatch: { userId: string; name: string; confidence: number } | null = null;
 
-                if (singleFaceDetected && facesLoaded && detections.length > 0) {
+                if (singleFaceDetected && facesLoadedRef.current && detections.length > 0) {
                     const descriptor = detections[0].descriptor;
                     if (descriptor) {
                         const match = faceMatcher.findMatch(descriptor, sensitivity);
