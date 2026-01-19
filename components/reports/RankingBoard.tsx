@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
+import { utils, writeFile } from 'xlsx';
 
 interface RankingUser {
     position: number;
@@ -32,19 +33,35 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
         setIsLoading(true);
         try {
             const result = await dataService.getRanking({
-                type: viewType,
-                class_id: classId,
+                role: 'student',
                 limit: 50
             });
 
             if (result.success && result.data) {
-                setRankings(result.data as RankingUser[]);
+                setRankings(result.data as any[]);
             }
         } catch (error) {
             console.error('Failed to load rankings:', error);
         } finally {
             setIsLoading(false);
         }
+    };
+
+    const handleExport = () => {
+        const wb = utils.book_new();
+        const dataToExport = rankings.map(r => ({
+            'Hạng': r.position,
+            'Họ và tên': r.user_name,
+            'Lớp': r.class_id || 'N/A',
+            'Đúng giờ': r.on_time_count || 0,
+            'Muộn': r.late_count || 0,
+            'Vắng': r.absent_count || 0,
+            'Tổng điểm': r.total_points,
+            'Xếp loại': r.rank || 'N/A'
+        }));
+        const ws = utils.json_to_sheet(dataToExport);
+        utils.book_append_sheet(wb, ws, "BangXepHangNeNep");
+        writeFile(wb, "BangXepHangNeNep.xlsx");
     };
 
     const MedalIcons = {
@@ -107,23 +124,33 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                     <p className="text-slate-500 font-medium mt-1">Xếp hạng theo điểm chuyên cần</p>
                 </div>
 
-                {/* View Type Toggle */}
-                <div className="flex gap-2 bg-white rounded-2xl p-1 shadow-sm border border-slate-100">
+                <div className="flex gap-2 items-center">
+                    {/* View Type Toggle */}
+                    <div className="flex gap-2 bg-white rounded-2xl p-1 shadow-sm border border-slate-100">
+                        <button
+                            onClick={() => setViewType('student')}
+                            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'student' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
+                                }`}
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
+                            Cá nhân
+                        </button>
+                        <button
+                            onClick={() => setViewType('class')}
+                            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'class' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
+                                }`}
+                        >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
+                            Theo lớp
+                        </button>
+                    </div>
+
                     <button
-                        onClick={() => setViewType('student')}
-                        className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'student' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
-                            }`}
+                        onClick={handleExport}
+                        className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 flex items-center gap-2 shadow-lg shadow-emerald-200"
                     >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
-                        Cá nhân
-                    </button>
-                    <button
-                        onClick={() => setViewType('class')}
-                        className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'class' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
-                            }`}
-                    >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
-                        Theo lớp
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                        Xuất Excel
                     </button>
                 </div>
             </div>

@@ -4,6 +4,7 @@ import EventList from './components/events/EventList';
 import EventForm from './components/events/EventForm';
 import CheckinPage from './components/checkin/CheckinPage';
 import BoardingCheckin from './components/boarding/BoardingCheckin';
+import BoardingConfigPage from './components/boarding/BoardingConfigPage';
 import RoomManagement from './components/boarding/RoomManagement';
 import ExitPermission from './components/boarding/ExitPermission';
 import RankingBoard from './components/reports/RankingBoard';
@@ -20,7 +21,7 @@ import { User, Event } from './types';
 
 type AppView =
   | 'login' | 'dashboard' | 'events' | 'event-form' | 'checkin'
-  | 'boarding' | 'rooms' | 'exit-permission'
+  | 'boarding' | 'rooms' | 'exit-permission' | 'boarding-config' | 'boarding-run'
   | 'reports' | 'event-report' | 'ranking'
   | 'users' | 'certificates' | 'cards'
   | 'settings' | 'points';
@@ -46,6 +47,16 @@ const App: React.FC = () => {
 
       // Check for Check-in URL parsing FIRST
       const path = window.location.pathname;
+
+      if (path === '/boarding-run') {
+        if (storedUser && dataService.isAuthenticated()) {
+          setCurrentUser(storedUser);
+          setView('boarding-run' as AppView);
+          setIsLoading(false);
+          return;
+        }
+      }
+
       if (path.startsWith('/checkin/')) {
         const eventId = path.split('/')[2];
         if (eventId) {
@@ -144,8 +155,8 @@ const App: React.FC = () => {
     return <CheckinPage event={selectedEvent} currentUser={currentUser} onBack={() => setView('events')} />;
   }
 
-  if (view === 'boarding') {
-    return <BoardingCheckin currentUser={currentUser} onBack={() => setView('dashboard')} />;
+  if (view === 'boarding-run') {
+    return <BoardingCheckin currentUser={currentUser} onBack={() => window.close()} />;
   }
 
   if (view === 'event-form') {
@@ -166,9 +177,7 @@ const App: React.FC = () => {
 
     const boardingItems: MenuItem[] = [
       { id: 'divider1', icon: null, label: 'NỘI TRÚ', type: 'divider' },
-      { id: 'boarding', icon: <Icons.Boarding className="w-5 h-5" />, label: 'Check-in Nội trú' },
-      { id: 'rooms', icon: <Icons.Rooms className="w-5 h-5" />, label: 'Quản lý phòng' },
-      { id: 'exit-permission', icon: <Icons.Exit className="w-5 h-5" />, label: 'Xin phép ra ngoài' },
+      { id: 'boarding-config', icon: <Icons.Boarding className="w-5 h-5" />, label: 'Quản lý Nội trú' },
     ];
 
     const reportItems: MenuItem[] = [
@@ -284,9 +293,8 @@ const App: React.FC = () => {
           <div className="max-w-7xl mx-auto">
             {view === 'dashboard' && <DashboardView setView={setView} currentUser={currentUser} />}
             {view === 'events' && <EventList onSelectEvent={handleSelectEvent} onCreateEvent={handleCreateEvent} onEditEvent={handleEditEvent} />}
-            {view === 'rooms' && <RoomManagement />}
-            {view === 'exit-permission' && <ExitPermission currentUser={currentUser} />}
             {view === 'ranking' && <RankingBoard />}
+            {view === 'boarding-config' && <BoardingConfigPage currentUser={currentUser} />}
             {view === 'event-report' && <EventReport />}
             {view === 'users' && <UserManagement />}
             {view === 'points' && <PointManagement />}
@@ -344,7 +352,7 @@ const DashboardView: React.FC<{ setView: (view: AppView) => void; currentUser: U
         <h3 className="text-lg font-black text-slate-900 mb-4">Thao tác nhanh</h3>
         <div className="flex flex-wrap gap-3">
           <QuickButton icon={<Icons.Events className="w-5 h-5" />} label="Quản lý sự kiện" onClick={() => setView('events')} color="indigo" />
-          <QuickButton icon={<Icons.Boarding className="w-5 h-5" />} label="Check-in Nội trú" onClick={() => setView('boarding')} color="emerald" />
+          <QuickButton icon={<Icons.Boarding className="w-5 h-5" />} label="Quản lý Nội trú" onClick={() => setView('boarding-config')} color="emerald" />
           <QuickButton icon={<Icons.Ranking className="w-5 h-5" />} label="Bảng xếp hạng" onClick={() => setView('ranking')} color="purple" />
           {currentUser.role === 'admin' && (
             <>
@@ -357,8 +365,7 @@ const DashboardView: React.FC<{ setView: (view: AppView) => void; currentUser: U
 
       {/* Feature Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <FeatureCard icon={<Icons.Boarding className="w-6 h-6" />} title="Check-in Nội trú" desc="Check-in sáng/tối" onClick={() => setView('boarding')} />
-        <FeatureCard icon={<Icons.Rooms className="w-6 h-6" />} title="Quản lý Phòng" desc="Xem danh sách phòng" onClick={() => setView('rooms')} />
+        <FeatureCard icon={<Icons.Boarding className="w-6 h-6" />} title="Nội trú" desc="Quản lý tổng hợp" onClick={() => setView('boarding-config')} />
         <FeatureCard icon={<Icons.Reports className="w-6 h-6" />} title="Báo cáo" desc="Thống kê check-in" onClick={() => setView('event-report')} />
         <FeatureCard icon={<Icons.Certificates className="w-6 h-6" />} title="Chứng nhận" desc="Tạo giấy chứng nhận" onClick={() => setView('certificates')} />
         <FeatureCard icon={<Icons.Cards className="w-6 h-6" />} title="Tạo thẻ" desc="Thẻ QR học sinh" onClick={() => setView('cards')} />

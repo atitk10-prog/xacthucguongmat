@@ -98,22 +98,33 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
 
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    const [rooms, setRooms] = useState<any[]>([]); // Use any or Room interface if available
+
     useEffect(() => {
-        loadUsers();
+        loadData();
     }, []);
 
-    const loadUsers = async () => {
+    const loadData = async () => {
         setIsLoading(true);
         try {
-            const result = await dataService.getUsers();
-            if (result.success && result.data) {
-                setUsers(result.data);
-            }
+            const [usersRes, roomsRes] = await Promise.all([
+                dataService.getUsers(),
+                dataService.getRooms()
+            ]);
+
+            if (usersRes.success && usersRes.data) setUsers(usersRes.data);
+            if (roomsRes.success && roomsRes.data) setRooms(roomsRes.data);
         } catch (error) {
-            console.error('Failed to load users:', error);
+            console.error('Failed to load data:', error);
         } finally {
             setIsLoading(false);
         }
+    };
+
+    // Remove separate loadUsers and use loadData instead (or keep for refresh)
+    const loadUsers = async () => {
+        const result = await dataService.getUsers();
+        if (result.success && result.data) setUsers(result.data);
     };
 
     const handleSingleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -370,6 +381,14 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
             role: user.role,
             class_id: user.class_id || '',
             room_id: user.room_id || '',
+            // Find zone from room if possible, otherwise use user's zone
+            zone: (() => {
+                if (user.room_id) {
+                    const r = rooms.find(rm => rm.id === user.room_id);
+                    if (r) return r.zone;
+                }
+                return user.zone || ''; // Fallback to user's stored zone if any
+            })(),
             organization: user.organization || '',
             birth_date: user.birth_date ? new Date(user.birth_date).toISOString().split('T')[0] : '', // Format YYYY-MM-DD
             status: user.status,
@@ -514,7 +533,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                             <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Mã số</th>
                             <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Vai trò</th>
                             <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Ngày sinh</th>
-                            <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Lớp/Tổ</th>
+                            <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Lớp/Tổ/Phòng</th>
                             <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase text-right">Thao tác</th>
                         </tr>
                     </thead>
@@ -544,7 +563,21 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                                     <td className="px-4 py-3 font-mono text-sm text-slate-600">{user.student_code || '—'}</td>
                                     <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-xs font-bold ${getRoleBadge(user.role).color}`}>{getRoleBadge(user.role).text}</span></td>
                                     <td className="px-4 py-3 text-slate-600">{user.birth_date ? new Date(user.birth_date).toLocaleDateString('vi-VN') : '—'}</td>
-                                    <td className="px-4 py-3 text-slate-600">{user.class_id || user.organization || '—'}</td>
+                                    <td className="px-4 py-3 text-slate-600">
+                                        <div className="flex flex-col">
+                                            <span className="font-bold">{user.class_id || user.organization || '—'}</span>
+                                            {user.room_id && (() => {
+                                                const r = rooms.find(room => room.id === user.room_id);
+                                                if (!r) return null;
+                                                return (
+                                                    <div className="flex items-center gap-1 mt-1 text-xs text-indigo-600 font-bold bg-indigo-50 px-2 py-1 rounded-lg w-fit">
+                                                        <Icons.Home className="w-3 h-3" />
+                                                        <span>{r.name} - Khu {r.zone}</span>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
+                                    </td>
                                     <td className="px-4 py-3 text-right">
                                         <div className="flex gap-2 justify-end">
                                             <button onClick={() => handleEdit(user)} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg">
@@ -636,8 +669,27 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                                             <input type="text" value={formData.organization} onChange={e => setFormData({ ...formData, organization: e.target.value })} placeholder="12A1" className="w-full p-3 rounded-xl border border-slate-200" />
                                         </div>
                                         <div>
-                                            <label className="block text-sm font-bold text-slate-700 mb-1">Phòng</label>
-                                            <input type="text" value={formData.room_id} onChange={e => setFormData({ ...formData, room_id: e.target.value })} placeholder="P101" className="w-full p-3 rounded-xl border border-slate-200" />
+                                            <label className="block text-sm font-bold text-slate-700 mb-1">Phòng nội trú</label>
+                                            <select
+                                                value={formData.room_id}
+                                                onChange={e => {
+                                                    const roomId = e.target.value;
+                                                    const selectedRoom = rooms.find(r => r.id === roomId);
+                                                    setFormData({
+                                                        ...formData,
+                                                        room_id: roomId,
+                                                        zone: selectedRoom ? selectedRoom.zone : formData.zone
+                                                    });
+                                                }}
+                                                className="w-full p-3 rounded-xl border border-slate-200"
+                                            >
+                                                <option value="">-- Chọn phòng --</option>
+                                                {rooms.map(room => (
+                                                    <option key={room.id} value={room.id}>
+                                                        {room.name} (Khu {room.zone}) - {room.capacity} chỗ
+                                                    </option>
+                                                ))}
+                                            </select>
                                         </div>
                                         <div>
                                             <label className="block text-sm font-bold text-slate-700 mb-1">Khu vực</label>

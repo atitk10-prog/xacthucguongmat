@@ -1,59 +1,91 @@
 /**
  * EduCheck - PDF Service
+ * Supports batch card printing with colors preserved
  */
 
 interface CardData {
-    fullName: string;
-    role: string;
-    code: string;
-    className?: string;
-    roomName?: string;
-    avatarUrl?: string;
-    qrCode: string;
-    eventName?: string;
+  fullName: string;
+  role: string;
+  code: string;
+  className?: string;
+  roomName?: string;
+  avatarUrl?: string;
+  qrCode: string;
+  eventName?: string;
+  birthDate?: string; // Added field
 }
 
 interface CertificateData {
-    recipientName: string;
-    title: string;
-    eventName?: string;
-    issuedDate: string;
-    type: 'participation' | 'completion' | 'excellent';
-    verifyCode: string;
-    verifyQR: string;
+  recipientName: string;
+  title: string;
+  eventName?: string;
+  issuedDate: string;
+  type: 'participation' | 'completion' | 'excellent';
+  verifyCode: string;
+  verifyQR: string;
 }
 
 export function generateCardHTML(data: CardData): string {
-    const roleColors: Record<string, string> = { 'student': '#4f46e5', 'teacher': '#059669', 'guest': '#d97706', 'admin': '#dc2626' };
-    const roleColor = roleColors[data.role] || '#4f46e5';
+  const roleColors: Record<string, string> = { 'student': '#4f46e5', 'teacher': '#059669', 'guest': '#d97706', 'admin': '#dc2626' };
+  const roleColor = roleColors[data.role] || '#4f46e5';
 
-    return `
-    <div style="width:340px;height:215px;background:linear-gradient(135deg,${roleColor} 0%,${roleColor}dd 100%);border-radius:16px;padding:20px;color:white;font-family:'Plus Jakarta Sans',sans-serif;position:relative;overflow:hidden;">
+  // Resize image to 4x6 ratio (e.g. 60px x 90px)
+  // object-fit: cover to fill the frame but maintain aspect ratio (centered)
+
+  return `
+    <div class="card" style="width:340px;height:215px;background:linear-gradient(135deg,${roleColor} 0%,${roleColor}dd 100%);border-radius:16px;padding:15px;color:white;font-family:'Plus Jakarta Sans',sans-serif;position:relative;overflow:hidden;box-sizing:border-box;">
       <div style="position:absolute;top:-50px;right:-50px;width:200px;height:200px;background:rgba(255,255,255,0.1);border-radius:50%;"></div>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;">
-        <div><div style="font-size:10px;opacity:0.8;text-transform:uppercase;letter-spacing:2px;">EduCheck</div><div style="font-size:12px;font-weight:600;">${data.eventName || 'Thẻ tham gia'}</div></div>
-        <img src="${data.qrCode}" style="width:60px;height:60px;border-radius:8px;background:white;padding:4px;" />
+      
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+        <div style="z-index: 1;">
+            <div style="font-size:10px;opacity:0.8;text-transform:uppercase;letter-spacing:2px;">EduCheck</div>
+            <div style="font-size:13px;font-weight:700;">${data.eventName || 'Thẻ Học Sinh'}</div>
+        </div>
+        <img src="${data.qrCode}" style="width:55px;height:55px;border-radius:6px;background:white;padding:3px;z-index: 1;" />
       </div>
-      <div style="display:flex;gap:15px;">
-        ${data.avatarUrl ? `<img src="${data.avatarUrl}" style="width:70px;height:70px;border-radius:12px;object-fit:cover;border:3px solid rgba(255,255,255,0.3);" />` : `<div style="width:70px;height:70px;border-radius:12px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:28px;">👤</div>`}
-        <div style="flex:1;"><div style="font-size:18px;font-weight:700;margin-bottom:5px;">${data.fullName}</div><div style="font-size:11px;opacity:0.9;margin-bottom:3px;">Mã số: ${data.code}</div>${data.className ? `<div style="font-size:11px;opacity:0.9;">Lớp: ${data.className}</div>` : ''}</div>
+      
+      <div style="display:flex;gap:12px;align-items:flex-start;">
+        <!-- Photo 4x6 Ratio (60x90) -->
+        ${data.avatarUrl
+      ? `<img src="${data.avatarUrl}" style="width:60px;height:90px;border-radius:8px;object-fit:cover;border:2px solid rgba(255,255,255,0.5);background:white;" />`
+      : `<div style="width:60px;height:90px;border-radius:8px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:24px;border:2px solid rgba(255,255,255,0.3);">👤</div>`
+    }
+        
+        <div style="flex:1;z-index: 1;padding-top:2px;">
+            <div style="font-size:16px;font-weight:800;line-height:1.2;margin-bottom:4px;">${data.fullName}</div>
+            <div style="font-size:11px;opacity:0.95;margin-bottom:2px;">Mã số: <strong>${data.code}</strong></div>
+            ${data.className ? `<div style="font-size:11px;opacity:0.95;margin-bottom:2px;">Lớp/Đơn vị: <strong>${data.className}</strong></div>` : ''}
+            ${data.birthDate ? `<div style="font-size:11px;opacity:0.95;">Ngày sinh: <strong>${formatDate(data.birthDate)}</strong></div>` : ''}
+        </div>
       </div>
-      <div style="position:absolute;bottom:12px;left:20px;right:20px;display:flex;justify-content:space-between;align-items:center;font-size:9px;opacity:0.7;">
-        <span style="background:rgba(255,255,255,0.2);padding:4px 10px;border-radius:20px;text-transform:uppercase;letter-spacing:1px;">${data.role}</span>
-        <span>Powered by AI</span>
+      
+      <div style="position:absolute;bottom:10px;left:15px;right:15px;display:flex;justify-content:space-between;align-items:center;font-size:9px;opacity:0.8;">
+        <span style="background:rgba(255,255,255,0.2);padding:3px 8px;border-radius:12px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">${data.role}</span>
+        <span>Powered by EduCheck AI</span>
       </div>
     </div>`;
 }
 
-export function generateCertificateHTML(data: CertificateData): string {
-    const typeConfig: Record<string, { color: string; icon: string; label: string }> = {
-        'participation': { color: '#3b82f6', icon: '🎯', label: 'GIẤY XÁC NHẬN THAM GIA' },
-        'completion': { color: '#10b981', icon: '✅', label: 'GIẤY CHỨNG NHẬN HOÀN THÀNH' },
-        'excellent': { color: '#f59e0b', icon: '🏆', label: 'GIẤY KHEN XUẤT SẮC' }
-    };
-    const config = typeConfig[data.type] || typeConfig.participation;
+// Simple date formatter
+function formatDate(dateStr: string): string {
+  if (!dateStr) return '';
+  try {
+    const date = new Date(dateStr);
+    return new Intl.DateTimeFormat('vi-VN').format(date);
+  } catch {
+    return dateStr;
+  }
+}
 
-    return `
+export function generateCertificateHTML(data: CertificateData): string {
+  const typeConfig: Record<string, { color: string; icon: string; label: string }> = {
+    'participation': { color: '#3b82f6', icon: '🎯', label: 'GIẤY XÁC NHẬN THAM GIA' },
+    'completion': { color: '#10b981', icon: '✅', label: 'GIẤY CHỨNG NHẬN HOÀN THÀNH' },
+    'excellent': { color: '#f59e0b', icon: '🏆', label: 'GIẤY KHEN XUẤT SẮC' }
+  };
+  const config = typeConfig[data.type] || typeConfig.participation;
+
+  return `
     <div style="width:800px;height:566px;background:linear-gradient(180deg,#ffffff 0%,#f8fafc 100%);border:3px solid ${config.color};border-radius:20px;padding:40px;font-family:'Plus Jakarta Sans',sans-serif;position:relative;overflow:hidden;">
       <div style="position:absolute;top:20px;left:20px;width:60px;height:60px;border-top:4px solid ${config.color};border-left:4px solid ${config.color};border-radius:10px 0 0 0;"></div>
       <div style="position:absolute;top:20px;right:20px;width:60px;height:60px;border-top:4px solid ${config.color};border-right:4px solid ${config.color};border-radius:0 10px 0 0;"></div>
@@ -76,14 +108,148 @@ export function generateCertificateHTML(data: CertificateData): string {
     </div>`;
 }
 
+// Print single card/certificate
 export function printHTML(html: string): void {
-    const printWindow = window.open('', '_blank');
-    if (printWindow) {
-        printWindow.document.write(`<!DOCTYPE html><html><head><title>Print</title><link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"><style>@media print { body { margin: 0; padding: 20px; } @page { margin: 0; size: auto; } }</style></head><body>${html}</body></html>`);
-        printWindow.document.close();
-        printWindow.focus();
-        setTimeout(() => printWindow.print(), 500);
-    }
+  const printWindow = window.open('', '_blank');
+  if (printWindow) {
+    printWindow.document.write(generatePrintPage(html));
+    printWindow.document.close();
+    printWindow.focus();
+    setTimeout(() => printWindow.print(), 500);
+  }
 }
 
-export const pdfService = { generateCardHTML, generateCertificateHTML, printHTML };
+// Print multiple cards in batch - ALL cards in ONE print window
+export function printBatchCards(htmlCards: string[]): void {
+  const printWindow = window.open('', '_blank');
+  if (printWindow) {
+    const cardsHTML = htmlCards.map((card, i) => `
+            <div class="card-wrapper" style="page-break-inside:avoid;">
+                ${card}
+            </div>
+        `).join('');
+
+    printWindow.document.write(generatePrintPage(cardsHTML, true));
+    printWindow.document.close();
+    printWindow.focus();
+
+    // Wait for images to load before printing
+    setTimeout(() => {
+      printWindow.print();
+    }, 1000);
+  }
+}
+
+// Change to grid layout for 8 cards per A4 page
+function generatePrintPage(content: string, isBatch: boolean = false): string {
+  return `<!DOCTYPE html>
+<html>
+<head>
+    <title>In Thẻ EduCheck</title>
+    <meta charset="UTF-8">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            color-adjust: exact !important;
+            box-sizing: border-box;
+        }
+        
+        body {
+            margin: 0;
+            padding: 10px;
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background: #f5f5f5;
+        }
+        
+        /* Grid layout for batch printing */
+        .cards-container {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px;
+            max-width: 210mm; /* A4 width */
+            margin: 0 auto;
+        }
+        
+        .card-wrapper {
+            /* No specific width here, controlled by print media */
+        }
+        
+        @media print {
+            body {
+                margin: 0;
+                padding: 5mm; /* Minimum padding */
+                background: white;
+            }
+            
+            .cards-container {
+                display: grid;
+                grid-template-columns: repeat(2, 1fr); /* 2 columns */
+                gap: 5mm; /* Gap between cards */
+                justify-items: center;
+            }
+            
+            .card-wrapper {
+                page-break-inside: avoid;
+            }
+            
+            /* Ensure card size fits 8 per page */
+            /* A4 height is ~297mm. 4 rows needs < 74mm per row */
+            /* Card height 56mm + gap should fit */
+            
+            .card {
+                /* Reduce card size slightly for printing to ensure 8 fit */
+                width: 90mm !important; 
+                height: 56mm !important;
+                border-radius: 8px !important;
+                padding: 10px !important;
+            }
+            
+            .card > div {
+                 /* Scale content logic if needed, but fixed px units inside might be issue.
+                    Using viewport units or relative units is better, but CSS scale is easiest */
+                 transform-origin: top left;
+             }
+
+            @page {
+                margin: 5mm; 
+                size: A4 portrait;
+            }
+        }
+        
+        /* Print preview info */
+        .print-info {
+            text-align: center;
+            padding: 10px;
+            background: #4f46e5;
+            color: white;
+            margin-bottom: 15px;
+            border-radius: 10px;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        
+        @media print {
+            .print-info {
+                display: none !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    ${isBatch ? '<div class="print-info">📄 Nhấn Ctrl+P. Chọn "In màu nền". Layout được tối ưu cho 8 thẻ/trang A4 (2x4).</div>' : ''}
+    <div class="cards-container">
+        ${content}
+    </div>
+</body>
+</html>`;
+}
+
+export const pdfService = {
+  generateCardHTML,
+  generateCertificateHTML,
+  printHTML,
+  printBatchCards
+};

@@ -1,39 +1,40 @@
-# Implementation Plan - Refine Recognition and Check-in UX
+# Kế hoạch Nâng cấp Hệ thống Chứng nhận (Certificate System Upgrade)
 
-Addressing user feedback to eliminate "ghost" detections (single person detected as multiple), switch to using user avatars for display instead of captured check-in photos, and ensure user details are viewable.
+## Hiện trạng & Vấn đề
+- **Code quá tải**: File `CertificateGenerator.tsx` quá dài (>1000 dòng), khó bảo trì, dễ sinh lỗi khi sửa một chỗ hỏng chỗ khác.
+- **Tính năng phân tán**: Logic xử lý ảnh, PDF, Word, và logic giao diện trộn lẫn.
+- **Trải nghiệm người dùng**: Mỗi lần vào phải chỉnh lại từ đầu (font, màu, khổ giấy), chưa lưu được "Mẫu tủ" của riêng người dùng.
+- **Chất lượng xuất**: Đã cải thiện nhưng cần chuẩn hóa DPI cao để in ấn nét hơn.
 
-## Problem Description
-1.  **Ghost Multi-Detection:** One person is sometimes detected as two people, or falsely identified as another user (ghosting), even at 40% threshold.
-2.  **Image Display:** The system currently saves and displays the "captured image" from the check-in moment. The user wants to display the **stored avatar** (image card) instead and **NOT SAVE** the check-in image to the database.
-3.  **User Details:** Clicking on a user in the list need to show their full details.
+## Phương án Nâng cấp (Lộ trình 3 bước)
 
-## Proposed Changes
+### Bước 1: Tái cấu trúc & Chia nhỏ (Refactoring) - **CẦN LÀM NGAY**
+Để chấm dứt tình trạng "sửa mãi", code cần được chia module rõ ràng:
+1.  **`CertificateConfigPanel.tsx`**: Chứa toàn bộ các nút bấm, chọn font, màu, cài đặt.
+2.  **`CertificatePreview.tsx`**: Chỉ lo việc hiển thị, đảm bảo "nhìn sao in vậy" (WYSIWYG).
+3.  **`ExportService.ts`**: Tách hoàn toàn logic xuất PDF/Word ra file riêng, xử lý lỗi tập trung.
 
-### Component: `CheckinPage.tsx`
+### Bước 2: Tính năng "Lưu Cấu Hình Mẫu" (User Presets)
+Người dùng sau khi chỉnh đẹp (A5, Font Times, Nền trống đồng...) có thể bấm nút **"Lưu mẫu này"**.
+- Hệ thống sẽ lưu lại `customConfig` vào trình duyệt (hoặc database).
+- Lần sau chỉ cần chọn "Mẫu của tôi: A5 Trống Đồng" là mọi thứ tự động chỉnh lại.
 
-#### [MODIFY] [CheckinPage.tsx](file:///c:/Users/Hii/Desktop/GITHUB/xacthucguongmat/components/checkin/CheckinPage.tsx)
+### Bước 3: Biến động & Placeholder (Nâng cao)
+Cho phép chèn biến vào văn bản.
+- Ví dụ nhập: *"Chứng nhận em {name} đã hoàn thành..."*
+- Khi xuất hàng loạt, `{name}` sẽ tự thay bằng tên học sinh.
+- Giúp người dùng tùy biến nội dung sâu hơn mà không cần code lại template.
 
-1.  **Strict "Best Match" Only:**
-    *   **Logic:** If multiple faces are detected, **only process the largest face** (the one closest/clearest). This prevents background noise or partial reflections from triggering false positives.
-    *   **Threshold:** Increase default sensitivity/threshold further (to 50% or 55%) to really filter out weak matches.
+## Đề xuất thực hiện ngay lập tức
+Chúng ta sẽ thực hiện **Bước 1 (Chia nhỏ)** và **Bước 2 (Lưu mẫu)** trong phiên làm việc này.
 
-2.  **Use Avatar for Display:**
-    *   **Logic:** When adding to `recentCheckins` list, use the `participant.avatar_url` (from `participants` lookup) instead of the captured video frame.
-    *   **Database:** Update `handleCheckIn` to passing `null` or empty string for the image field when calling `dataService.checkInEvent`, effectively disabling image saving.
-
-3.  **Click to View Details:**
-    *   **Logic:** Ensure the `recentCheckins` items have an `onClick` handler that sets `selectedUser` state, opening the detail modal (which presumably already exists or needs verification).
-
-### Component: `dataService.ts`
-
-#### [MODIFY] [dataService.ts](file:///c:/Users/Hii/Desktop/GITHUB/xacthucguongmat/services/dataService.ts)
-
-1.  **Disable Image Upload (Optional but cleaner):**
-    *   Verify `checkInEvent` handles missing image gracefully.
-
-## Verification Plan
-
-### Manual Verification
-1.  **Ghost Test:** Stand alone. Verify ONLY 1 face box appears. Verify name is correct or "Unknown".
-2.  **Display Test:** Check-in. Verify the image in the right sidebar is your **registered avatar**, not the webcam snapshot.
-3.  **Database Test:** Check Supabase `checkins` table. The `image_url` (or equivalent) column should be empty/null (or we just don't display it).
+### Cấu trúc file mới dự kiến:
+```text
+components/certificates/
+├── CertificateGenerator.tsx (Wrapper chính, quản lý state chung)
+├── panel/
+│   ├── ConfigPanel.tsx (Giao diện cấu hình trái)
+│   └── PreviewPanel.tsx (Giao diện hiển thị phải)
+└── actions/
+    └── exportActions.ts (Hàm xuất file)
+```

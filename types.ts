@@ -105,15 +105,37 @@ export interface EventCheckin {
   };
 }
 
+export interface EventParticipant {
+  id: string;
+  event_id: string;
+  full_name: string;
+  avatar_url?: string;
+  birth_date?: string;
+  organization?: string;
+  address?: string;
+  created_at?: string;
+  user_id?: string; // Link to system user
+}
+
+export interface BoardingConfig {
+  morning_curfew: string; // "07:00"
+  noon_curfew: string; // "12:30"
+  evening_curfew: string; // "22:00"
+  [key: string]: string;
+}
+
 export interface BoardingCheckin {
   id: string;
   user_id: string;
   date: string;
   morning_in?: string;
+  morning_in_status?: 'on_time' | 'late'; // New
   morning_out?: string;
   noon_in?: string;
+  noon_in_status?: 'on_time' | 'late'; // New
   noon_out?: string;
   evening_in?: string;
+  evening_in_status?: 'on_time' | 'late'; // New
   evening_out?: string;
   exit_permission: boolean;
   notes?: string;
@@ -147,6 +169,8 @@ export interface Certificate {
   qr_verify: string;
   pdf_url?: string;
   status: CertificateStatus;
+  template_id?: string;
+  metadata?: any;
 }
 
 export interface Class {
