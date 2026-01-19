@@ -135,7 +135,7 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         setIsLoading(true);
         try {
             const [usersResult, eventsResult, certsResult] = await Promise.all([
-                dataService.getUsers({ status: 'active' }),
+                dataService.getUsers(), // Load all users regardless of status
                 dataService.getEvents({ status: 'completed' }),
                 dataService.getCertificates()
             ]);

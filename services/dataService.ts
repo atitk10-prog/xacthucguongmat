@@ -190,7 +190,9 @@ async function getUsers(filters?: { role?: string; status?: string }): Promise<A
             query = query.eq('status', filters.status);
         }
 
-        const { data, error } = await query.order('created_at', { ascending: false });
+        const { data, error } = await query
+            .order('created_at', { ascending: false })
+            .range(0, 4999); // Increase limit to load up to 5000 users
 
         if (error) return { success: false, error: error.message };
         return { success: true, data: data as User[] };
@@ -536,7 +538,8 @@ async function getEventParticipants(eventId: string): Promise<ApiResponse<EventP
             .from('event_participants')
             .select('id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor, user_id') // Select only necessary columns
             .eq('event_id', eventId)
-            .order('full_name', { ascending: true });
+            .order('full_name', { ascending: true })
+            .range(0, 4999); // Increase limit to 5000
 
         if (error) return { success: false, error: error.message };
         return { success: true, data: data as EventParticipant[] };
