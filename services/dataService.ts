@@ -251,7 +251,14 @@ async function updateUser(id: string, userData: Partial<User> & { password?: str
 
         Object.keys(rest).forEach(key => {
             if (allowedColumns.includes(key) && rest[key as keyof User] !== undefined) {
-                updatePayload[key] = rest[key as keyof User];
+                let value = rest[key as keyof User];
+
+                // Convert empty strings to null for UUID/Foreign Key fields
+                if ((key === 'room_id' || key === 'class_id') && value === '') {
+                    value = null;
+                }
+
+                updatePayload[key] = value;
             }
         });
 
