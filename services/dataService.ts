@@ -239,7 +239,21 @@ async function createUser(userData: Partial<User> & { password?: string }): Prom
 async function updateUser(id: string, userData: Partial<User> & { password?: string }): Promise<ApiResponse<User>> {
     try {
         const { password, ...rest } = userData;
-        const updatePayload: any = { ...rest, updated_at: new Date().toISOString() };
+        // Whitelist allowed columns to prevent 400 errors from extra fields
+        const allowedColumns = [
+            'email', 'full_name', 'role', 'class_id', 'room_id', 'zone',
+            'avatar_url', 'face_vector', 'face_descriptor', 'qr_code',
+            'status', 'student_code', 'organization', 'birth_date',
+            'total_points', 'password_hash'
+        ];
+
+        const updatePayload: any = { updated_at: new Date().toISOString() };
+
+        Object.keys(rest).forEach(key => {
+            if (allowedColumns.includes(key) && rest[key as keyof User] !== undefined) {
+                updatePayload[key] = rest[key as keyof User];
+            }
+        });
 
         // Only update password_hash if password is provided
         if (password) {
