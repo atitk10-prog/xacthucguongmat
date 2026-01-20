@@ -36,12 +36,12 @@ export function generateCardHTML(data: CardData): string {
     <div class="card" style="width:340px;height:215px;background:linear-gradient(135deg,${roleColor} 0%,${roleColor}dd 100%);border-radius:16px;padding:15px;color:white;font-family:'Plus Jakarta Sans',sans-serif;position:relative;overflow:hidden;box-sizing:border-box;">
       <div style="position:absolute;top:-50px;right:-50px;width:200px;height:200px;background:rgba(255,255,255,0.1);border-radius:50%;"></div>
       
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px;">
         <div style="z-index: 1;">
             <div style="font-size:10px;opacity:0.8;text-transform:uppercase;letter-spacing:2px;">EduCheck</div>
             <div style="font-size:13px;font-weight:700;">${data.eventName || 'Thẻ Học Sinh'}</div>
         </div>
-        <img src="${data.qrCode}" style="width:55px;height:55px;border-radius:6px;background:white;padding:3px;z-index: 1;" />
+        <img src="${data.qrCode}" style="width:90px;height:90px;border-radius:6px;background:white;padding:4px;z-index: 1;" />
       </div>
       
       <div style="display:flex;gap:12px;align-items:flex-start;">

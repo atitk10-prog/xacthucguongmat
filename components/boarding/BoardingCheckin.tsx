@@ -59,6 +59,10 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     const [selectedSlot, setSelectedSlot] = useState<BoardingTimeSlot | null>(null);
     const [systemReady, setSystemReady] = useState(false);
 
+    // HID Scanner Buffer
+    const scannerBuffer = useRef<string>('');
+    const lastKeyTime = useRef<number>(0);
+
     // Sync ref
     useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
 
@@ -93,6 +97,40 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         // Try to process offline queue on mount
         dataService.processOfflineQueue();
     }, []);
+
+    // Global Keyboard Listener for HID Scanners
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Ignore if focus is on an input field (search/etc)
+            if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+                return;
+            }
+
+            const now = Date.now();
+
+            // Clean buffer if typing is too slow (human typing vs scanner)
+            if (now - lastKeyTime.current > 100) {
+                scannerBuffer.current = '';
+            }
+            lastKeyTime.current = now;
+
+            if (e.key === 'Enter') {
+                if (scannerBuffer.current.length > 5) { // Minimum length check
+                    console.log('Scanner detected:', scannerBuffer.current);
+                    handleQRCheckin(scannerBuffer.current);
+                    // Switch to QR view if not already
+                    if (checkinMode !== 'qr') setCheckinMode('qr');
+                }
+                scannerBuffer.current = '';
+            } else if (e.key.length === 1) {
+                // Determine if it's a valid char
+                scannerBuffer.current += e.key;
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [checkinMode]);
 
     const handleSaveConfig = async () => {
         const res = await dataService.updateBoardingConfig(configForm);
@@ -160,19 +198,57 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         init();
     }, []);
 
-    // Camera
+    // Reusable function to start face camera
+    const startFaceCamera = async () => {
+        // Stop any existing stream first to avoid conflicts
+        if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+            setStream(null);
+        }
+        try {
+            const newStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+            });
+            setStream(newStream);
+            if (videoRef.current) {
+                videoRef.current.srcObject = newStream;
+            }
+            console.log('✅ Face camera started');
+        } catch (err) {
+            console.error('Camera error', err);
+        }
+    };
+
+    // Stop face camera (to release for QR scanner)
+    const stopFaceCamera = () => {
+        if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+            setStream(null);
+            if (videoRef.current) {
+                videoRef.current.srcObject = null;
+            }
+            console.log('🛑 Face camera stopped');
+        }
+    };
+
+    // Start camera based on mode
     useEffect(() => {
-        const startCamera = async () => {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
-                });
-                setStream(stream);
-                if (videoRef.current) videoRef.current.srcObject = stream;
-            } catch (err) { console.error('Camera error', err); }
+        if (checkinMode === 'face' && modelsReady) {
+            // Small delay to ensure QR scanner fully released camera
+            const timer = setTimeout(() => {
+                startFaceCamera();
+            }, 200);
+            return () => clearTimeout(timer);
+        }
+    }, [checkinMode, modelsReady]);
+
+    // Cleanup on unmount
+    useEffect(() => {
+        return () => {
+            if (stream) {
+                stream.getTracks().forEach(t => t.stop());
+            }
         };
-        startCamera();
-        return () => { stream?.getTracks().forEach(t => t.stop()); };
     }, []);
 
     // Detect Loop (Optimized + Security)
@@ -436,6 +512,11 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             console.warn('Error stopping QR scanner:', e);
         }
 
+        // Stop face camera if switching to QR (to avoid camera conflict)
+        if (mode === 'qr') {
+            stopFaceCamera();
+        }
+
         // Update facing mode if provided
         const facing = newFacing || cameraFacing;
         if (newFacing) {
@@ -447,7 +528,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         // Start QR scanner if switching to QR mode
         if (mode === 'qr') {
             setGuidance('Đưa mã QR vào khung hình...');
-            // Short delay to let DOM update
+            // Short delay to let DOM update and camera release
             setTimeout(async () => {
                 try {
                     await qrScannerService.startScanning(
@@ -467,9 +548,10 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 } catch (err) {
                     console.error('Failed to start QR scanner:', err);
                 }
-            }, 300);
+            }, 400); // Increased delay for camera release
         } else {
             setGuidance('Đang tìm khuôn mặt...');
+            // Face camera will be started by useEffect watching checkinMode
         }
     };
 

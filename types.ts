@@ -7,6 +7,7 @@ export interface Attendee {
   department: string;
   role: string;
   imageUrl: string;
+  face_descriptor?: string; // JSON string of float array
 }
 
 export interface CheckInLog {
@@ -45,6 +46,7 @@ export interface User {
   zone?: string;
   avatar_url?: string;
   birth_date?: string; // Added field
+  total_points?: number; // Added field
   face_vector?: string;
   face_descriptor?: string; // New field for JSON array
   student_code?: string; // Mã học sinh / nhân viên
@@ -115,6 +117,7 @@ export interface EventParticipant {
   address?: string;
   created_at?: string;
   user_id?: string; // Link to system user
+  face_descriptor?: string; // Cache field for faster check-in
 }
 
 export interface BoardingConfig {

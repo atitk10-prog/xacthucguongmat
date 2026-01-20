@@ -224,7 +224,7 @@ export function base64ToImage(base64: string): Promise<HTMLImageElement> {
         const img = new Image();
         img.onload = () => resolve(img);
         img.onerror = reject;
-        img.src = base64.startsWith('data:') ? base64 : `data:image/jpeg;base64,${base64}`;
+        img.src = (base64.startsWith('data:') || base64.startsWith('http')) ? base64 : `data:image/jpeg;base64,${base64}`;
     });
 }
 

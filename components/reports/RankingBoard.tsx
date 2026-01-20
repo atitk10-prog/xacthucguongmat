@@ -1,12 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
 import { utils, writeFile } from 'xlsx';
+import { Award, Download, Loader2, FileDown } from 'lucide-react';
+import { generateSingleExportPDF, generateBatchPDF } from '../../services/certificateExportService';
+import { useToast } from '../ui/Toast';
 
 interface RankingUser {
     position: number;
     user_id: string;
     user_name: string;
+    avatar_url?: string;
     class_id?: string;
+    organization?: string;
     total_points: number;
     on_time_count?: number;
     late_count?: number;
@@ -24,6 +29,14 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
     const [rankings, setRankings] = useState<RankingUser[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [viewType, setViewType] = useState<'student' | 'class'>(type);
+    const [isGenerating, setIsGenerating] = useState(false);
+    const [currentUserRole, setCurrentUserRole] = useState<string>('student');
+    const { success, error: toastError } = useToast();
+
+    useEffect(() => {
+        const user = dataService.getStoredUser();
+        if (user) setCurrentUserRole(user.role);
+    }, []);
 
     useEffect(() => {
         loadRankings();
@@ -38,7 +51,35 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
             });
 
             if (result.success && result.data) {
-                setRankings(result.data as any[]);
+                const rawData = result.data as any[];
+
+                // Calculate Rank with Tie-breaking logic (Standard Competition Ranking: 1, 1, 3, 4)
+                let currentRank = 1;
+                const mappedData = rawData.map((item, index) => {
+                    // Check if tied with previous
+                    if (index > 0 && item.total_points < rawData[index - 1].total_points) {
+                        currentRank = index + 1;
+                    }
+
+                    // Determine classification
+                    let classification = 'Chưa xếp loại';
+                    if (item.total_points >= 90) classification = 'Tốt';
+                    else if (item.total_points >= 70) classification = 'Khá';
+                    else if (item.total_points >= 50) classification = 'Trung bình';
+                    else if (item.total_points > 0) classification = 'Yếu';
+
+                    return {
+                        position: currentRank,
+                        user_id: item.id,
+                        user_name: item.full_name,
+                        avatar_url: item.avatar_url,
+                        class_id: item.class_id,
+                        organization: item.organization,
+                        total_points: item.total_points,
+                        rank: classification
+                    };
+                });
+                setRankings(mappedData);
             }
         } catch (error) {
             console.error('Failed to load rankings:', error);
@@ -98,7 +139,116 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
             case 'Khá': return 'bg-blue-100 text-blue-600';
             case 'Trung bình': return 'bg-amber-100 text-amber-600';
             case 'Yếu': return 'bg-red-100 text-red-600';
-            default: return 'bg-slate-100 text-slate-600';
+            default: return 'bg-slate-100 text-slate-400';
+        }
+    };
+
+    const handleCertificateExport = async (user: RankingUser) => {
+        setIsGenerating(true);
+        try {
+            const fileName = `ChungNhan_${user.user_name.replace(/\s+/g, '_')}_${new Date().getTime()}.pdf`;
+
+            // Construct Certificate Object on the fly
+            const certData = {
+                cert: {
+                    id: `RANK-${user.user_id}-${Date.now()}`,
+                    user_id: user.user_id,
+                    event_id: 'ranking',
+                    type: 'excellent',
+                    title: 'Chứng nhận Xuất Sắc',
+                    issued_date: new Date().toISOString(),
+                    template_id: 'auto_rank' // Will fallback to custom
+                } as any, // Cast to any to bypass strict checks for temp obj
+                user: {
+                    id: user.user_id,
+                    full_name: user.user_name,
+                    organization: user.class_id
+                } as any,
+                config: {
+                    paperSize: 'A4',
+                    fontStyle: 'serif',
+                    textColor: '#1e293b',
+                    logoAlignment: 'center',
+                    logoScale: 1,
+                    visibility: { qr: false, title: true, recipient: true, eventName: true, date: true, signature: true, logo: true },
+                    labels: {
+                        title: 'Chứng Nhận',
+                        presentedTo: 'Trao tặng cho',
+                        eventPrefix: 'Đã đạt thành tích',
+                        datePrefix: 'Ngày cấp:',
+                        signature: 'Ban Tổ Chức'
+                    },
+                    manualEventName: `Top ${user.position} - Bảng Xếp Hạng Thi Đua`,
+                    logos: [] // Can add default logo here
+                },
+                overrideName: user.user_name
+            };
+
+            const count = await generateSingleExportPDF([certData], fileName);
+
+            if (count > 0) success(`Đã tạo chứng nhận cho ${user.user_name}`);
+            else toastError('Không thể tạo chứng nhận');
+
+        } catch (err) {
+            console.error(err);
+            toastError('Lỗi tạo chứng nhận');
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    const handleBatchExport = async () => {
+        setIsGenerating(true);
+        try {
+            // Filter Top 10 or all if less than 10
+            const targets = rankings.slice(0, 10); // Default Top 10 for batch
+            const zipName = `ChungNhan_Top10_ThiDua_${new Date().getTime()}.zip`;
+
+            const items = targets.map(user => ({
+                cert: {
+                    id: `RANK-${user.user_id}-${Date.now()}`,
+                    user_id: user.user_id,
+                    event_id: 'ranking',
+                    type: 'excellent',
+                    title: 'Chứng nhận Xuất Sắc',
+                    issued_date: new Date().toISOString(),
+                    template_id: 'auto_rank'
+                } as any,
+                user: {
+                    id: user.user_id,
+                    full_name: user.user_name,
+                    organization: user.class_id
+                } as any,
+                config: {
+                    paperSize: 'A4',
+                    fontStyle: 'serif',
+                    textColor: '#1e293b',
+                    logoAlignment: 'center',
+                    logoScale: 1,
+                    visibility: { qr: false, title: true, recipient: true, eventName: true, date: true, signature: true, logo: true },
+                    labels: {
+                        title: 'Chứng Nhận',
+                        presentedTo: 'Trao tặng cho',
+                        eventPrefix: 'Đã đạt thành tích',
+                        datePrefix: 'Ngày cấp:',
+                        signature: 'Ban Tổ Chức'
+                    },
+                    manualEventName: `Top ${user.position} - Bảng Xếp Hạng Thi Đua`,
+                    logos: []
+                },
+                overrideName: user.user_name
+            }));
+
+            const count = await generateBatchPDF(items, zipName);
+
+            if (count > 0) success(`Đã tải xuống ${count} chứng nhận (ZIP)!`);
+            else toastError('Không thể tạo file ZIP.');
+
+        } catch (err) {
+            console.error('Batch export failed:', err);
+            toastError("Lỗi xuất chứng nhận hàng loạt.");
+        } finally {
+            setIsGenerating(false);
         }
     };
 
@@ -152,18 +302,33 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                         <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                         Xuất Excel
                     </button>
+
+                    {(currentUserRole === 'admin' || currentUserRole === 'teacher') && (
+                        <button
+                            onClick={handleBatchExport}
+                            disabled={isGenerating}
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 flex items-center gap-2 shadow-lg shadow-indigo-200"
+                        >
+                            {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileDown className="w-5 h-5" />}
+                            Tải Top 10
+                        </button>
+                    )}
                 </div>
             </div>
 
             {/* Top 3 Podium */}
             {rankings.length >= 3 && (
-                <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-6 text-white">
+                <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-6 text-white relative">
                     <h3 className="text-center font-bold text-white/80 mb-6">TOP 3</h3>
                     <div className="flex justify-center items-end gap-4">
                         {/* 2nd Place */}
                         <div className="text-center">
-                            <div className="w-20 h-20 bg-white/20 rounded-2xl flex items-center justify-center mb-3 mx-auto backdrop-blur-sm">
-                                <div className="w-12 h-12 rounded-full bg-slate-300 flex items-center justify-center text-white font-black text-xl">2</div>
+                            <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-3 mx-auto relative overflow-hidden bg-white/20 backdrop-blur-sm border-2 border-white/30">
+                                {rankings[1]?.avatar_url ? (
+                                    <img src={rankings[1].avatar_url} className="w-full h-full object-cover" alt="Rank 2" />
+                                ) : (
+                                    <div className="w-12 h-12 rounded-full bg-slate-300 flex items-center justify-center text-white font-black text-xl">2</div>
+                                )}
                             </div>
                             <p className="font-bold text-sm truncate max-w-[100px]">{rankings[1]?.user_name}</p>
                             <p className="text-white/60 text-xs">{rankings[1]?.total_points} điểm</p>
@@ -171,8 +336,12 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
 
                         {/* 1st Place */}
                         <div className="text-center -mt-4">
-                            <div className="w-24 h-24 bg-yellow-400/30 rounded-2xl flex items-center justify-center mb-3 mx-auto backdrop-blur-sm ring-4 ring-yellow-400/50">
-                                <div className="w-16 h-16 rounded-full bg-yellow-400 flex items-center justify-center text-white font-black text-2xl">1</div>
+                            <div className="w-24 h-24 rounded-2xl flex items-center justify-center mb-3 mx-auto relative overflow-hidden ring-4 ring-yellow-400/50 bg-yellow-400/30 backdrop-blur-sm shadow-xl">
+                                {rankings[0]?.avatar_url ? (
+                                    <img src={rankings[0].avatar_url} className="w-full h-full object-cover" alt="Rank 1" />
+                                ) : (
+                                    <div className="w-16 h-16 rounded-full bg-yellow-400 flex items-center justify-center text-white font-black text-2xl">1</div>
+                                )}
                             </div>
                             <p className="font-black text-lg truncate max-w-[120px]">{rankings[0]?.user_name}</p>
                             <p className="text-yellow-300 font-bold">{rankings[0]?.total_points} điểm</p>
@@ -180,12 +349,27 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
 
                         {/* 3rd Place */}
                         <div className="text-center">
-                            <div className="w-20 h-20 bg-white/20 rounded-2xl flex items-center justify-center mb-3 mx-auto backdrop-blur-sm">
-                                <div className="w-12 h-12 rounded-full bg-amber-600 flex items-center justify-center text-white font-black text-xl">3</div>
+                            <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-3 mx-auto relative overflow-hidden bg-white/20 backdrop-blur-sm border-2 border-white/30">
+                                {rankings[2]?.avatar_url ? (
+                                    <img src={rankings[2].avatar_url} className="w-full h-full object-cover" alt="Rank 3" />
+                                ) : (
+                                    <div className="w-12 h-12 rounded-full bg-amber-600 flex items-center justify-center text-white font-black text-xl">3</div>
+                                )}
                             </div>
                             <p className="font-bold text-sm truncate max-w-[100px]">{rankings[2]?.user_name}</p>
                             <p className="text-white/60 text-xs">{rankings[2]?.total_points} điểm</p>
                         </div>
+                    </div>
+                    {/* Instant Cert Button for Top 1 */}
+                    <div className="absolute top-4 right-4 animate-bounce">
+                        <button
+                            onClick={() => handleCertificateExport(rankings[0])}
+                            disabled={isGenerating}
+                            className="bg-white/20 hover:bg-white/30 backdrop-blur text-white p-2 rounded-full transition-all"
+                            title="Tải chứng nhận Top 1"
+                        >
+                            {isGenerating ? <Loader2 className="w-6 h-6 animate-spin" /> : <Award className="w-6 h-6" />}
+                        </button>
                     </div>
                 </div>
             )}
@@ -206,6 +390,7 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center">Vắng</th>
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right">Điểm</th>
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right">Xếp loại</th>
+                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center w-10">CN</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -228,14 +413,18 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                                         </td>
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
-                                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
-                                                </div>
+                                                {user.avatar_url ? (
+                                                    <img src={user.avatar_url} className="w-10 h-10 rounded-full object-cover border border-indigo-100" alt="" />
+                                                ) : (
+                                                    <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
+                                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
+                                                    </div>
+                                                )}
                                                 <span className="font-bold text-slate-900">{user.user_name}</span>
                                             </div>
                                         </td>
                                         {viewType === 'student' && (
-                                            <td className="px-6 py-4 text-slate-500">{user.class_id || '—'}</td>
+                                            <td className="px-6 py-4 text-slate-500 font-medium">{user.organization || user.class_id || '—'}</td>
                                         )}
                                         <td className="px-6 py-4 text-center">
                                             <span className="text-emerald-600 font-bold">{user.on_time_count || 0}</span>
@@ -253,6 +442,18 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                                             <span className={`px-3 py-1 rounded-full text-xs font-bold ${getRankColor(user.rank)}`}>
                                                 {user.rank || '—'}
                                             </span>
+                                        </td>
+                                        <td className="px-6 py-4 text-center">
+                                            {user.position <= 5 && (
+                                                <button
+                                                    onClick={() => handleCertificateExport(user)}
+                                                    disabled={isGenerating}
+                                                    className="text-amber-500 hover:text-amber-600 hover:bg-amber-50 p-1.5 rounded-lg transition-colors"
+                                                    title="Tải chứng nhận"
+                                                >
+                                                    {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Award className="w-4 h-4" />}
+                                                </button>
+                                            )}
                                         </td>
                                     </tr>
                                 ))

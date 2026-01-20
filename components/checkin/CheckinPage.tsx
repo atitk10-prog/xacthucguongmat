@@ -193,13 +193,14 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 console.log('📋 getEventParticipants result:', result);
 
                 if (result.success && result.data) {
-                    const loadedParticipants: EventParticipant[] = result.data.map((p: { id: string; full_name: string; avatar_url?: string; birth_date?: string; organization?: string; face_descriptor?: string }) => ({
+                    const loadedParticipants: EventParticipant[] = result.data.map((p: any) => ({
                         id: p.id,
                         full_name: p.full_name,
-                        avatar_url: p.avatar_url,
+                        avatar_url: p.user?.avatar_url || p.avatar_url, // Prefer user's avatar (more reliable)
                         birth_date: p.birth_date,
                         organization: p.organization,
-                        face_descriptor: p.face_descriptor,
+                        // CRITICAL FIX: Prefer authoritative face_descriptor from 'users' table if linked
+                        face_descriptor: p.user?.face_descriptor || p.face_descriptor,
                         hasFaceDescriptor: false
                     }));
 

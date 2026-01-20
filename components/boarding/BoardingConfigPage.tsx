@@ -3,7 +3,7 @@ import { dataService } from '../../services/dataService';
 import { User, BoardingConfig, BoardingTimeSlot } from '../../types';
 import { faceService } from '../../services/faceService';
 import { supabase } from '../../services/supabaseClient';
-import { Icons } from '../ui';
+import { Icons, useToast } from '../ui';
 import RoomManagement from './RoomManagement';
 import ExitPermission from './ExitPermission';
 import BoardingReport from './BoardingReport';
@@ -90,6 +90,7 @@ const CustomTimePicker = ({ value, onChange, className = '' }: { value: string, 
 // --- 1. Config Tab Component (Original BoardingConfigPage content) ---
 
 const BoardingConfigTab: React.FC = () => {
+    const { success: toastSuccess, error: toastError } = useToast();
     const [config, setConfig] = useState<BoardingConfig>({
         morning_curfew: '07:00',
         noon_curfew: '12:30',
@@ -159,12 +160,12 @@ const BoardingConfigTab: React.FC = () => {
         try {
             const res = await dataService.updateBoardingConfig(config);
             if (res.success) {
-                alert('Cập nhật cấu hình thành công!');
+                toastSuccess('Cập nhật cấu hình thành công!');
             } else {
-                alert('Lỗi cập nhật: ' + res.error);
+                toastError('Lỗi cập nhật: ' + res.error);
             }
         } catch (error) {
-            alert('Lỗi kết nối');
+            toastError('Lỗi kết nối');
         } finally {
             setIsSaving(false);
         }
@@ -179,11 +180,11 @@ const BoardingConfigTab: React.FC = () => {
             const res = await dataService.deleteUser(user.id);
             if (res.success) {
                 setStudents(prev => prev.filter(u => u.id !== user.id));
-                alert('Đã xóa thành công!');
+                toastSuccess(`Đã xóa ${user.full_name}`);
             } else {
-                alert('Lỗi xóa: ' + res.error);
+                toastError('Lỗi xóa: ' + res.error);
             }
-        } catch (e) { alert('Lỗi hệ thống'); }
+        } catch (e) { toastError('Lỗi hệ thống'); }
     };
 
     const openEditModal = (user: User) => {
@@ -206,11 +207,11 @@ const BoardingConfigTab: React.FC = () => {
             if (res.success) {
                 setStudents(prev => prev.map(u => u.id === selectedUser.id ? { ...u, ...editForm } as User : u));
                 setShowEditModal(false);
-                alert('Cập nhật thông tin thành công!');
+                toastSuccess('Cập nhật thông tin thành công!');
             } else {
-                alert('Lỗi cập nhật: ' + res.error);
+                toastError('Lỗi cập nhật: ' + res.error);
             }
-        } catch (e) { alert('Lỗi kết nối'); }
+        } catch (e) { toastError('Lỗi kết nối'); }
         finally { setIsProcessing(false); }
     };
 
@@ -339,7 +340,7 @@ const BoardingConfigTab: React.FC = () => {
                                 <Icons.Settings className="w-5 h-5 text-indigo-600" />
                                 Khung giờ Check-in
                             </h3>
-                            <button
+                            {/* <button
                                 onClick={() => {
                                     setEditingSlot({ id: '', name: '', start_time: '06:00', end_time: '07:00', is_active: true, order_index: timeSlots.length + 1 });
                                     setShowSlotModal(true);
@@ -347,12 +348,12 @@ const BoardingConfigTab: React.FC = () => {
                                 className="text-sm text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1"
                             >
                                 <Icons.Plus className="w-4 h-4" /> Thêm mới
-                            </button>
+                            </button> */}
                         </div>
 
                         <div className="space-y-3">
                             {timeSlots.length === 0 ? (
-                                <p className="text-slate-500 text-sm text-center py-4">Chưa có khung giờ nào. Hãy thêm mới!</p>
+                                <p className="text-slate-500 text-sm text-center py-4">Chưa có khung giờ nào.</p>
                             ) : (
                                 timeSlots.map(slot => (
                                     <div key={slot.id} className={`p-4 rounded-xl border-2 transition-all ${slot.is_active
@@ -378,28 +379,35 @@ const BoardingConfigTab: React.FC = () => {
                                             </span>
                                             <span className="text-xs text-slate-400 ml-2">(trễ sau giờ này)</span>
                                         </div>
-                                        <div className="flex gap-2">
+                                        <div className="flex gap-1">
                                             <button
                                                 onClick={() => {
                                                     setEditingSlot(slot);
                                                     setShowSlotModal(true);
                                                 }}
-                                                className="text-xs text-indigo-600 hover:underline font-medium"
+                                                className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-100 transition-colors"
+                                                title="Sửa khung giờ"
                                             >
-                                                Sửa
+                                                <Icons.Edit className="w-4 h-4" />
                                             </button>
-                                            <button
-                                                onClick={async () => {
-                                                    if (!confirm(`Xóa khung giờ "${slot.name}"?`)) return;
-                                                    const res = await dataService.deleteTimeSlot(slot.id);
-                                                    if (res.success) {
-                                                        setTimeSlots(prev => prev.filter(s => s.id !== slot.id));
-                                                    }
-                                                }}
-                                                className="text-xs text-red-600 hover:underline font-medium"
-                                            >
-                                                Xóa
-                                            </button>
+                                            {!['Buổi Sáng', 'Buổi Trưa', 'Buổi Tối'].includes(slot.name) && (
+                                                <button
+                                                    onClick={async () => {
+                                                        if (!confirm(`Xóa khung giờ "${slot.name}"?`)) return;
+                                                        const res = await dataService.deleteTimeSlot(slot.id);
+                                                        if (res.success) {
+                                                            setTimeSlots(prev => prev.filter(s => s.id !== slot.id));
+                                                            toastSuccess(`Đã xóa khung giờ "${slot.name}"`);
+                                                        } else {
+                                                            toastError(res.error || 'Lỗi xóa khung giờ');
+                                                        }
+                                                    }}
+                                                    className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 transition-colors"
+                                                    title="Xóa khung giờ"
+                                                >
+                                                    <Icons.Trash className="w-4 h-4" />
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 ))
@@ -708,7 +716,7 @@ const BoardingConfigTab: React.FC = () => {
                             <button
                                 onClick={async () => {
                                     if (!editingSlot.name) {
-                                        alert('Vui lòng nhập tên khung giờ');
+                                        toastError('Vui lòng nhập tên khung giờ');
                                         return;
                                     }
                                     setIsProcessing(true);
@@ -718,6 +726,9 @@ const BoardingConfigTab: React.FC = () => {
                                             const res = await dataService.updateTimeSlot(editingSlot.id, editingSlot);
                                             if (res.success && res.data) {
                                                 setTimeSlots(prev => prev.map(s => s.id === editingSlot.id ? res.data! : s));
+                                                toastSuccess(`Đã cập nhật "${editingSlot.name}"`);
+                                            } else {
+                                                toastError(res.error || 'Lỗi cập nhật');
                                             }
                                         } else {
                                             // Create new
@@ -730,15 +741,16 @@ const BoardingConfigTab: React.FC = () => {
                                             });
                                             if (res.success && res.data) {
                                                 setTimeSlots(prev => [...prev, res.data!]);
+                                                toastSuccess(`Đã tạo khung giờ "${editingSlot.name}"`);
+                                            } else {
+                                                toastError(res.error || 'Lỗi tạo khung giờ');
                                             }
                                         }
                                         setShowSlotModal(false);
                                         setEditingSlot(null);
-                                        setShowSlotModal(false);
-                                        setEditingSlot(null);
                                     } catch (e: any) {
                                         console.error('Lỗi lưu khung giờ:', e);
-                                        alert(`Lỗi lưu khung giờ: ${e.message || JSON.stringify(e)}`);
+                                        toastError(`Lỗi: ${e.message || 'Không xác định'}`);
                                     } finally {
                                         setIsProcessing(false);
                                     }
@@ -789,7 +801,7 @@ const BoardingManager: React.FC<{ currentUser: User }> = ({ currentUser }) => {
 
             {/* Content Area */}
             <div className="min-h-[600px]">
-                {activeTab === 'dashboard' && <BoardingDashboard />}
+                {activeTab === 'dashboard' && <BoardingDashboard onNavigate={(tab) => setActiveTab(tab as any)} />}
                 {activeTab === 'config' && <BoardingConfigTab />}
                 {activeTab === 'rooms' && <RoomManagement />}
                 {activeTab === 'exit' && <ExitPermission currentUser={currentUser} />}

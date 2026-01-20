@@ -181,7 +181,7 @@ async function getMe(): Promise<ApiResponse<User>> {
 async function getUsers(filters?: { role?: string; status?: string }): Promise<ApiResponse<User[]>> {
     try {
         // Select only necessary fields for faster loading
-        let query = supabase.from('users').select('id, full_name, email, role, avatar_url, status, student_code, organization, created_at, birth_date, room_id, face_descriptor');
+        let query = supabase.from('users').select('id, full_name, email, role, avatar_url, status, student_code, organization, created_at, birth_date, room_id, face_descriptor, total_points');
 
         if (filters?.role) {
             query = query.eq('role', filters.role);
@@ -218,11 +218,20 @@ async function getUser(id: string): Promise<ApiResponse<User>> {
 
 async function createUser(userData: Partial<User> & { password?: string }): Promise<ApiResponse<User>> {
     try {
+        // Fetch system config for start points
+        let startPoints = 100;
+        const configRes = await getConfigs();
+        if (configRes.success && configRes.data) {
+            const config = configRes.data.find(c => c.key === 'start_points');
+            if (config) startPoints = parseInt(config.value);
+        }
+
         const { password, ...rest } = userData; // Separate password
         const { data, error } = await supabase
             .from('users')
             .insert({
                 ...rest,
+                total_points: (userData as any).total_points ?? startPoints,
                 password_hash: password // Map to password_hash
             })
             .select()
@@ -557,7 +566,13 @@ async function getEventParticipants(eventId: string): Promise<ApiResponse<EventP
     try {
         const { data, error } = await supabase
             .from('event_participants')
-            .select('id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor, user_id') // Select only necessary columns
+            .select(`
+                id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor, user_id,
+                user:users!user_id (
+                    face_descriptor,
+                    avatar_url
+                )
+            `) // Join with users to get the latest face_descriptor
             .eq('event_id', eventId)
             .order('full_name', { ascending: true })
             .range(0, 4999); // Increase limit to 5000
@@ -617,7 +632,8 @@ async function saveEventParticipants(
                 birth_date: p.birth_date || null,
                 organization: p.organization || null,
                 address: p.address || null,
-                user_id: p.user_id || null // Include user_id
+                user_id: p.user_id || null, // Include user_id
+                face_descriptor: p.face_descriptor || null // Save face descriptor
             }));
 
             const { data, error } = await supabase
@@ -641,7 +657,8 @@ async function saveEventParticipants(
                         birth_date: p.birth_date,
                         organization: p.organization,
                         address: p.address,
-                        user_id: p.user_id // Include user_id
+                        user_id: p.user_id, // Include user_id
+                        face_descriptor: p.face_descriptor // Update face descriptor
                     })
                     .eq('id', p.id)
                     .select()
@@ -948,6 +965,25 @@ async function boardingCheckin(
                 .single();
 
             if (error) return { success: false, error: error.message };
+
+            // --- POINT DEDUCTION LOGIC ---
+            if (status === 'late') {
+                // Fetch config for boarding late points
+                const { data: configData } = await supabase
+                    .from('system_configs')
+                    .select('value')
+                    .eq('key', 'points_late_boarding')
+                    .single();
+
+                const latePoints = configData ? parseInt(configData.value) : -2;
+
+                // Call RPC to update points safely
+                await supabase.rpc('increment_user_points', {
+                    p_user_id: userId,
+                    p_amount: latePoints
+                });
+            }
+
             return { success: true, data: data as BoardingCheckinRecord };
         }
     } catch (err) {
@@ -1200,8 +1236,9 @@ async function getConfigs(): Promise<ApiResponse<SystemConfig[]>> {
                     { key: 'school_name', value: 'Trường THPT ABC' },
                     { key: 'school_address', value: '123 Đường XYZ' },
                     { key: 'late_threshold_mins', value: '15' },
-                    { key: 'points_on_time', value: '10' },
-                    { key: 'points_late', value: '-5' }
+                    { key: 'points_on_time', value: '0' },
+                    { key: 'points_late', value: '-5' },
+                    { key: 'start_points', value: '100' }
                 ]
             };
         }
@@ -1260,30 +1297,63 @@ async function getPointLogs(): Promise<ApiResponse<PointLog[]>> {
 
 async function addPoints(userId: string, points: number, reason: string): Promise<ApiResponse<void>> {
     try {
-        // Update user points
-        const { error: updateError } = await supabase.rpc('add_user_points', {
+        const user = getStoredUser();
+        if (!user) return { success: false, error: 'Chưa đăng nhập' };
+
+        // 1. Try RPC First
+        const { error: rpcError } = await supabase.rpc('add_user_points', {
             p_user_id: userId,
             p_points: points
         });
 
-        // If RPC doesn't exist, update directly
-        if (updateError) {
-            await supabase
+        // 2. If RPC failed, try Manual Update (Fetch -> Calculate -> Update)
+        if (rpcError) {
+            console.warn('RPC add_user_points failed, trying manual update:', rpcError);
+
+            // Get current points
+            const { data: userData, error: fetchError } = await supabase
                 .from('users')
-                .update({ total_points: supabase.rpc('add_points_direct', { uid: userId, pts: points }) })
+                .select('total_points')
+                .eq('id', userId)
+                .single();
+
+            if (fetchError) throw new Error('Không thể lấy thông tin điểm người dùng');
+
+            const currentPoints = userData.total_points || 0;
+            const newPoints = currentPoints + points;
+
+            // Update new points
+            const { error: updateError } = await supabase
+                .from('users')
+                .update({ total_points: newPoints })
                 .eq('id', userId);
+
+            if (updateError) throw new Error('Lỗi cập nhật điểm (Manual Update)');
         }
 
-        // Log the points change
-        await supabase.from('point_logs').insert({
+        // 3. Log the points change
+        const { error: logError } = await supabase.from('point_logs').insert({
             user_id: userId,
             points: points,
-            reason: reason
+            reason: reason,
+            created_by: user.id,
+            type: 'manual'
         });
 
+        if (logError) {
+            console.error('Log error:', logError);
+            // We usually don't fail the whole operation if logging fails, 
+            // but for this app it's better to warn or assume success if points updated.
+            // However, let's just log it. 
+            // If the user wants STRICT consistency, we should throw.
+            // But let's throw to ensure the user knows something is wrong with their DB setup
+            throw new Error(`Lỗi lưu lịch sử: ${logError.message}`);
+        }
+
         return { success: true, message: `Đã cộng ${points} điểm` };
-    } catch (err) {
-        return { success: false, error: 'Lỗi cộng điểm' };
+    } catch (err: any) {
+        console.error('addPoints error:', err);
+        return { success: false, error: err.message || 'Lỗi hệ thống khi cộng điểm' };
     }
 }
 
@@ -1298,6 +1368,8 @@ interface RankingUser {
     id: string;
     full_name: string;
     class_id?: string;
+    organization?: string;
+    avatar_url?: string;
     total_points: number;
     rank?: number;
 }
@@ -1306,7 +1378,7 @@ async function getRanking(options?: { role?: string; limit?: number }): Promise<
     try {
         let query = supabase
             .from('users')
-            .select('id, full_name, class_id, total_points')
+            .select('id, full_name, class_id, organization, avatar_url, total_points')
             .order('total_points', { ascending: false })
             .limit(options?.limit || 50);
 
@@ -1379,32 +1451,49 @@ async function getEventReport(eventId: string): Promise<ApiResponse<EventReport>
         const participants = (participantsRes.data || []) as any[];
         const rawCheckins = (checkinsRes.data || []) as any[];
 
-        // Create a fast lookup map for participants
-        const participantMap = new Map(participants.map(p => [p.id, p]));
+        // Create a fast lookup map for checkins by participant_id
+        const checkinMap = new Map(rawCheckins.map(c => [c.participant_id, c]));
 
-        // Enrich checkins with participant data
-        const checkins: Checkin[] = rawCheckins.map(c => {
-            const p = participantMap.get(c.participant_id);
-            return {
-                ...c,
-                user_name: p?.full_name,
-                class_id: p?.organization
-            };
+        // Enrich ALL participants with checkin data (or mark absent)
+        const fullCheckinsList: Checkin[] = participants.map(p => {
+            const checkin = checkinMap.get(p.id);
+            if (checkin) {
+                return {
+                    ...checkin,
+                    user_name: p.full_name,
+                    class_id: p.organization
+                };
+            } else {
+                // Create "Absent" record
+                return {
+                    id: `absent_${p.id}`,
+                    event_id: eventId,
+                    participant_id: p.id,
+                    user_id: p.user_id,
+                    user_name: p.full_name,
+                    class_id: p.organization,
+                    checkin_time: null, // No time
+                    status: 'absent',
+                    points_earned: 0, // Or fetch points_absent if needed, but 0 or null is fine for now
+                    image_url: null
+                } as unknown as Checkin;
+            }
         });
 
-        const onTimeCount = checkins.filter(c => c.status === 'on_time').length;
-        const lateCount = checkins.filter(c => c.status === 'late').length;
+        const onTimeCount = fullCheckinsList.filter(c => c.status === 'on_time').length;
+        const lateCount = fullCheckinsList.filter(c => c.status === 'late').length;
+        const absentCount = fullCheckinsList.filter(c => c.status === 'absent').length;
 
         return {
             success: true,
             data: {
                 event: event,
                 totalParticipants: participants.length,
-                totalCheckins: checkins.length,
+                totalCheckins: rawCheckins.length, // Only actual checkins
                 onTimeCount,
                 lateCount,
-                absentCount: participants.length - checkins.length,
-                checkins: checkins
+                absentCount,
+                checkins: fullCheckinsList // Returns FULL list including absentees
             }
         };
     } catch (err) {
@@ -1488,6 +1577,184 @@ async function deleteCertificate(id: string): Promise<ApiResponse<void>> {
         return { success: true, message: 'Đã xóa chứng nhận' };
     } catch (err) {
         return { success: false, error: 'Lỗi xóa chứng nhận' };
+    }
+}
+
+// =====================================================
+// EXIT PERMISSIONS API - Đơn xin phép ra ngoài
+// =====================================================
+
+interface ExitPermission {
+    id: string;
+    user_id: string;
+    reason: string;
+    reason_detail?: string;
+    destination: string;
+    parent_contact?: string;
+    exit_time: string;
+    return_time: string;
+    actual_return_time?: string;
+    status: 'pending' | 'approved' | 'rejected';
+    approved_by?: string;
+    approved_at?: string;
+    rejection_reason?: string;
+    notes?: string;
+    created_at: string;
+    updated_at: string;
+    user?: {
+        full_name: string;
+        student_code: string;
+        organization: string;
+    };
+}
+
+/**
+ * Lấy danh sách đơn xin phép
+ */
+async function getExitPermissions(options?: {
+    userId?: string;
+    status?: 'pending' | 'approved' | 'rejected';
+    startDate?: string;
+    endDate?: string;
+}): Promise<ApiResponse<ExitPermission[]>> {
+    try {
+        let query = supabase
+            .from('exit_permissions')
+            .select(`
+                *,
+                user:users!user_id(full_name, student_code, organization)
+            `)
+            .order('created_at', { ascending: false });
+
+        if (options?.userId) {
+            query = query.eq('user_id', options.userId);
+        }
+        if (options?.status) {
+            query = query.eq('status', options.status);
+        }
+        if (options?.startDate) {
+            query = query.gte('exit_time', options.startDate);
+        }
+        if (options?.endDate) {
+            query = query.lte('exit_time', options.endDate);
+        }
+
+        const { data, error } = await query;
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: data as ExitPermission[] };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi tải danh sách đơn xin phép' };
+    }
+}
+
+/**
+ * Tạo đơn xin phép mới
+ */
+async function createExitPermission(data: {
+    user_id: string;
+    reason: string;
+    reason_detail?: string;
+    destination: string;
+    parent_contact?: string;
+    exit_time: string;
+    return_time: string;
+}): Promise<ApiResponse<ExitPermission>> {
+    try {
+        const { data: result, error } = await supabase
+            .from('exit_permissions')
+            .insert({
+                ...data,
+                status: 'pending'
+            })
+            .select();
+
+        if (error) return { success: false, error: error.message };
+        const createdRecord = result && result.length > 0 ? result[0] : null;
+        if (!createdRecord) return { success: false, error: 'Không thể tạo đơn (Lỗi quyền truy cập)' };
+
+        return { success: true, data: createdRecord as ExitPermission, message: 'Đã gửi đơn xin phép!' };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi tạo đơn xin phép' };
+    }
+}
+
+/**
+ * Cập nhật đơn xin phép
+ */
+async function updateExitPermission(id: string, updates: Partial<ExitPermission>): Promise<ApiResponse<ExitPermission>> {
+    try {
+        const { data, error } = await supabase
+            .from('exit_permissions')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('id', id)
+            .select();
+
+        if (error) return { success: false, error: error.message };
+        const updatedRecord = data && data.length > 0 ? data[0] : null;
+        if (!updatedRecord) return { success: false, error: 'Không tìm thấy đơn hoặc không có quyền sửa' };
+
+        return { success: true, data: updatedRecord as ExitPermission };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi cập nhật đơn' };
+    }
+}
+
+/**
+ * Duyệt hoặc từ chối đơn xin phép
+ */
+async function approveRejectExitPermission(
+    id: string,
+    action: 'approved' | 'rejected',
+    approvedBy: string,
+    rejectionReason?: string
+): Promise<ApiResponse<ExitPermission>> {
+    try {
+        const updateData: any = {
+            status: action,
+            approved_by: approvedBy,
+            approved_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+        };
+
+        if (action === 'rejected' && rejectionReason) {
+            updateData.rejection_reason = rejectionReason;
+        }
+
+        const { data, error } = await supabase
+            .from('exit_permissions')
+            .update(updateData)
+            .eq('id', id)
+            .select();
+
+        if (error) return { success: false, error: error.message };
+        const updatedRecord = data && data.length > 0 ? data[0] : null;
+        if (!updatedRecord) return { success: false, error: 'Không tìm thấy đơn hoặc không có quyền duyệt' };
+
+        return {
+            success: true,
+            data: updatedRecord as ExitPermission,
+            message: action === 'approved' ? 'Đã duyệt đơn!' : 'Đã từ chối đơn!'
+        };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi xử lý đơn' };
+    }
+}
+
+/**
+ * Xóa đơn xin phép
+ */
+async function deleteExitPermission(id: string): Promise<ApiResponse<void>> {
+    try {
+        const { error } = await supabase
+            .from('exit_permissions')
+            .delete()
+            .eq('id', id);
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, message: 'Đã xóa đơn xin phép' };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi xóa đơn' };
     }
 }
 
@@ -1718,6 +1985,13 @@ export const dataService = {
     createCertificate,
     createCertificatesBulk,
     deleteCertificate,
+
+    // Exit Permissions - Đơn xin phép ra ngoài
+    getExitPermissions,
+    createExitPermission,
+    updateExitPermission,
+    approveRejectExitPermission,
+    deleteExitPermission,
 
     // Cache
     clearCache,

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
+import { BoardingTimeSlot } from '../../types';
 import { Icons } from '../ui';
 import {
     Calendar, Download, Filter, ChevronLeft, ChevronRight,
@@ -36,16 +37,29 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
     const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
     const [filterOrg, setFilterOrg] = useState('');
     const [organizations, setOrganizations] = useState<string[]>([]);
+    const [timeSlots, setTimeSlots] = useState<BoardingTimeSlot[]>([]);
 
     useEffect(() => {
         loadData();
     }, [selectedDate]);
+
+    // Load time slots on mount
+    useEffect(() => {
+        const loadTimeSlots = async () => {
+            const res = await dataService.getActiveTimeSlots();
+            if (res.success && res.data) {
+                setTimeSlots(res.data);
+            }
+        };
+        loadTimeSlots();
+    }, []);
 
     const loadData = async () => {
         setIsLoading(true);
         try {
             const res = await dataService.getBoardingCheckins({ date: selectedDate });
             if (res.success && res.data) {
+                console.log('Boarding Checkins Data:', res.data); // Debugging
                 setCheckins(res.data as CheckinRecord[]);
                 // Extract unique organizations
                 const orgs = [...new Set(res.data.map(c => c.user?.organization).filter(Boolean))] as string[];
@@ -63,20 +77,29 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
         ? checkins.filter(c => c.user?.organization === filterOrg)
         : checkins;
 
-    // Stats
+    // Stats calculation...
     const stats = {
         total: filteredCheckins.length,
         onTime: filteredCheckins.filter(c =>
-            c.morning_in_status === 'on_time' || c.noon_in_status === 'on_time' || c.evening_in_status === 'on_time'
+            c.morning_in_status === 'on_time' || c.noon_in_status === 'on_time' || c.evening_in_status === 'on_time' ||
+            // Check dynamic statuses if any
+            Object.keys(c).some(k => k.endsWith('_status') && c[k] === 'on_time')
         ).length,
         late: filteredCheckins.filter(c =>
-            c.morning_in_status === 'late' || c.noon_in_status === 'late' || c.evening_in_status === 'late'
+            c.morning_in_status === 'late' || c.noon_in_status === 'late' || c.evening_in_status === 'late' ||
+            Object.keys(c).some(k => k.endsWith('_status') && c[k] === 'late')
         ).length
     };
 
     const formatTime = (isoString?: string) => {
         if (!isoString) return '-';
         return new Date(isoString).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
+    };
+
+    const formatSlotTime = (timeStr: string) => {
+        return new Date(`2000-01-01T${timeStr}`).toLocaleTimeString('en-US', {
+            hour: '2-digit', minute: '2-digit', hour12: true
+        });
     };
 
     const getStatusBadge = (status?: string) => {
@@ -97,19 +120,48 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
     };
 
     const exportToExcel = () => {
-        // Simple CSV export
-        const headers = ['Họ tên', 'Mã HS', 'Lớp', 'Sáng vào', 'Sáng ra', 'Trưa vào', 'Trưa ra', 'Tối vào', 'Tối ra'];
-        const rows = filteredCheckins.map(c => [
-            c.user?.full_name || '',
-            c.user?.student_code || '',
-            c.user?.organization || '',
-            formatTime(c.morning_in),
-            formatTime(c.morning_out),
-            formatTime(c.noon_in),
-            formatTime(c.noon_out),
-            formatTime(c.evening_in),
-            formatTime(c.evening_out)
-        ]);
+        // Dynamic headers based on time slots
+        const headers = ['STT', 'Họ tên', 'Mã HS', 'Lớp'];
+        if (timeSlots.length > 0) {
+            timeSlots.forEach(slot => headers.push(slot.name));
+        } else {
+            headers.push('Sáng vào', 'Sáng ra', 'Trưa vào', 'Trưa ra', 'Tối vào', 'Tối ra');
+        }
+
+        const rows = filteredCheckins.map((c, index) => {
+            const row = [
+                `${index + 1}`,
+                c.user?.full_name || '',
+                c.user?.student_code || '',
+                c.user?.organization || ''
+            ];
+
+            // Helper to get time for a slot index
+            const getTimeForSlot = (idx: number, type: 'in' | 'out') => {
+                // Try to map index to standard fields first (legacy support)
+                if (idx === 0) return type === 'in' ? c.morning_in : c.morning_out;
+                if (idx === 1) return type === 'in' ? c.noon_in : c.noon_out;
+                if (idx === 2) return type === 'in' ? c.evening_in : c.evening_out;
+                // Future: support dynamic fields like slot_ID_in
+                return (c as any)[`slot_${idx}_${type}`];
+            };
+
+            if (timeSlots.length > 0) {
+                timeSlots.forEach((_, i) => {
+                    row.push(formatTime(getTimeForSlot(i, 'in')));
+                });
+            } else {
+                row.push(
+                    formatTime(c.morning_in),
+                    formatTime(c.morning_out),
+                    formatTime(c.noon_in),
+                    formatTime(c.noon_out),
+                    formatTime(c.evening_in),
+                    formatTime(c.evening_out)
+                );
+            }
+            return row;
+        });
 
         const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
         const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
@@ -121,6 +173,48 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
         URL.revokeObjectURL(url);
     };
 
+    // Determine which columns to show
+    const useTimeSlots = timeSlots.length > 0;
+
+    // Helper to render cell data safely
+    const renderCellData = (checkin: CheckinRecord, slotIndex: number, slotName: string) => {
+        // TRY 1: Match by Slot Name content (heuristic)
+        let timeIn, status;
+        const lowerName = slotName.toLowerCase();
+
+        if (lowerName.includes('sáng') || lowerName.includes('morning')) {
+            timeIn = checkin.morning_in;
+            status = checkin.morning_in_status;
+        } else if (lowerName.includes('trưa') || lowerName.includes('noon')) {
+            timeIn = checkin.noon_in;
+            status = checkin.noon_in_status;
+        } else if (lowerName.includes('tối') || lowerName.includes('evening') || lowerName.includes('đêm')) {
+            timeIn = checkin.evening_in;
+            status = checkin.evening_in_status;
+        } else {
+            // Fallback to index if heuristic fails
+            if (slotIndex === 0) { timeIn = checkin.morning_in; status = checkin.morning_in_status; }
+            else if (slotIndex === 1) { timeIn = checkin.noon_in; status = checkin.noon_in_status; }
+            else if (slotIndex === 2) { timeIn = checkin.evening_in; status = checkin.evening_in_status; }
+            else {
+                // Try dynamic prop access if supported in future
+                // @ts-ignore
+                timeIn = checkin[`slot_${slotIndex}_in`];
+                // @ts-ignore
+                status = checkin[`slot_${slotIndex}_status`];
+            }
+        }
+
+        if (!timeIn) return <span className="text-slate-300">-</span>;
+
+        return (
+            <>
+                <span className="text-slate-900">{formatTime(timeIn)}</span>
+                {getStatusBadge(status)}
+            </>
+        );
+    };
+
     return (
         <div className="space-y-6">
             {/* Header */}
@@ -130,7 +224,10 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
                         <Icons.Reports className="w-6 h-6 text-indigo-600" />
                         Báo Cáo Điểm Danh
                     </h2>
-                    <p className="text-slate-500 mt-1">Xem chi tiết điểm danh nội trú theo ngày</p>
+                    <p className="text-slate-500 mt-1">
+                        Xem chi tiết điểm danh nội trú theo ngày
+                        {useTimeSlots && <span className="text-indigo-600 font-medium ml-2">({timeSlots.length} khung giờ)</span>}
+                    </p>
                 </div>
                 <div className="flex gap-2">
                     <button
@@ -196,6 +293,20 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
                 </div>
             </div>
 
+            {/* Time Slots Legend */}
+            {useTimeSlots && (
+                <div className="bg-indigo-50 rounded-xl p-3 border border-indigo-100 flex flex-wrap gap-3">
+                    <span className="text-indigo-700 font-bold text-sm flex items-center gap-1">
+                        <Clock className="w-4 h-4" /> Khung giờ:
+                    </span>
+                    {timeSlots.map((slot, i) => (
+                        <span key={slot.id} className="bg-white px-3 py-1 rounded-lg text-sm font-medium text-slate-700 border border-indigo-200">
+                            {slot.name}: {formatSlotTime(slot.start_time)} - {formatSlotTime(slot.end_time)}
+                        </span>
+                    ))}
+                </div>
+            )}
+
             {/* Table */}
             <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
                 {isLoading ? (
@@ -212,44 +323,77 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
                         <table className="w-full text-sm">
                             <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider">
                                 <tr>
+                                    <th className="px-4 py-3 text-center font-bold w-12">STT</th>
                                     <th className="px-4 py-3 text-left font-bold">Học sinh</th>
                                     <th className="px-4 py-3 text-left font-bold">Mã HS</th>
                                     <th className="px-4 py-3 text-left font-bold">Lớp</th>
-                                    <th className="px-4 py-3 text-center font-bold">Sáng vào</th>
-                                    <th className="px-4 py-3 text-center font-bold">Sáng ra</th>
-                                    <th className="px-4 py-3 text-center font-bold">Trưa vào</th>
-                                    <th className="px-4 py-3 text-center font-bold">Trưa ra</th>
-                                    <th className="px-4 py-3 text-center font-bold">Tối vào</th>
-                                    <th className="px-4 py-3 text-center font-bold">Tối ra</th>
+                                    {useTimeSlots ? (
+                                        // Dynamic columns from time slots
+                                        timeSlots.map(slot => (
+                                            <th key={slot.id} className="px-4 py-3 text-center font-bold">
+                                                <div className="flex flex-col items-center">
+                                                    <span>{slot.name}</span>
+                                                    <span className="text-[10px] text-slate-400 font-normal">
+                                                        {formatSlotTime(slot.end_time)}
+                                                    </span>
+                                                </div>
+                                            </th>
+                                        ))
+                                    ) : (
+                                        // Legacy columns
+                                        <>
+                                            <th className="px-4 py-3 text-center font-bold">Sáng vào</th>
+                                            <th className="px-4 py-3 text-center font-bold">Sáng ra</th>
+                                            <th className="px-4 py-3 text-center font-bold">Trưa vào</th>
+                                            <th className="px-4 py-3 text-center font-bold">Trưa ra</th>
+                                            <th className="px-4 py-3 text-center font-bold">Tối vào</th>
+                                            <th className="px-4 py-3 text-center font-bold">Tối ra</th>
+                                        </>
+                                    )}
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
-                                {filteredCheckins.map(checkin => (
+                                {filteredCheckins.map((checkin, index) => (
                                     <tr key={checkin.id} className="hover:bg-slate-50 transition-colors">
+                                        <td className="px-4 py-3 text-center font-bold text-slate-500">{index + 1}</td>
                                         <td className="px-4 py-3 font-bold text-slate-900">{checkin.user?.full_name || '-'}</td>
                                         <td className="px-4 py-3 font-mono text-slate-600">{checkin.user?.student_code || '-'}</td>
                                         <td className="px-4 py-3 text-indigo-600 font-bold">{checkin.user?.organization || '-'}</td>
-                                        <td className="px-4 py-3 text-center">
-                                            <div className="flex flex-col items-center gap-0.5">
-                                                <span className={checkin.morning_in ? 'text-slate-900' : 'text-slate-300'}>{formatTime(checkin.morning_in)}</span>
-                                                {getStatusBadge(checkin.morning_in_status)}
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3 text-center text-slate-600">{formatTime(checkin.morning_out)}</td>
-                                        <td className="px-4 py-3 text-center">
-                                            <div className="flex flex-col items-center gap-0.5">
-                                                <span className={checkin.noon_in ? 'text-slate-900' : 'text-slate-300'}>{formatTime(checkin.noon_in)}</span>
-                                                {getStatusBadge(checkin.noon_in_status)}
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3 text-center text-slate-600">{formatTime(checkin.noon_out)}</td>
-                                        <td className="px-4 py-3 text-center">
-                                            <div className="flex flex-col items-center gap-0.5">
-                                                <span className={checkin.evening_in ? 'text-slate-900' : 'text-slate-300'}>{formatTime(checkin.evening_in)}</span>
-                                                {getStatusBadge(checkin.evening_in_status)}
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3 text-center text-slate-600">{formatTime(checkin.evening_out)}</td>
+                                        {useTimeSlots ? (
+                                            // Dynamic columns - using smart render helper
+                                            timeSlots.map((slot, i) => (
+                                                <td key={slot.id} className="px-4 py-3 text-center">
+                                                    <div className="flex flex-col items-center gap-0.5">
+                                                        {renderCellData(checkin, i, slot.name)}
+                                                    </div>
+                                                </td>
+                                            ))
+                                        ) : (
+                                            // Legacy columns
+                                            <>
+                                                <td className="px-4 py-3 text-center">
+                                                    <div className="flex flex-col items-center gap-0.5">
+                                                        <span className={checkin.morning_in ? 'text-slate-900' : 'text-slate-300'}>{formatTime(checkin.morning_in)}</span>
+                                                        {getStatusBadge(checkin.morning_in_status)}
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-center text-slate-600">{formatTime(checkin.morning_out)}</td>
+                                                <td className="px-4 py-3 text-center">
+                                                    <div className="flex flex-col items-center gap-0.5">
+                                                        <span className={checkin.noon_in ? 'text-slate-900' : 'text-slate-300'}>{formatTime(checkin.noon_in)}</span>
+                                                        {getStatusBadge(checkin.noon_in_status)}
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-center text-slate-600">{formatTime(checkin.noon_out)}</td>
+                                                <td className="px-4 py-3 text-center">
+                                                    <div className="flex flex-col items-center gap-0.5">
+                                                        <span className={checkin.evening_in ? 'text-slate-900' : 'text-slate-300'}>{formatTime(checkin.evening_in)}</span>
+                                                        {getStatusBadge(checkin.evening_in_status)}
+                                                    </div>
+                                                </td>
+                                                <td className="px-4 py-3 text-center text-slate-600">{formatTime(checkin.evening_out)}</td>
+                                            </>
+                                        )}
                                     </tr>
                                 ))}
                             </tbody>

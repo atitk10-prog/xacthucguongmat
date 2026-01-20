@@ -18,6 +18,7 @@ interface NewParticipant {
     avatar_url?: string;
     isNew: boolean;
     user_id?: string;
+    face_descriptor?: string; // JSON string
 }
 
 // ... existing code ...
@@ -390,7 +391,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                     organization: updatedParticipant.organization,
                     address: updatedParticipant.address,
                     avatar_url: updatedParticipant.avatar_url,
-                    user_id: updatedParticipant.user_id
+                    user_id: updatedParticipant.user_id,
+                    face_descriptor: updatedParticipant.face_descriptor // Save parsed face descriptor
                 }]);
 
                 if (result.success) {

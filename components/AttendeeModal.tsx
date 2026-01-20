@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { Attendee } from '../types';
+import { faceService } from '../services/faceService';
 
 interface AttendeeModalProps {
   isOpen: boolean;
@@ -15,8 +16,10 @@ const AttendeeModal: React.FC<AttendeeModalProps> = ({ isOpen, onClose, onSave, 
     code: '',
     department: '',
     role: 'Sinh viên',
-    imageUrl: ''
+    imageUrl: '',
+    face_descriptor: ''
   });
+  const [isProcessingFace, setIsProcessingFace] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -35,12 +38,44 @@ const AttendeeModal: React.FC<AttendeeModalProps> = ({ isOpen, onClose, onSave, 
 
   if (!isOpen) return null;
 
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      // 1. Read file for display
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setFormData({ ...formData, imageUrl: reader.result as string });
+      reader.onloadend = async () => {
+        const imageBase64 = reader.result as string;
+
+        // 2. Start Face Analysis
+        setIsProcessingFace(true);
+        try {
+          // Need to create an image element for face-api
+          const img = await faceService.base64ToImage(imageBase64);
+          const descriptor = await faceService.getFaceDescriptor(img);
+
+          if (descriptor) {
+            const descriptorStr = faceService.descriptorToString(descriptor);
+            setFormData(prev => ({
+              ...prev,
+              imageUrl: imageBase64,
+              face_descriptor: descriptorStr
+            }));
+            console.log('✅ Face analyzed & descriptor generated');
+          } else {
+            setFormData(prev => ({
+              ...prev,
+              imageUrl: imageBase64,
+              face_descriptor: '' // Clear if no face found
+            }));
+            console.warn('⚠️ No face detected in uploaded image');
+            alert('Không tìm thấy khuôn mặt trong ảnh. Vui lòng chọn ảnh rõ mặt hơn để check-in nhanh.');
+          }
+        } catch (error) {
+          console.error('Face analysis failed:', error);
+          setFormData(prev => ({ ...prev, imageUrl: imageBase64 }));
+        } finally {
+          setIsProcessingFace(false);
+        }
       };
       reader.readAsDataURL(file);
     }
@@ -54,7 +89,7 @@ const AttendeeModal: React.FC<AttendeeModalProps> = ({ isOpen, onClose, onSave, 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 overflow-hidden">
       <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-md animate-fadeIn" onClick={onClose}></div>
-      
+
       <div className="relative w-full max-w-2xl bg-white rounded-[2.5rem] shadow-2xl shadow-slate-900/20 overflow-hidden animate-slideUp">
         {/* Header */}
         <div className="px-10 py-8 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
@@ -73,7 +108,7 @@ const AttendeeModal: React.FC<AttendeeModalProps> = ({ isOpen, onClose, onSave, 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
             {/* Image Section */}
             <div className="flex flex-col items-center gap-4">
-              <div 
+              <div
                 onClick={() => fileInputRef.current?.click()}
                 className="w-full aspect-square rounded-[2rem] bg-slate-100 border-4 border-dashed border-slate-200 flex flex-col items-center justify-center cursor-pointer hover:border-indigo-400 hover:bg-indigo-50 transition-all group overflow-hidden relative"
               >
@@ -85,16 +120,18 @@ const AttendeeModal: React.FC<AttendeeModalProps> = ({ isOpen, onClose, onSave, 
                     <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Tải ảnh lên</p>
                   </div>
                 )}
-                <div className="absolute inset-0 bg-indigo-600/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                   <span className="text-white font-bold text-sm">Thay đổi ảnh</span>
+                <div className={`absolute inset-0 bg-indigo-600/60 transition-opacity flex items-center justify-center ${isProcessingFace ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
+                  <span className="text-white font-bold text-sm">
+                    {isProcessingFace ? '⏳ Đang phân tích...' : 'Thay đổi ảnh'}
+                  </span>
                 </div>
               </div>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleImageUpload} 
-                className="hidden" 
-                accept="image/*" 
+              <input
+                type="file"
+                ref={fileInputRef}
+                onChange={handleImageUpload}
+                className="hidden"
+                accept="image/*"
               />
               <p className="text-[10px] text-slate-400 font-bold uppercase">Ảnh định dạng JPG, PNG (Max 5MB)</p>
             </div>
@@ -103,42 +140,42 @@ const AttendeeModal: React.FC<AttendeeModalProps> = ({ isOpen, onClose, onSave, 
             <div className="space-y-4">
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5 ml-1">Họ và tên</label>
-                <input 
+                <input
                   required
-                  type="text" 
+                  type="text"
                   value={formData.name}
-                  onChange={e => setFormData({...formData, name: e.target.value})}
+                  onChange={e => setFormData({ ...formData, name: e.target.value })}
                   className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-bold transition-all"
                   placeholder="Nhập họ tên..."
                 />
               </div>
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5 ml-1">Mã số (ID)</label>
-                <input 
+                <input
                   required
-                  type="text" 
+                  type="text"
                   value={formData.code}
-                  onChange={e => setFormData({...formData, code: e.target.value})}
+                  onChange={e => setFormData({ ...formData, code: e.target.value })}
                   className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-bold transition-all"
                   placeholder="Vd: SV001..."
                 />
               </div>
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5 ml-1">Phòng ban / Lớp</label>
-                <input 
+                <input
                   required
-                  type="text" 
+                  type="text"
                   value={formData.department}
-                  onChange={e => setFormData({...formData, department: e.target.value})}
+                  onChange={e => setFormData({ ...formData, department: e.target.value })}
                   className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-bold transition-all"
                   placeholder="Vd: Khoa CNTT..."
                 />
               </div>
               <div>
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-1.5 ml-1">Vai trò</label>
-                <select 
+                <select
                   value={formData.role}
-                  onChange={e => setFormData({...formData, role: e.target.value})}
+                  onChange={e => setFormData({ ...formData, role: e.target.value })}
                   className="w-full px-5 py-3.5 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent font-bold transition-all appearance-none"
                 >
                   <option value="Sinh viên">Sinh viên</option>
@@ -151,18 +188,20 @@ const AttendeeModal: React.FC<AttendeeModalProps> = ({ isOpen, onClose, onSave, 
           </div>
 
           <div className="mt-12 flex gap-4">
-            <button 
-              type="button" 
+            <button
+              type="button"
               onClick={onClose}
               className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-black text-sm hover:bg-slate-200 transition-colors"
             >
               HỦY BỎ
             </button>
-            <button 
+            <button
               type="submit"
-              className="flex-[2] py-4 bg-indigo-600 text-white rounded-2xl font-black text-sm shadow-xl shadow-indigo-600/30 hover:bg-indigo-700 transition-all hover:-translate-y-1"
+              disabled={isProcessingFace}
+              className={`flex-[2] py-4 rounded-2xl font-black text-sm shadow-xl shadow-indigo-600/30 transition-all hover:-translate-y-1 ${isProcessingFace ? 'bg-indigo-400 cursor-not-allowed' : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                }`}
             >
-              LƯU THÔNG TIN
+              {isProcessingFace ? 'ĐANG XỬ LÝ...' : 'LƯU THÔNG TIN'}
             </button>
           </div>
         </form>

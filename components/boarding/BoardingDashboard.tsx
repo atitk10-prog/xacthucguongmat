@@ -3,8 +3,12 @@ import { dataService } from '../../services/dataService';
 import { User } from '../../types';
 import {
     Users, CheckCircle, AlertTriangle, Clock, TrendingUp,
-    UserCheck, XCircle, Calendar, ArrowUp, ArrowDown
+    UserCheck, XCircle, Calendar, ArrowUp, ArrowDown, Home
 } from 'lucide-react';
+
+// ... existing code ...
+
+// ... existing code ...
 
 interface DashboardStats {
     totalStudents: number;
@@ -22,7 +26,21 @@ interface RecentCheckin {
     organization?: string;
 }
 
-const BoardingDashboard: React.FC = () => {
+interface RoomStat {
+    id: string;
+    name: string;
+    zone: string;
+    capacity: number;
+    current: number;
+    checkedIn: number;
+    percent: number;
+}
+
+interface BoardingDashboardProps {
+    onNavigate?: (tab: string) => void;
+}
+
+const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => {
     const [stats, setStats] = useState<DashboardStats>({
         totalStudents: 0,
         checkedInToday: 0,
@@ -34,6 +52,14 @@ const BoardingDashboard: React.FC = () => {
     const [notCheckedInStudents, setNotCheckedInStudents] = useState<User[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [currentTime, setCurrentTime] = useState(new Date());
+    const [roomStats, setRoomStats] = useState<RoomStat[]>([]);
+    const [roomZones, setRoomZones] = useState<string[]>([]);
+    const [selectedRoomZone, setSelectedRoomZone] = useState('all');
+
+    // Room Detail Modal State
+    const [selectedRoom, setSelectedRoom] = useState<RoomStat | null>(null);
+    const [allStudents, setAllStudents] = useState<User[]>([]);
+    const [checkedInSet, setCheckedInSet] = useState<Set<string>>(new Set());
 
     // Update clock every minute
     useEffect(() => {
@@ -54,15 +80,23 @@ const BoardingDashboard: React.FC = () => {
 
             // Load all students
             const studentsRes = await dataService.getAllStudentsForCheckin(false);
-            const allStudents = studentsRes.data || [];
+            const allStudentsData = studentsRes.data || [];
 
             // Load today's checkins
             const checkinsRes = await dataService.getBoardingCheckins({ date: today });
             const todayCheckins = checkinsRes.data || [];
 
+            // Load Rooms
+            const roomsRes = await dataService.getRooms();
+            const rooms = roomsRes.success && roomsRes.data ? roomsRes.data : [];
+
             // Calculate stats
             const checkedInIds = new Set(todayCheckins.map(c => c.user_id));
-            const notCheckedIn = allStudents.filter(s => !checkedInIds.has(s.id));
+            const notCheckedIn = allStudentsData.filter(s => !checkedInIds.has(s.id));
+
+            // Save state for detailed view
+            setAllStudents(allStudentsData);
+            setCheckedInSet(checkedInIds);
 
             // Count late checkins
             const lateCount = todayCheckins.filter(c =>
@@ -125,6 +159,37 @@ const BoardingDashboard: React.FC = () => {
                 });
 
             setRecentCheckins(recent);
+
+            // Calculate Room Stats
+            if (rooms.length > 0) {
+                const checkedInUserIds = new Set(todayCheckins.map(c => c.user_id));
+                const uniqueZones = new Set<string>();
+
+                const calculatedRoomStats: RoomStat[] = rooms.map(room => {
+                    if (room.zone) uniqueZones.add(room.zone);
+
+                    if (room.zone) uniqueZones.add(room.zone);
+
+                    const roomStudents = allStudentsData.filter(s => s.room_id === room.id);
+                    const current = roomStudents.length;
+
+                    // Count how many of these students have checked in today
+                    const checkedInCount = roomStudents.filter(s => checkedInUserIds.has(s.id)).length;
+
+                    return {
+                        id: room.id,
+                        name: room.name,
+                        zone: room.zone || 'Other',
+                        capacity: room.capacity || 8,
+                        current: current,
+                        checkedIn: checkedInCount,
+                        percent: current > 0 ? Math.round((checkedInCount / current) * 100) : 0
+                    };
+                });
+
+                setRoomStats(calculatedRoomStats);
+                setRoomZones(Array.from(uniqueZones).sort());
+            }
         } catch (err) {
             console.error('Failed to load dashboard:', err);
         } finally {
@@ -170,9 +235,12 @@ const BoardingDashboard: React.FC = () => {
             {/* Stats Cards */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
                 {/* Total Students */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm">
+                <button
+                    onClick={() => onNavigate?.('config')}
+                    className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all text-left group"
+                >
                     <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center">
+                        <div className="w-12 h-12 bg-indigo-100 rounded-xl flex items-center justify-center group-hover:bg-indigo-200 transition-colors">
                             <Users className="w-6 h-6 text-indigo-600" />
                         </div>
                         <div>
@@ -180,12 +248,15 @@ const BoardingDashboard: React.FC = () => {
                             <p className="text-slate-500 text-sm font-medium">Tổng học sinh</p>
                         </div>
                     </div>
-                </div>
+                </button>
 
                 {/* Checked In Today */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm">
+                <button
+                    onClick={() => onNavigate?.('report')}
+                    className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md hover:border-emerald-200 transition-all text-left group"
+                >
                     <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center">
+                        <div className="w-12 h-12 bg-emerald-100 rounded-xl flex items-center justify-center group-hover:bg-emerald-200 transition-colors">
                             <UserCheck className="w-6 h-6 text-emerald-600" />
                         </div>
                         <div>
@@ -193,12 +264,15 @@ const BoardingDashboard: React.FC = () => {
                             <p className="text-slate-500 text-sm font-medium">Đã check-in</p>
                         </div>
                     </div>
-                </div>
+                </button>
 
                 {/* Late Today */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm">
+                <button
+                    onClick={() => onNavigate?.('report')}
+                    className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md hover:border-amber-200 transition-all text-left group"
+                >
                     <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center">
+                        <div className="w-12 h-12 bg-amber-100 rounded-xl flex items-center justify-center group-hover:bg-amber-200 transition-colors">
                             <AlertTriangle className="w-6 h-6 text-amber-600" />
                         </div>
                         <div>
@@ -206,12 +280,15 @@ const BoardingDashboard: React.FC = () => {
                             <p className="text-slate-500 text-sm font-medium">Trễ hôm nay</p>
                         </div>
                     </div>
-                </div>
+                </button>
 
                 {/* On-time Rate */}
-                <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm">
+                <button
+                    onClick={() => onNavigate?.('report')}
+                    className="bg-white rounded-2xl p-5 border border-slate-100 shadow-sm hover:shadow-md hover:border-blue-200 transition-all text-left group"
+                >
                     <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                        <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center group-hover:bg-blue-200 transition-colors">
                             <TrendingUp className="w-6 h-6 text-blue-600" />
                         </div>
                         <div>
@@ -219,7 +296,7 @@ const BoardingDashboard: React.FC = () => {
                             <p className="text-slate-500 text-sm font-medium">Tỷ lệ đúng giờ</p>
                         </div>
                     </div>
-                </div>
+                </button>
             </div>
 
             {/* Two Column Content */}
@@ -300,6 +377,189 @@ const BoardingDashboard: React.FC = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Check-in by Class/Organization */}
+            {recentCheckins.length > 0 && (
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                    <div className="p-4 border-b border-slate-100 bg-gradient-to-r from-indigo-50 to-purple-50">
+                        <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                            <Users className="w-5 h-5 text-indigo-600" />
+                            Thống Kê Theo Lớp
+                            <span className="ml-auto text-xs text-slate-500 font-normal">Hôm nay</span>
+                        </h3>
+                    </div>
+                    <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3">
+                        {/* Group by organization */}
+                        {(() => {
+                            const orgStats: Record<string, { total: number; late: number }> = {};
+                            recentCheckins.forEach(c => {
+                                const org = c.organization || 'Khác';
+                                if (!orgStats[org]) orgStats[org] = { total: 0, late: 0 };
+                                orgStats[org].total++;
+                                if (c.status === 'late') orgStats[org].late++;
+                            });
+                            return Object.entries(orgStats).slice(0, 4).map(([org, data]) => (
+                                <div key={org} className="bg-slate-50 rounded-xl p-3 border border-slate-100">
+                                    <p className="text-sm font-bold text-slate-900 truncate" title={org}>{org}</p>
+                                    <div className="flex items-center gap-2 mt-2">
+                                        <span className="text-lg font-black text-indigo-600">{data.total}</span>
+                                        <span className="text-xs text-slate-500">check-in</span>
+                                        {data.late > 0 && (
+                                            <span className="text-xs text-amber-600 bg-amber-100 px-1.5 py-0.5 rounded-full font-bold">
+                                                {data.late} trễ
+                                            </span>
+                                        )}
+                                    </div>
+                                </div>
+                            ));
+                        })()}
+                    </div>
+                </div>
+            )}
+
+            {/* Room Stats Section */}
+            {roomStats.length > 0 && (
+                <div className="bg-white rounded-2xl p-6 border border-slate-100 shadow-sm">
+                    <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
+                        <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                            <Home className="w-5 h-5 text-indigo-600" />
+                            Thống Kê Theo Phòng
+                        </h3>
+
+                        {/* Zone Filter */}
+                        <div className="flex gap-2 bg-slate-100 p-1 rounded-lg">
+                            <button
+                                onClick={() => setSelectedRoomZone('all')}
+                                className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${selectedRoomZone === 'all' ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}
+                            >
+                                Tất cả
+                            </button>
+                            {roomZones.map(zone => (
+                                <button
+                                    key={zone}
+                                    onClick={() => setSelectedRoomZone(zone)}
+                                    className={`px-3 py-1 text-xs font-bold rounded-md transition-all ${selectedRoomZone === zone ? 'bg-white shadow text-indigo-600' : 'text-slate-500'}`}
+                                >
+                                    Khu {zone}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
+                        {roomStats
+                            .filter(r => selectedRoomZone === 'all' || r.zone === selectedRoomZone)
+                            .map(room => (
+                                <div
+                                    key={room.id}
+                                    onClick={() => setSelectedRoom(room)}
+                                    className="bg-slate-50 rounded-xl p-3 border border-slate-100 relative overflow-hidden group hover:shadow-md hover:border-indigo-200 cursor-pointer transition-all"
+                                >
+                                    <div className="relative z-10">
+                                        <div className="flex justify-between items-start mb-2">
+                                            <div>
+                                                <div className="text-xs text-slate-500 font-bold uppercase">Khu {room.zone}</div>
+                                                <div className="text-lg font-black text-slate-900">{room.name}</div>
+                                            </div>
+                                            <div className={`px-2 py-0.5 rounded text-xs font-bold text-white
+                                                ${room.percent >= 90 ? 'bg-emerald-500' : room.percent >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}>
+                                                {room.percent}%
+                                            </div>
+                                        </div>
+
+                                        <div className="flex justify-between items-end">
+                                            <span className="text-xs text-slate-500">Đã check-in</span>
+                                            <span className="font-bold text-slate-900 text-sm">
+                                                {room.checkedIn}/{room.current}
+                                            </span>
+                                        </div>
+
+                                        <div className="w-full h-1.5 bg-slate-200 rounded-full mt-2 overflow-hidden">
+                                            <div
+                                                className={`h-full rounded-full transition-all duration-500 ${room.percent >= 90 ? 'bg-emerald-500' : room.percent >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
+                                                style={{ width: `${room.percent}%` }}
+                                            ></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Room Detail Modal */}
+            {selectedRoom && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl p-6 max-w-lg w-full max-h-[80vh] overflow-hidden flex flex-col shadow-2xl animate-scale-in">
+                        <div className="flex justify-between items-center mb-6">
+                            <div className="flex items-center gap-4">
+                                <div className="w-14 h-14 bg-indigo-100 rounded-2xl flex items-center justify-center">
+                                    <span className="text-xl font-black text-indigo-600">{selectedRoom.name}</span>
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-black text-slate-900">Chi tiết phòng {selectedRoom.name}</h3>
+                                    <p className="text-slate-500">Khu {selectedRoom.zone} • {selectedRoom.checkedIn}/{selectedRoom.current} đã về</p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setSelectedRoom(null)}
+                                className="w-10 h-10 rounded-xl hover:bg-slate-100 flex items-center justify-center"
+                            >
+                                <XCircle className="w-6 h-6 text-slate-500" />
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto pr-2">
+                            {/* Stats Summary */}
+                            <div className="flex gap-2 mb-4">
+                                <div className="flex-1 bg-emerald-50 p-3 rounded-xl border border-emerald-100 items-center justify-center flex flex-col">
+                                    <span className="text-2xl font-black text-emerald-600">{selectedRoom.checkedIn}</span>
+                                    <span className="text-xs font-bold text-emerald-700 uppercase">Đã về</span>
+                                </div>
+                                <div className="flex-1 bg-red-50 p-3 rounded-xl border border-red-100 items-center justify-center flex flex-col">
+                                    <span className="text-2xl font-black text-red-600">{selectedRoom.current - selectedRoom.checkedIn}</span>
+                                    <span className="text-xs font-bold text-red-700 uppercase">Chưa về</span>
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                {allStudents
+                                    .filter(s => s.room_id === selectedRoom.id)
+                                    .sort((a, b) => {
+                                        // Sort: Not checked in first, then by name
+                                        const aChecked = checkedInSet.has(a.id);
+                                        const bChecked = checkedInSet.has(b.id);
+                                        if (aChecked === bChecked) return a.full_name.localeCompare(b.full_name);
+                                        return aChecked ? 1 : -1;
+                                    })
+                                    .map(student => {
+                                        const isCheckedIn = checkedInSet.has(student.id);
+                                        return (
+                                            <div key={student.id} className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${isCheckedIn ? 'bg-slate-50 border-slate-100' : 'bg-red-50 border-red-100'}`}>
+                                                <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white ${isCheckedIn ? 'bg-emerald-500' : 'bg-red-500'}`}>
+                                                    {student.full_name.charAt(0)}
+                                                </div>
+                                                <div className="flex-1">
+                                                    <p className="font-bold text-slate-900">{student.full_name}</p>
+                                                    <p className="text-sm text-slate-500">{student.student_code}</p>
+                                                </div>
+                                                <div className={`px-3 py-1 rounded-lg text-xs font-bold ${isCheckedIn ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'}`}>
+                                                    {isCheckedIn ? 'Đã về' : 'Chưa về'}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                            </div>
+
+                            {selectedRoom.current === 0 && (
+                                <div className="text-center py-8 text-slate-400">
+                                    <p>Phòng trống (Chưa có học sinh)</p>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
