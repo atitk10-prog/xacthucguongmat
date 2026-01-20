@@ -139,6 +139,34 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
 
     useEffect(() => {
         loadExistingUsers();
+
+        // Load system config defaults when creating NEW event
+        const loadSystemDefaults = async () => {
+            if (!editingEvent) {
+                try {
+                    const configRes = await dataService.getConfigs();
+                    if (configRes.success && configRes.data) {
+                        const configs = configRes.data.reduce((acc: Record<string, string>, c: { key: string; value: string }) => {
+                            acc[c.key] = c.value;
+                            return acc;
+                        }, {} as Record<string, string>);
+
+                        setFormData(prev => ({
+                            ...prev,
+                            points_on_time: parseInt(configs.points_on_time) || 10,
+                            points_late: parseInt(configs.points_late) || -5,
+                            late_threshold_mins: parseInt(configs.late_threshold_mins) || 15,
+                            face_threshold: parseInt(configs.face_threshold) || 40,
+                        }));
+                        console.log('✅ Loaded system config defaults for new event');
+                    }
+                } catch (e) {
+                    console.warn('Could not load system configs, using defaults');
+                }
+            }
+        };
+        loadSystemDefaults();
+
         if (editingEvent) {
             // Convert UTC to Local for input fields
             const toLocalISOString = (dateStr: string) => {
