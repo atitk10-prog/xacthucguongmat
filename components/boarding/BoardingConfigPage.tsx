@@ -734,8 +734,11 @@ const BoardingConfigTab: React.FC = () => {
                                         }
                                         setShowSlotModal(false);
                                         setEditingSlot(null);
-                                    } catch (e) {
-                                        alert('Lỗi lưu khung giờ');
+                                        setShowSlotModal(false);
+                                        setEditingSlot(null);
+                                    } catch (e: any) {
+                                        console.error('Lỗi lưu khung giờ:', e);
+                                        alert(`Lỗi lưu khung giờ: ${e.message || JSON.stringify(e)}`);
                                     } finally {
                                         setIsProcessing(false);
                                     }
