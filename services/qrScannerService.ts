@@ -26,22 +26,44 @@ export async function initScanner(elementId: string): Promise<Html5Qrcode> {
 
 /**
  * Bắt đầu quét QR
+ * @param elementId - ID của element chứa camera
+ * @param onSuccess - Callback khi quét thành công
+ * @param onError - Callback khi có lỗi
+ * @param facingMode - 'environment' (camera sau) hoặc 'user' (camera trước)
  */
 export async function startScanning(
     elementId: string,
     onSuccess: (result: QRScanResult) => void,
-    onError?: (error: string) => void
+    onError?: (error: string) => void,
+    facingMode: 'environment' | 'user' = 'environment'
 ): Promise<void> {
     try {
-        if (!html5QrCode) {
-            html5QrCode = new Html5Qrcode(elementId);
+        // Stop existing scanner if any
+        if (html5QrCode) {
+            try {
+                await html5QrCode.stop();
+                html5QrCode.clear();
+            } catch (e) {
+                // Ignore stop errors
+            }
         }
 
+        html5QrCode = new Html5Qrcode(elementId);
+
         await html5QrCode.start(
-            { facingMode: 'environment' }, // Camera sau (nếu có)
+            { facingMode }, // Camera trước hoặc sau
             {
-                fps: 10,
-                qrbox: { width: 250, height: 250 }
+                fps: 15, // Tăng từ 10 lên 15 để bắt QR nhanh hơn
+                qrbox: (viewfinderWidth: number, viewfinderHeight: number) => {
+                    // Adaptive qrbox: 70% of smaller dimension
+                    // Giúp đọc QR lớn hơn trên màn hình lớn, và tốt hơn trên mobile
+                    const minDimension = Math.min(viewfinderWidth, viewfinderHeight);
+                    const qrboxSize = Math.floor(minDimension * 0.7);
+                    // Đảm bảo minimum size cho các màn hình nhỏ
+                    const finalSize = Math.max(qrboxSize, 200);
+                    return { width: finalSize, height: finalSize };
+                },
+                aspectRatio: 1.0, // Square aspect ratio cho QR detection tốt hơn
             },
             (decodedText) => {
                 // Parse QR content

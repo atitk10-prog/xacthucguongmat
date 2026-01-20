@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
-import { User, BoardingConfig } from '../../types';
+import { User, BoardingConfig, BoardingTimeSlot } from '../../types';
 import { faceService } from '../../services/faceService';
 import { supabase } from '../../services/supabaseClient';
 import { Icons } from '../ui';
@@ -99,6 +99,11 @@ const BoardingConfigTab: React.FC = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
 
+    // Time Slots State (NEW)
+    const [timeSlots, setTimeSlots] = useState<BoardingTimeSlot[]>([]);
+    const [showSlotModal, setShowSlotModal] = useState(false);
+    const [editingSlot, setEditingSlot] = useState<Partial<BoardingTimeSlot> | null>(null);
+
     // Pagination
     const [currentPage, setCurrentPage] = useState(1);
     const ITEMS_PER_PAGE = 10;
@@ -120,18 +125,22 @@ const BoardingConfigTab: React.FC = () => {
     const loadData = async () => {
         setIsLoading(true);
         try {
-            // Load Config
+            // Load Config (legacy)
             const configRes = await dataService.getBoardingConfig();
             if (configRes.success && configRes.data) {
                 setConfig(configRes.data);
             }
 
+            // Load Time Slots (NEW)
+            const slotsRes = await dataService.getTimeSlots();
+            if (slotsRes.success && slotsRes.data) {
+                setTimeSlots(slotsRes.data);
+            }
+
             // Load ALL Students (requireFaceId = false)
             const studentsRes = await dataService.getAllStudentsForCheckin(false);
             if (studentsRes.success && studentsRes.data) {
-                // Sort by Organization (Class) Ascending
                 const sorted = studentsRes.data.sort((a, b) => {
-                    // Handle numeric sorting for strings like "10A1", "10A2", "11A1"
                     if (!a.organization) return 1;
                     if (!b.organization) return -1;
                     return a.organization.localeCompare(b.organization, undefined, { numeric: true, sensitivity: 'base' });
@@ -322,47 +331,75 @@ const BoardingConfigTab: React.FC = () => {
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Left Col: Config */}
+                {/* Left Col: Time Slots Config */}
                 <div className="lg:col-span-1 space-y-6">
                     <Card className="p-6">
-                        <h3 className="text-lg font-bold text-slate-900 mb-4 flex items-center gap-2">
-                            <Icons.Settings className="w-5 h-5 text-indigo-600" />
-                            Giờ Giới Nghiêm
-                        </h3>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                                <Icons.Settings className="w-5 h-5 text-indigo-600" />
+                                Khung giờ Check-in
+                            </h3>
+                            <button
+                                onClick={() => {
+                                    setEditingSlot({ name: '', start_time: '06:00', end_time: '07:00', is_active: true, order_index: timeSlots.length + 1 });
+                                    setShowSlotModal(true);
+                                }}
+                                className="text-sm text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1"
+                            >
+                                <Icons.Plus className="w-4 h-4" /> Thêm mới
+                            </button>
+                        </div>
 
-                        <div className="space-y-6">
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-2">
-                                    Buổi sáng (Trễ sau)
-                                </label>
-                                <CustomTimePicker
-                                    value={config.morning_curfew}
-                                    onChange={val => setConfig({ ...config, morning_curfew: val })}
-                                />
-                                <p className="text-xs text-slate-500 mt-2">Học sinh ra khỏi KTX sau giờ này sẽ bị tính là trễ.</p>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-2">
-                                    Buổi trưa (Về trễ sau)
-                                </label>
-                                <CustomTimePicker
-                                    value={config.noon_curfew}
-                                    onChange={val => setConfig({ ...config, noon_curfew: val })}
-                                />
-                                <p className="text-xs text-slate-500 mt-2">Giờ điểm danh về KTX buổi trưa.</p>
-                            </div>
-
-                            <div>
-                                <label className="block text-sm font-medium text-slate-700 mb-2">
-                                    Buổi tối (Về trễ sau)
-                                </label>
-                                <CustomTimePicker
-                                    value={config.evening_curfew}
-                                    onChange={val => setConfig({ ...config, evening_curfew: val })}
-                                />
-                                <p className="text-xs text-slate-500 mt-2">Giờ đóng cửa KTX buổi tối.</p>
-                            </div>
+                        <div className="space-y-3">
+                            {timeSlots.length === 0 ? (
+                                <p className="text-slate-500 text-sm text-center py-4">Chưa có khung giờ nào. Hãy thêm mới!</p>
+                            ) : (
+                                timeSlots.map(slot => (
+                                    <div key={slot.id} className={`p-4 rounded-xl border-2 transition-all ${slot.is_active
+                                        ? 'bg-indigo-50 border-indigo-200'
+                                        : 'bg-slate-50 border-slate-200 opacity-60'
+                                        }`}>
+                                        <div className="flex items-center justify-between mb-2">
+                                            <span className="font-bold text-slate-900">{slot.name}</span>
+                                            <span className={`text-xs px-2 py-0.5 rounded-full font-bold ${slot.is_active
+                                                ? 'bg-emerald-100 text-emerald-700'
+                                                : 'bg-slate-200 text-slate-500'
+                                                }`}>
+                                                {slot.is_active ? 'Đang bật' : 'Tắt'}
+                                            </span>
+                                        </div>
+                                        <div className="text-sm text-slate-600 mb-3">
+                                            <span className="font-mono bg-white px-2 py-0.5 rounded border">{slot.start_time}</span>
+                                            <span className="mx-2">→</span>
+                                            <span className="font-mono bg-white px-2 py-0.5 rounded border">{slot.end_time}</span>
+                                            <span className="text-xs text-slate-400 ml-2">(trễ sau giờ này)</span>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button
+                                                onClick={() => {
+                                                    setEditingSlot(slot);
+                                                    setShowSlotModal(true);
+                                                }}
+                                                className="text-xs text-indigo-600 hover:underline font-medium"
+                                            >
+                                                Sửa
+                                            </button>
+                                            <button
+                                                onClick={async () => {
+                                                    if (!confirm(`Xóa khung giờ "${slot.name}"?`)) return;
+                                                    const res = await dataService.deleteTimeSlot(slot.id);
+                                                    if (res.success) {
+                                                        setTimeSlots(prev => prev.filter(s => s.id !== slot.id));
+                                                    }
+                                                }}
+                                                className="text-xs text-red-600 hover:underline font-medium"
+                                            >
+                                                Xóa
+                                            </button>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
                         </div>
                     </Card>
 
@@ -370,8 +407,8 @@ const BoardingConfigTab: React.FC = () => {
                         <div className="flex gap-3">
                             <Icons.Info className="w-5 h-5 text-indigo-600 flex-shrink-0" />
                             <div className="text-sm text-indigo-800">
-                                <p className="font-semibold mb-1">Cập nhật tự động:</p>
-                                <p>Danh sách học sinh sẽ được tự động đồng bộ từ mục <strong>Quản lý Người dùng</strong>.</p>
+                                <p className="font-semibold mb-1">Hướng dẫn:</p>
+                                <p>Check-in <strong>sau giờ kết thúc</strong> sẽ bị tính là <strong>trễ</strong>. Hệ thống sẽ tự động chọn khung giờ phù hợp khi check-in.</p>
                             </div>
                         </div>
                     </Card>
@@ -601,6 +638,109 @@ const BoardingConfigTab: React.FC = () => {
                                 {isProcessing ? 'Đang xử lý...' : 'Chọn ảnh'}
                                 <input type="file" className="hidden" accept="image/*" onChange={handleFaceUpload} disabled={isProcessing} />
                             </label>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Time Slot Modal (NEW) */}
+            {showSlotModal && editingSlot && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl w-full max-w-md p-6 animate-scale-in">
+                        <h3 className="text-xl font-bold mb-4">
+                            {editingSlot.id ? 'Sửa khung giờ' : 'Thêm khung giờ mới'}
+                        </h3>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-bold text-slate-700 mb-1">Tên khung giờ</label>
+                                <input
+                                    className="w-full p-2 border rounded-lg"
+                                    placeholder="VD: Điểm danh buổi sáng"
+                                    value={editingSlot.name || ''}
+                                    onChange={e => setEditingSlot(prev => ({ ...prev!, name: e.target.value }))}
+                                />
+                            </div>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Giờ bắt đầu</label>
+                                    <input
+                                        type="time"
+                                        className="w-full p-2 border rounded-lg font-mono"
+                                        value={editingSlot.start_time || '06:00'}
+                                        onChange={e => setEditingSlot(prev => ({ ...prev!, start_time: e.target.value }))}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-1">Giờ kết thúc (deadline)</label>
+                                    <input
+                                        type="time"
+                                        className="w-full p-2 border rounded-lg font-mono"
+                                        value={editingSlot.end_time || '07:00'}
+                                        onChange={e => setEditingSlot(prev => ({ ...prev!, end_time: e.target.value }))}
+                                    />
+                                    <p className="text-xs text-slate-500 mt-1">Check-in sau giờ này = trễ</p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="checkbox"
+                                    id="slotActive"
+                                    checked={editingSlot.is_active ?? true}
+                                    onChange={e => setEditingSlot(prev => ({ ...prev!, is_active: e.target.checked }))}
+                                    className="w-4 h-4 rounded border-slate-300 text-indigo-600"
+                                />
+                                <label htmlFor="slotActive" className="text-sm font-medium text-slate-700">
+                                    Bật khung giờ này
+                                </label>
+                            </div>
+                        </div>
+                        <div className="flex gap-3 mt-6">
+                            <button
+                                onClick={() => { setShowSlotModal(false); setEditingSlot(null); }}
+                                className="flex-1 py-2 text-slate-600 font-bold hover:bg-slate-100 rounded-lg"
+                            >
+                                Hủy
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    if (!editingSlot.name) {
+                                        alert('Vui lòng nhập tên khung giờ');
+                                        return;
+                                    }
+                                    setIsProcessing(true);
+                                    try {
+                                        if (editingSlot.id) {
+                                            // Update existing
+                                            const res = await dataService.updateTimeSlot(editingSlot.id, editingSlot);
+                                            if (res.success && res.data) {
+                                                setTimeSlots(prev => prev.map(s => s.id === editingSlot.id ? res.data! : s));
+                                            }
+                                        } else {
+                                            // Create new
+                                            const res = await dataService.createTimeSlot({
+                                                name: editingSlot.name!,
+                                                start_time: editingSlot.start_time!,
+                                                end_time: editingSlot.end_time!,
+                                                is_active: editingSlot.is_active ?? true,
+                                                order_index: editingSlot.order_index ?? timeSlots.length + 1
+                                            });
+                                            if (res.success && res.data) {
+                                                setTimeSlots(prev => [...prev, res.data!]);
+                                            }
+                                        }
+                                        setShowSlotModal(false);
+                                        setEditingSlot(null);
+                                    } catch (e) {
+                                        alert('Lỗi lưu khung giờ');
+                                    } finally {
+                                        setIsProcessing(false);
+                                    }
+                                }}
+                                disabled={isProcessing}
+                                className="flex-1 py-2 bg-indigo-600 text-white font-bold rounded-lg hover:bg-indigo-700 disabled:opacity-50"
+                            >
+                                {isProcessing ? 'Đang lưu...' : 'Lưu'}
+                            </button>
                         </div>
                     </div>
                 </div>

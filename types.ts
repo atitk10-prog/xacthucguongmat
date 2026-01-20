@@ -124,6 +124,18 @@ export interface BoardingConfig {
   [key: string]: string;
 }
 
+// NEW: Khung giờ check-in linh hoạt
+export interface BoardingTimeSlot {
+  id: string;
+  name: string;          // "Điểm danh buổi sáng", "Điểm danh buổi trưa"
+  start_time: string;    // "05:00" - Giờ bắt đầu điểm danh
+  end_time: string;      // "06:45" - Giờ kết thúc (deadline) - sau giờ này = TRỄ
+  is_active: boolean;    // Có đang bật không
+  order_index: number;   // Thứ tự hiển thị
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface BoardingCheckin {
   id: string;
   user_id: string;

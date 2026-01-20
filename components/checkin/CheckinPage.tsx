@@ -211,10 +211,20 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                     const loadFacePromises = participantsWithAvatars.map(async (participant) => {
                         try {
-                            // ALWAYS compute from image to ensure using correct model (ssdMobilenetv1)
-                            // Previously stored descriptors may be from different model (TinyFaceDetector)
+                            // OPTIMIZATION: Try to use cached face_descriptor first (MUCH FASTER)
+                            if (participant.face_descriptor) {
+                                try {
+                                    const descriptor = stringToDescriptor(participant.face_descriptor);
+                                    faceMatcher.addFace(participant.id, descriptor, participant.full_name);
+                                    participant.hasFaceDescriptor = true;
+                                    console.log(`⚡ Used cached descriptor for ${participant.full_name}`);
+                                    return true;
+                                } catch (e) {
+                                    console.warn(`⚠️ Invalid cached descriptor for ${participant.full_name}, will recompute`);
+                                }
+                            }
 
-                            // 2. Fallback: Compute from Image (SLOW) & Save to DB
+                            // Fallback: Compute from Image (SLOW) & Save to DB
                             const img = await base64ToImage(participant.avatar_url!);
                             const descriptor = await faceService.getFaceDescriptor(img);
                             if (descriptor) {
@@ -348,7 +358,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         let checkInAttempted = false; // Flag to prevent multiple attempts
 
         let lastDetectionTime = 0;
-        const DETECTION_INTERVAL = 150; // ms (Limit to ~6-7 FPS to prevent freezing on mobile)
+        // MOBILE OPTIMIZATION: Adaptive detection interval
+        // - Mobile: 250ms (~4 FPS) to prevent lag and battery drain
+        // - Desktop: 100ms (~10 FPS) for faster response
+        const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+        const DETECTION_INTERVAL = isMobile ? 250 : 100;
 
         const detectLoop = async () => {
             if (!videoRef.current || videoRef.current.readyState !== 4) {

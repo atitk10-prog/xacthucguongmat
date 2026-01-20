@@ -4,7 +4,7 @@
  */
 
 import { supabase, isSupabaseConfigured } from './supabaseClient';
-import { User, Event, EventCheckin, EventParticipant, BoardingConfig, Certificate } from '../types';
+import { User, Event, EventCheckin, EventParticipant, BoardingConfig, BoardingTimeSlot, Certificate } from '../types';
 
 // =====================================================
 // CACHING SYSTEM (kept for offline support)
@@ -702,6 +702,79 @@ async function deleteEventParticipant(id: string): Promise<ApiResponse<void>> {
     }
 }
 
+/**
+ * Upload participant avatar AND automatically compute face descriptor (Face ID)
+ * This ensures better face recognition from ID card photos which are usually clearer
+ * 
+ * @param participantId - ID of the participant to update
+ * @param base64Image - Base64 encoded image data (with or without data:image prefix)
+ * @returns Object containing avatar_url and computed face_descriptor (if successful)
+ */
+async function uploadParticipantAvatarWithFaceID(
+    participantId: string,
+    base64Image: string
+): Promise<ApiResponse<{ avatar_url: string; face_descriptor: string | null }>> {
+    try {
+        // 1. Update avatar_url in database
+        const { data, error: updateError } = await supabase
+            .from('event_participants')
+            .update({ avatar_url: base64Image })
+            .eq('id', participantId)
+            .select()
+            .single();
+
+        if (updateError) {
+            return { success: false, error: updateError.message };
+        }
+
+        // 2. Compute face descriptor from the uploaded image
+        // Import faceService dynamically to avoid circular dependencies
+        let faceDescriptor: string | null = null;
+        try {
+            const { faceService, descriptorToString, base64ToImage } = await import('./faceService');
+
+            // Ensure models are loaded
+            if (!faceService.isModelsLoaded()) {
+                await faceService.loadModels();
+            }
+
+            // Convert base64 to image and extract face descriptor
+            const img = await base64ToImage(base64Image);
+            const descriptor = await faceService.getFaceDescriptor(img);
+
+            if (descriptor) {
+                faceDescriptor = descriptorToString(descriptor);
+
+                // 3. Save face descriptor to database
+                await supabase
+                    .from('event_participants')
+                    .update({ face_descriptor: faceDescriptor })
+                    .eq('id', participantId);
+
+                console.log(`✅ Auto-computed face descriptor for participant ${participantId}`);
+            } else {
+                console.warn(`⚠️ Could not detect face in uploaded image for participant ${participantId}`);
+            }
+        } catch (faceError) {
+            // Face extraction failed, but avatar was still uploaded successfully
+            console.warn('Could not extract face from uploaded image:', faceError);
+        }
+
+        return {
+            success: true,
+            data: {
+                avatar_url: base64Image,
+                face_descriptor: faceDescriptor
+            },
+            message: faceDescriptor
+                ? 'Đã tải ảnh và tạo Face ID thành công!'
+                : 'Đã tải ảnh (không phát hiện được khuôn mặt)'
+        };
+    } catch (error: any) {
+        return { success: false, error: error.message || 'Lỗi upload ảnh' };
+    }
+}
+
 // =====================================================
 // ROOMS API
 // =====================================================
@@ -936,6 +1009,139 @@ async function getBoardingCheckins(options?: {
     } catch (err: any) {
         return { success: false, error: err.message || 'Lỗi kết nối' };
     }
+}
+
+// =====================================================
+// BOARDING TIME SLOTS API - Khung giờ check-in linh hoạt
+// =====================================================
+
+interface ApiResponse<T> {
+    success: boolean;
+    data?: T;
+    error?: string;
+    message?: string;
+}
+
+/**
+ * Lấy tất cả khung giờ check-in (active + inactive)
+ */
+async function getTimeSlots(): Promise<ApiResponse<BoardingTimeSlot[]>> {
+    try {
+        const { data, error } = await supabase
+            .from('boarding_time_slots')
+            .select('*')
+            .order('order_index', { ascending: true });
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: data as BoardingTimeSlot[] };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi tải khung giờ' };
+    }
+}
+
+/**
+ * Lấy khung giờ đang active
+ */
+async function getActiveTimeSlots(): Promise<ApiResponse<BoardingTimeSlot[]>> {
+    try {
+        const { data, error } = await supabase
+            .from('boarding_time_slots')
+            .select('*')
+            .eq('is_active', true)
+            .order('order_index', { ascending: true });
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: data as BoardingTimeSlot[] };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi tải khung giờ' };
+    }
+}
+
+/**
+ * Tạo khung giờ mới
+ */
+async function createTimeSlot(slot: Omit<BoardingTimeSlot, 'id' | 'created_at' | 'updated_at'>): Promise<ApiResponse<BoardingTimeSlot>> {
+    try {
+        const { data, error } = await supabase
+            .from('boarding_time_slots')
+            .insert(slot)
+            .select()
+            .single();
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: data as BoardingTimeSlot, message: 'Tạo khung giờ thành công!' };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi tạo khung giờ' };
+    }
+}
+
+/**
+ * Cập nhật khung giờ
+ */
+async function updateTimeSlot(id: string, updates: Partial<BoardingTimeSlot>): Promise<ApiResponse<BoardingTimeSlot>> {
+    try {
+        const { data, error } = await supabase
+            .from('boarding_time_slots')
+            .update({ ...updates, updated_at: new Date().toISOString() })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: data as BoardingTimeSlot, message: 'Cập nhật thành công!' };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi cập nhật khung giờ' };
+    }
+}
+
+/**
+ * Xóa khung giờ
+ */
+async function deleteTimeSlot(id: string): Promise<ApiResponse<void>> {
+    try {
+        const { error } = await supabase
+            .from('boarding_time_slots')
+            .delete()
+            .eq('id', id);
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, message: 'Đã xóa khung giờ' };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi xóa khung giờ' };
+    }
+}
+
+/**
+ * Lấy khung giờ hiện tại dựa trên thời gian
+ */
+function getCurrentTimeSlot(slots: BoardingTimeSlot[]): BoardingTimeSlot | null {
+    const now = new Date();
+    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+    for (const slot of slots) {
+        if (!slot.is_active) continue;
+
+        const [startH, startM] = slot.start_time.split(':').map(Number);
+        const [endH, endM] = slot.end_time.split(':').map(Number);
+        const startMinutes = startH * 60 + startM;
+        const endMinutes = endH * 60 + endM;
+
+        if (currentMinutes >= startMinutes && currentMinutes <= endMinutes) {
+            return slot;
+        }
+    }
+    return null;
+}
+
+/**
+ * Tính trạng thái check-in (đúng giờ hoặc trễ)
+ */
+function calculateCheckinStatus(slot: BoardingTimeSlot, checkinTime: Date): 'on_time' | 'late' {
+    const minutes = checkinTime.getHours() * 60 + checkinTime.getMinutes();
+    const [endH, endM] = slot.end_time.split(':').map(Number);
+    const endMinutes = endH * 60 + endM;
+
+    return minutes <= endMinutes ? 'on_time' : 'late';
 }
 
 // =====================================================
@@ -1459,6 +1665,7 @@ export const dataService = {
     getEventParticipants,
     getEventParticipantCount,
     updateParticipantFaceDescriptor,
+    uploadParticipantAvatarWithFaceID, // NEW: Auto-compute face ID when uploading avatar
     saveEventParticipants,
     deleteEventParticipant,
 
@@ -1474,8 +1681,17 @@ export const dataService = {
     boardingCheckin,
     getBoardingCheckins,
     getBoardingConfig,
-    updateBoardingConfig, // New
-    processOfflineQueue, // Exported to force sync manually if needed
+    updateBoardingConfig,
+    processOfflineQueue,
+
+    // Boarding Time Slots - Khung giờ linh hoạt
+    getTimeSlots,
+    getActiveTimeSlots,
+    createTimeSlot,
+    updateTimeSlot,
+    deleteTimeSlot,
+    getCurrentTimeSlot,
+    calculateCheckinStatus,
 
     // Dashboard
     getDashboardStats,

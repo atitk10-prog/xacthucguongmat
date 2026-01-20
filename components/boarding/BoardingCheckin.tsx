@@ -7,7 +7,8 @@ import { User, BoardingCheckin as BoardingCheckinType, BoardingConfig } from '..
 import {
     Camera, RefreshCw, UserCheck, AlertTriangle, CheckCircle,
     ArrowDown, ArrowUp, Clock, History, ChevronLeft, MapPin,
-    Moon, Sun, Sunrise, Sunset, Settings, Save, X, QrCode, User as UserIcon
+    Moon, Sun, Sunrise, Sunset, Settings, Save, X, QrCode, User as UserIcon,
+    FlipHorizontal2
 } from 'lucide-react';
 
 interface BoardingCheckinProps {
@@ -41,6 +42,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     const [checkinMode, setCheckinMode] = useState<'face' | 'qr'>('face');
     const [studentsData, setStudentsData] = useState<User[]>([]); // Store students for QR lookup
     const [qrScannerActive, setQrScannerActive] = useState(false);
+    const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
 
     // Results
     const [result, setResult] = useState<{ success: boolean; message: string; data?: BoardingCheckinType; user?: User; status?: 'late' | 'on_time' } | null>(null);
@@ -399,12 +401,20 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         await handleAutoCheckin(student.id, student.full_name, 100);
     };
 
-    // Switch mode effect
-    const switchCheckinMode = async (mode: 'face' | 'qr') => {
-        // Stop QR scanner if switching away
-        if (checkinMode === 'qr' && mode === 'face') {
+    // Switch mode effect - FIX: Stop ALL scanners properly before switching
+    const switchCheckinMode = async (mode: 'face' | 'qr', newFacing?: 'environment' | 'user') => {
+        // CRITICAL: Stop ALL active scanners first to prevent conflicts
+        try {
             await qrScannerService.stopScanner();
             setQrScannerActive(false);
+        } catch (e) {
+            console.warn('Error stopping QR scanner:', e);
+        }
+
+        // Update facing mode if provided
+        const facing = newFacing || cameraFacing;
+        if (newFacing) {
+            setCameraFacing(newFacing);
         }
 
         setCheckinMode(mode);
@@ -425,7 +435,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                         (error) => {
                             console.error('QR Scanner error:', error);
                             setGuidance('Lỗi camera: ' + error);
-                        }
+                        },
+                        facing // Pass facingMode to scanner
                     );
                     setQrScannerActive(true);
                 } catch (err) {
@@ -467,8 +478,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     <button
                         onClick={() => switchCheckinMode('face')}
                         className={`px-3 py-1.5 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-all ${checkinMode === 'face'
-                                ? 'bg-indigo-600 text-white shadow-lg'
-                                : 'text-slate-400 hover:text-white hover:bg-white/10'
+                            ? 'bg-indigo-600 text-white shadow-lg'
+                            : 'text-slate-400 hover:text-white hover:bg-white/10'
                             }`}
                     >
                         <UserIcon className="w-4 h-4" />
@@ -477,8 +488,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     <button
                         onClick={() => switchCheckinMode('qr')}
                         className={`px-3 py-1.5 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-all ${checkinMode === 'qr'
-                                ? 'bg-emerald-600 text-white shadow-lg'
-                                : 'text-slate-400 hover:text-white hover:bg-white/10'
+                            ? 'bg-emerald-600 text-white shadow-lg'
+                            : 'text-slate-400 hover:text-white hover:bg-white/10'
                             }`}
                     >
                         <QrCode className="w-4 h-4" />
@@ -497,6 +508,26 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
             {/* Left: Camera / QR Scanner */}
             <div className="flex-1 relative bg-black rounded-3xl overflow-hidden shadow-2xl border border-white/10 group">
+                {/* Status Indicator - Góc trên trái */}
+                <div className="absolute top-4 left-4 z-30">
+                    <div className={`px-3 py-1.5 rounded-full text-sm font-bold flex items-center gap-2 backdrop-blur-md shadow-lg ${checkinMode === 'face'
+                            ? 'bg-indigo-600/90 text-white border border-indigo-400/30'
+                            : 'bg-emerald-600/90 text-white border border-emerald-400/30'
+                        }`}>
+                        {checkinMode === 'face' ? (
+                            <>
+                                <UserIcon className="w-4 h-4" />
+                                Xác thực Gương mặt
+                            </>
+                        ) : (
+                            <>
+                                <QrCode className="w-4 h-4" />
+                                Quét mã QR
+                            </>
+                        )}
+                    </div>
+                </div>
+
                 {/* Face Mode: Video */}
                 {checkinMode === 'face' && (
                     <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
@@ -510,6 +541,20 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                             <p className="text-slate-400 mt-4">Đang khởi động camera...</p>
                         )}
                     </div>
+                )}
+
+                {/* Camera Flip Button - Chỉ hiển thị khi ở QR mode */}
+                {checkinMode === 'qr' && (
+                    <button
+                        onClick={() => {
+                            const newFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+                            switchCheckinMode('qr', newFacing);
+                        }}
+                        className="absolute bottom-4 right-4 z-30 p-3 bg-slate-800/80 backdrop-blur-md rounded-full text-white hover:bg-slate-700 transition-all shadow-lg border border-white/10 pointer-events-auto"
+                        title={cameraFacing === 'environment' ? 'Chuyển camera trước' : 'Chuyển camera sau'}
+                    >
+                        <FlipHorizontal2 className="w-5 h-5" />
+                    </button>
                 )}
 
                 {/* Overlay UI */}
