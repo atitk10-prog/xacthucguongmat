@@ -17,29 +17,28 @@ CREATE TABLE IF NOT EXISTS boarding_time_slots (
 -- Enable RLS
 ALTER TABLE boarding_time_slots ENABLE ROW LEVEL SECURITY;
 
--- Policy cho phép đọc cho tất cả authenticated users
-CREATE POLICY "Allow read for authenticated users" ON boarding_time_slots
-    FOR SELECT TO authenticated USING (true);
+-- Drop existing policies (để tránh lỗi duplicate)
+DROP POLICY IF EXISTS "Allow read for authenticated users" ON boarding_time_slots;
+DROP POLICY IF EXISTS "Allow all for admins" ON boarding_time_slots;
+DROP POLICY IF EXISTS "Public access boarding_time_slots" ON boarding_time_slots;
 
--- Policy cho phép admin CRUD
-CREATE POLICY "Allow all for admins" ON boarding_time_slots
+-- Policy cho phép đọc cho tất cả
+CREATE POLICY "Allow read for all" ON boarding_time_slots
+    FOR SELECT USING (true);
+
+-- Policy cho phép INSERT/UPDATE/DELETE cho authenticated users
+CREATE POLICY "Allow write for authenticated" ON boarding_time_slots
     FOR ALL TO authenticated
-    USING (
-        EXISTS (
-            SELECT 1 FROM users 
-            WHERE users.id = auth.uid() 
-            AND users.role IN ('admin', 'teacher')
-        )
-    );
+    USING (true)
+    WITH CHECK (true);
 
--- Thêm 3 khung giờ mặc định
+-- Thêm 3 khung giờ mặc định (nếu chưa có)
 INSERT INTO boarding_time_slots (name, start_time, end_time, order_index) VALUES
     ('Điểm danh buổi sáng', '05:00', '06:45', 1),
     ('Điểm danh buổi trưa', '11:30', '12:30', 2),
     ('Điểm danh buổi tối', '17:00', '22:00', 3)
 ON CONFLICT DO NOTHING;
 
--- Comment
-COMMENT ON TABLE boarding_time_slots IS 'Cấu hình các khung giờ check-in nội trú - người dùng có thể thêm/sửa/xóa';
-COMMENT ON COLUMN boarding_time_slots.start_time IS 'Thời gian bắt đầu điểm danh';
-COMMENT ON COLUMN boarding_time_slots.end_time IS 'Thời gian kết thúc - check-in sau giờ này = TRỄ';
+-- Kiểm tra xem đã có data chưa
+SELECT * FROM boarding_time_slots ORDER BY order_index;
+

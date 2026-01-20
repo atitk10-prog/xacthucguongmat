@@ -104,15 +104,15 @@ const BoardingDashboard: React.FC = () => {
                     if (c.evening_in) {
                         type = 'Tối vào';
                         status = c.evening_in_status === 'late' ? 'late' : 'on_time';
-                        time = new Date(c.evening_in).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                        time = new Date(c.evening_in).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
                     } else if (c.noon_in) {
                         type = 'Trưa vào';
                         status = c.noon_in_status === 'late' ? 'late' : 'on_time';
-                        time = new Date(c.noon_in).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                        time = new Date(c.noon_in).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
                     } else if (c.morning_in) {
                         type = 'Sáng vào';
                         status = c.morning_in_status === 'late' ? 'late' : 'on_time';
-                        time = new Date(c.morning_in).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+                        time = new Date(c.morning_in).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
                     }
 
                     return {

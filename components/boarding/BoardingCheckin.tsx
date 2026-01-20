@@ -3,7 +3,7 @@ import { dataService, CheckinType } from '../../services/dataService';
 import { faceService } from '../../services/faceService';
 import { soundService } from '../../services/soundService';
 import { qrScannerService } from '../../services/qrScannerService';
-import { User, BoardingCheckin as BoardingCheckinType, BoardingConfig } from '../../types';
+import { User, BoardingCheckin as BoardingCheckinType, BoardingConfig, BoardingTimeSlot } from '../../types';
 import {
     Camera, RefreshCw, UserCheck, AlertTriangle, CheckCircle,
     ArrowDown, ArrowUp, Clock, History, ChevronLeft, MapPin,
@@ -54,6 +54,11 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         evening_curfew: '22:00'
     });
 
+    // NEW: Time Slots State
+    const [timeSlots, setTimeSlots] = useState<BoardingTimeSlot[]>([]);
+    const [selectedSlot, setSelectedSlot] = useState<BoardingTimeSlot | null>(null);
+    const [systemReady, setSystemReady] = useState(false);
+
     // Sync ref
     useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
 
@@ -102,7 +107,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
     const BOARDING_CONFIG = boardingConfig;
 
-    // Load Models & Students
+    // Load Models, Students, and Time Slots
     useEffect(() => {
         const init = async () => {
             try {
@@ -111,10 +116,10 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 setModelsReady(true);
 
                 // 2. Load Students
-                const response = await dataService.getAllStudentsForCheckin(false); // Load all students
+                const response = await dataService.getAllStudentsForCheckin(false);
                 if (response.success && response.data) {
-                    setStudentsData(response.data); // Store for QR lookup
-                    faceService.faceMatcher.clearAll(); // Clear old faces
+                    setStudentsData(response.data);
+                    faceService.faceMatcher.clearAll();
                     let count = 0;
                     for (const user of response.data) {
                         if (user.face_descriptor) {
@@ -128,6 +133,26 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     console.log(`Loaded ${count} student faces, ${response.data.length} total students`);
                     setStudentsLoaded(true);
                 }
+
+                // 3. Load Time Slots (NEW)
+                const slotsRes = await dataService.getActiveTimeSlots();
+                if (slotsRes.success && slotsRes.data && slotsRes.data.length > 0) {
+                    setTimeSlots(slotsRes.data);
+
+                    // Auto-detect current slot
+                    const currentSlot = dataService.getCurrentTimeSlot(slotsRes.data);
+                    if (currentSlot) {
+                        setSelectedSlot(currentSlot);
+                        console.log('✅ Auto-selected time slot:', currentSlot.name);
+                    } else {
+                        // Default to first slot if none matches
+                        setSelectedSlot(slotsRes.data[0]);
+                    }
+                } else {
+                    console.log('⚠️ No time slots found, using legacy mode');
+                }
+
+                setSystemReady(true);
             } catch (err) {
                 console.error('Initialization error:', err);
             }
@@ -511,8 +536,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 {/* Status Indicator - Góc trên trái */}
                 <div className="absolute top-4 left-4 z-30">
                     <div className={`px-3 py-1.5 rounded-full text-sm font-bold flex items-center gap-2 backdrop-blur-md shadow-lg ${checkinMode === 'face'
-                            ? 'bg-indigo-600/90 text-white border border-indigo-400/30'
-                            : 'bg-emerald-600/90 text-white border border-emerald-400/30'
+                        ? 'bg-indigo-600/90 text-white border border-indigo-400/30'
+                        : 'bg-emerald-600/90 text-white border border-emerald-400/30'
                         }`}>
                         {checkinMode === 'face' ? (
                             <>
@@ -629,35 +654,92 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
             {/* Right: Controls */}
             <div className="w-full lg:w-96 flex flex-col gap-4">
-                {/* Mode Selector */}
+                {/* Time Slot Selector - NEW */}
                 <div className="bg-slate-800/50 backdrop-blur-md p-5 rounded-3xl border border-white/10 shadow-xl">
-                    <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2 text-sm uppercase tracking-wider">
-                        <MapPin className="w-4 h-4 text-indigo-400" />
-                        Chọn khung giờ
-                    </h3>
-                    <div className="grid grid-cols-2 gap-3">
-                        {(['morning_in', 'morning_out', 'noon_in', 'noon_out', 'evening_in', 'evening_out'] as CheckinType[]).map(type => (
-                            <button
-                                key={type}
-                                onClick={() => setSelectedType(type)}
-                                className={`relative p-3 rounded-2xl text-left transition-all duration-200 border ${selectedType === type
-                                    ? 'bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-900/50 scale-[1.02]'
-                                    : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10'
-                                    }`}
-                            >
-                                <div className="text-xs font-bold uppercase mb-1 opacity-70 flex items-center gap-1">
-                                    {renderTypeIcon(type)}
-                                    {type.includes('morning') ? 'Sáng' : type.includes('noon') ? 'Trưa' : 'Tối'}
-                                </div>
-                                <div className={`text-lg font-black flex items-center gap-2 ${selectedType === type ? 'text-white' : 'text-slate-300'}`}>
-                                    {type.includes('in') ? <ArrowDown className="w-5 h-5" /> : <ArrowUp className="w-5 h-5" />}
-                                    {type.includes('in') ? 'Vào' : 'Ra'}
-                                </div>
-                                {selectedType === type && (
-                                    <div className="absolute top-2 right-2 w-2 h-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_10px_#34d399]"></div>
-                                )}
-                            </button>
-                        ))}
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-white/80 font-bold flex items-center gap-2 text-sm uppercase tracking-wider">
+                            <MapPin className="w-4 h-4 text-indigo-400" />
+                            Chọn khung giờ
+                        </h3>
+                        {/* System Ready Indicator */}
+                        <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold ${systemReady
+                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                                : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                            }`}>
+                            <div className={`w-2 h-2 rounded-full ${systemReady ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`}></div>
+                            {systemReady ? 'Sẵn sàng' : 'Đang tải...'}
+                        </div>
+                    </div>
+
+                    <div className="space-y-3">
+                        {timeSlots.length > 0 ? (
+                            timeSlots.map(slot => {
+                                const isSelected = selectedSlot?.id === slot.id;
+                                const now = new Date();
+                                const currentMinutes = now.getHours() * 60 + now.getMinutes();
+                                const [endH, endM] = slot.end_time.split(':').map(Number);
+                                const endMinutes = endH * 60 + endM;
+                                const isCurrentSlot = dataService.getCurrentTimeSlot(timeSlots)?.id === slot.id;
+
+                                return (
+                                    <button
+                                        key={slot.id}
+                                        onClick={() => setSelectedSlot(slot)}
+                                        className={`w-full relative p-4 rounded-2xl text-left transition-all duration-200 border ${isSelected
+                                                ? 'bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-900/50'
+                                                : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10'
+                                            }`}
+                                    >
+                                        <div className="flex items-center justify-between">
+                                            <div>
+                                                <div className="text-sm font-bold text-white mb-1 flex items-center gap-2">
+                                                    {slot.name}
+                                                    {isCurrentSlot && (
+                                                        <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full">
+                                                            Hiện tại
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="text-xs text-slate-400 flex items-center gap-2">
+                                                    <Clock className="w-3 h-3" />
+                                                    {slot.start_time} → {slot.end_time}
+                                                    <span className="text-slate-500">(trễ sau)</span>
+                                                </div>
+                                            </div>
+                                            {isSelected && (
+                                                <div className="w-3 h-3 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_10px_#34d399]"></div>
+                                            )}
+                                        </div>
+                                    </button>
+                                );
+                            })
+                        ) : (
+                            // Fallback: Legacy 6 buttons
+                            <div className="grid grid-cols-2 gap-3">
+                                {(['morning_in', 'morning_out', 'noon_in', 'noon_out', 'evening_in', 'evening_out'] as CheckinType[]).map(type => (
+                                    <button
+                                        key={type}
+                                        onClick={() => setSelectedType(type)}
+                                        className={`relative p-3 rounded-2xl text-left transition-all duration-200 border ${selectedType === type
+                                            ? 'bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-900/50 scale-[1.02]'
+                                            : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10'
+                                            }`}
+                                    >
+                                        <div className="text-xs font-bold uppercase mb-1 opacity-70 flex items-center gap-1">
+                                            {renderTypeIcon(type)}
+                                            {type.includes('morning') ? 'Sáng' : type.includes('noon') ? 'Trưa' : 'Tối'}
+                                        </div>
+                                        <div className={`text-lg font-black flex items-center gap-2 ${selectedType === type ? 'text-white' : 'text-slate-300'}`}>
+                                            {type.includes('in') ? <ArrowDown className="w-5 h-5" /> : <ArrowUp className="w-5 h-5" />}
+                                            {type.includes('in') ? 'Vào' : 'Ra'}
+                                        </div>
+                                        {selectedType === type && (
+                                            <div className="absolute top-2 right-2 w-2 h-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_10px_#34d399]"></div>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
 

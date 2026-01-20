@@ -76,7 +76,7 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
 
     const formatTime = (isoString?: string) => {
         if (!isoString) return '-';
-        return new Date(isoString).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' });
+        return new Date(isoString).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
     };
 
     const getStatusBadge = (status?: string) => {
