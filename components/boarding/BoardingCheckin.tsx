@@ -663,8 +663,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                         </h3>
                         {/* System Ready Indicator */}
                         <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold ${systemReady
-                                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                                : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
+                            ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                            : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                             }`}>
                             <div className={`w-2 h-2 rounded-full ${systemReady ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`}></div>
                             {systemReady ? 'Sẵn sàng' : 'Đang tải...'}
@@ -686,8 +686,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                                         key={slot.id}
                                         onClick={() => setSelectedSlot(slot)}
                                         className={`w-full relative p-4 rounded-2xl text-left transition-all duration-200 border ${isSelected
-                                                ? 'bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-900/50'
-                                                : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10'
+                                            ? 'bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-900/50'
+                                            : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10'
                                             }`}
                                     >
                                         <div className="flex items-center justify-between">
@@ -702,7 +702,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                                                 </div>
                                                 <div className="text-xs text-slate-400 flex items-center gap-2">
                                                     <Clock className="w-3 h-3" />
-                                                    {slot.start_time} → {slot.end_time}
+                                                    {new Date(`2000-01-01T${slot.start_time}`).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })} → {new Date(`2000-01-01T${slot.end_time}`).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
                                                     <span className="text-slate-500">(trễ sau)</span>
                                                 </div>
                                             </div>

@@ -816,58 +816,6 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                                 <label className="block text-xs font-black text-slate-400 uppercase mb-2">Điểm đi muộn</label>
                                                 <input type="number" value={formData.points_late} onChange={(e) => setFormData({ ...formData, points_late: parseInt(e.target.value) })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
                                             </div>
-
-                                            {/* Sync buttons */}
-                                            <div className="md:col-span-3 flex flex-wrap gap-2 mt-2">
-                                                <button
-                                                    type="button"
-                                                    onClick={async () => {
-                                                        try {
-                                                            const configRes = await dataService.getConfigs();
-                                                            if (configRes.success && configRes.data) {
-                                                                const configs = configRes.data.reduce((acc: Record<string, string>, c: { key: string; value: string }) => {
-                                                                    acc[c.key] = c.value;
-                                                                    return acc;
-                                                                }, {} as Record<string, string>);
-                                                                setFormData(prev => ({
-                                                                    ...prev,
-                                                                    points_on_time: parseInt(configs.points_on_time) || prev.points_on_time,
-                                                                    points_late: parseInt(configs.points_late) || prev.points_late,
-                                                                    late_threshold_mins: parseInt(configs.late_threshold_mins) || prev.late_threshold_mins,
-                                                                }));
-                                                                setImportNotification({ type: 'success', message: 'Đã áp dụng cấu hình từ hệ thống!' });
-                                                                setTimeout(() => setImportNotification(null), 3000);
-                                                            }
-                                                        } catch (e) {
-                                                            setImportNotification({ type: 'error', message: 'Không thể tải cấu hình hệ thống' });
-                                                            setTimeout(() => setImportNotification(null), 3000);
-                                                        }
-                                                    }}
-                                                    className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-xl text-sm font-bold hover:bg-indigo-200 transition-colors flex items-center gap-2"
-                                                >
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
-                                                    Áp dụng từ Cấu hình Hệ thống
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    onClick={async () => {
-                                                        try {
-                                                            await dataService.updateConfig('points_on_time', String(formData.points_on_time));
-                                                            await dataService.updateConfig('points_late', String(formData.points_late));
-                                                            await dataService.updateConfig('late_threshold_mins', String(formData.late_threshold_mins));
-                                                            setImportNotification({ type: 'success', message: 'Đã cập nhật lên Cấu hình Hệ thống!' });
-                                                            setTimeout(() => setImportNotification(null), 3000);
-                                                        } catch (e) {
-                                                            setImportNotification({ type: 'error', message: 'Lỗi cập nhật lên hệ thống' });
-                                                            setTimeout(() => setImportNotification(null), 3000);
-                                                        }
-                                                    }}
-                                                    className="px-4 py-2 bg-emerald-100 text-emerald-700 rounded-xl text-sm font-bold hover:bg-emerald-200 transition-colors flex items-center gap-2"
-                                                >
-                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                                                    Cập nhật lên Hệ thống
-                                                </button>
-                                            </div>
                                         </>
                                     )}
                                 </div>

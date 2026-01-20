@@ -23,10 +23,12 @@ DROP POLICY IF EXISTS "Allow all for admins" ON boarding_time_slots;
 DROP POLICY IF EXISTS "Public access boarding_time_slots" ON boarding_time_slots;
 
 -- Policy cho phép đọc cho tất cả
+DROP POLICY IF EXISTS "Allow read for all" ON boarding_time_slots;
 CREATE POLICY "Allow read for all" ON boarding_time_slots
     FOR SELECT USING (true);
 
 -- Policy cho phép INSERT/UPDATE/DELETE cho authenticated users
+DROP POLICY IF EXISTS "Allow write for authenticated" ON boarding_time_slots;
 CREATE POLICY "Allow write for authenticated" ON boarding_time_slots
     FOR ALL TO authenticated
     USING (true)

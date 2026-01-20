@@ -341,7 +341,7 @@ const BoardingConfigTab: React.FC = () => {
                             </h3>
                             <button
                                 onClick={() => {
-                                    setEditingSlot({ name: '', start_time: '06:00', end_time: '07:00', is_active: true, order_index: timeSlots.length + 1 });
+                                    setEditingSlot({ id: '', name: '', start_time: '06:00', end_time: '07:00', is_active: true, order_index: timeSlots.length + 1 });
                                     setShowSlotModal(true);
                                 }}
                                 className="text-sm text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1"
@@ -369,9 +369,13 @@ const BoardingConfigTab: React.FC = () => {
                                             </span>
                                         </div>
                                         <div className="text-sm text-slate-600 mb-3">
-                                            <span className="font-mono bg-white px-2 py-0.5 rounded border">{slot.start_time}</span>
+                                            <span className="font-mono bg-white px-2 py-0.5 rounded border">
+                                                {new Date(`2000-01-01T${slot.start_time}`).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                            </span>
                                             <span className="mx-2">→</span>
-                                            <span className="font-mono bg-white px-2 py-0.5 rounded border">{slot.end_time}</span>
+                                            <span className="font-mono bg-white px-2 py-0.5 rounded border">
+                                                {new Date(`2000-01-01T${slot.end_time}`).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                                            </span>
                                             <span className="text-xs text-slate-400 ml-2">(trễ sau giờ này)</span>
                                         </div>
                                         <div className="flex gap-2">
