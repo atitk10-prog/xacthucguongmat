@@ -611,6 +611,25 @@ async function updateParticipantFaceDescriptor(participantId: string, descriptor
     }
 }
 
+// LAZY LOAD: Fetch avatar only when needed (after successful check-in)
+async function getParticipantAvatar(participantId: string): Promise<ApiResponse<string | null>> {
+    try {
+        const { data, error } = await supabase
+            .from('event_participants')
+            .select('avatar_url, user:users!user_id (avatar_url)')
+            .eq('id', participantId)
+            .single();
+
+        if (error) return { success: false, error: error.message };
+
+        // Prefer user's avatar (more reliable), fallback to participant's avatar
+        const avatarUrl = (data as any)?.user?.avatar_url || (data as any)?.avatar_url || null;
+        return { success: true, data: avatarUrl };
+    } catch (err) {
+        return { success: false, error: 'Failed to load avatar' };
+    }
+}
+
 async function saveEventParticipants(
     eventId: string,
     participants: Partial<EventParticipant>[]
@@ -1931,6 +1950,7 @@ export const dataService = {
     getEventParticipants,
     getEventParticipantCount,
     updateParticipantFaceDescriptor,
+    getParticipantAvatar, // LAZY LOAD: Fetch avatar only when needed
     uploadParticipantAvatarWithFaceID, // NEW: Auto-compute face ID when uploading avatar
     saveEventParticipants,
     deleteEventParticipant,

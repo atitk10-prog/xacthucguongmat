@@ -671,23 +671,37 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 playSound('success');
                 console.log('Check-in SUCCESS:', checkinResult);
 
-                // Find participant to get avatar
+                // Find participant (for name, not for avatar since we're in lightweight mode)
                 const participant = participants.find(p => p.id === checkInUserId);
-                const displayAvatar = participant?.avatar_url || undefined;
 
+                // Set initial result WITHOUT avatar (will be loaded async)
                 setResult({
                     success: true,
                     message: `Check-in lúc ${new Date().toLocaleTimeString('vi-VN')}${latestRecognizedPerson ? ` (${Math.round(latestRecognizedPerson.confidence)}% match)` : ''}`,
                     checkin: checkinResult.data.checkin,
-                    capturedImage: displayAvatar, // Use avatar for success screen
+                    capturedImage: undefined, // Will be loaded async
                     userName: checkInUserName
                 });
 
-                // Update recent checkins list for right sidebar
+                // LAZY LOAD AVATAR: Fetch avatar in background and update result
+                dataService.getParticipantAvatar(checkInUserId).then(avatarRes => {
+                    if (avatarRes.success && avatarRes.data) {
+                        setResult(prev => prev ? { ...prev, capturedImage: avatarRes.data } : prev);
+                        // Also update recent checkins list
+                        setRecentCheckins(prevList => {
+                            if (prevList.length > 0 && prevList[0].name === checkInUserName) {
+                                return [{ ...prevList[0], image: avatarRes.data }, ...prevList.slice(1)];
+                            }
+                            return prevList;
+                        });
+                    }
+                });
+
+                // Update recent checkins list for right sidebar (image will be updated by lazy load above)
                 setRecentCheckins(prev => [{
                     name: checkInUserName,
                     time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
-                    image: displayAvatar, // Use avatar
+                    image: undefined, // Will be updated by lazy load above
                     status: checkinResult.data.checkin.status,
                     full_name: participant?.full_name, // Add these for details
                     organization: participant?.organization,
