@@ -941,6 +941,8 @@ async function boardingCheckin(
             updateData[`${checkinType}_status`] = status;
         }
 
+        let recordData: BoardingCheckinRecord | null = null;
+
         if (existingRecord) {
             // Update existing record
             const { data, error } = await supabase
@@ -951,7 +953,7 @@ async function boardingCheckin(
                 .single();
 
             if (error) return { success: false, error: error.message };
-            return { success: true, data: data as BoardingCheckinRecord };
+            recordData = data;
         } else {
             // Create new record
             updateData['user_id'] = userId;
@@ -965,27 +967,28 @@ async function boardingCheckin(
                 .single();
 
             if (error) return { success: false, error: error.message };
-
-            // --- POINT DEDUCTION LOGIC ---
-            if (status === 'late') {
-                // Fetch config for boarding late points
-                const { data: configData } = await supabase
-                    .from('system_configs')
-                    .select('value')
-                    .eq('key', 'points_late_boarding')
-                    .single();
-
-                const latePoints = configData ? parseInt(configData.value) : -2;
-
-                // Call RPC to update points safely
-                await supabase.rpc('increment_user_points', {
-                    p_user_id: userId,
-                    p_amount: latePoints
-                });
-            }
-
-            return { success: true, data: data as BoardingCheckinRecord };
+            recordData = data;
         }
+
+        // --- POINT DEDUCTION LOGIC (Runs for both Create and Update) ---
+        if (status === 'late') {
+            // Fetch config for boarding late points
+            const { data: configData } = await supabase
+                .from('system_configs')
+                .select('value')
+                .eq('key', 'points_late_boarding')
+                .single();
+
+            const latePoints = configData ? parseInt(configData.value) : -2;
+
+            // Call RPC to update points safely
+            await supabase.rpc('increment_user_points', {
+                p_user_id: userId,
+                p_amount: latePoints
+            });
+        }
+
+        return { success: true, data: (recordData || updateData) as BoardingCheckinRecord };
     } catch (err) {
         // OFFLINE FALLBACK
         console.warn('Network error, saving to offline queue...');

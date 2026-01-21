@@ -57,6 +57,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     // NEW: Time Slots State
     const [timeSlots, setTimeSlots] = useState<BoardingTimeSlot[]>([]);
     const [selectedSlot, setSelectedSlot] = useState<BoardingTimeSlot | null>(null);
+    const [slotStatus, setSlotStatus] = useState<'on_time' | 'late' | 'closed'>('closed');
     const [systemReady, setSystemReady] = useState(false);
 
     // HID Scanner Buffer
@@ -66,16 +67,152 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     // Sync ref
     useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
 
-    // Auto-select type based on time
+    // HELPER: Map Slot to CheckinType (Heuristic)
+    const getCheckinTypeFromSlot = (slot: BoardingTimeSlot): CheckinType => {
+        const name = slot.name.toLowerCase();
+        const startH = parseInt(slot.start_time.split(':')[0]);
+
+        if (name.includes('sáng') || (startH >= 4 && startH < 11)) return 'morning_in';
+        if (name.includes('trưa') || (startH >= 11 && startH < 14)) return 'noon_in';
+        if (name.includes('chiều') || name.includes('tối') || startH >= 14) return 'evening_in';
+        return 'morning_in'; // Fallback
+    };
+
+    const getTypeLabel = (type: string) => {
+        switch (type) {
+            case 'morning_in': return 'Sáng - Vào Lớp';
+            case 'morning_out': return 'Sáng - Ra Về';
+            case 'noon_in': return 'Trưa - Vào';
+            case 'noon_out': return 'Trưa - Ra';
+            case 'evening_in': return 'Tối - Điểm danh';
+            case 'evening_out': return 'Tối - Ra';
+            default: return type;
+        }
+    };
+
+    const renderTypeIcon = (type: string) => {
+        if (type.includes('morning')) return <Sunrise className="w-5 h-5" />;
+        if (type.includes('noon')) return <Sun className="w-5 h-5" />;
+        return <Moon className="w-5 h-5" />;
+    };
+
+    const handleAutoCheckin = async (userId: string, name: string, confidence: number) => {
+        // BLOCK if closed
+        if (!selectedSlot || slotStatus === 'closed') {
+            setGuidance('Chưa đến giờ điểm danh!');
+            return;
+        }
+
+        setIsProcessing(true);
+        const nowMs = Date.now(); // Use new variable name to avoid shadowing outer scope if any
+        const status = slotStatus === 'closed' ? 'late' : slotStatus;
+
+        // Play Sound
+        if (status === 'late') soundService.play('warning');
+        else soundService.play('success');
+
+        try {
+            // Call API
+            const response = await dataService.boardingCheckin(userId, selectedType, status);
+
+            if (response.success && response.data) {
+                // Determine ID
+                const recordId = response.data.id || userId;
+
+                // Update UI List
+                setRecentCheckins(prev => [{
+                    id: recordId,
+                    name: name,
+                    time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
+                    type: getTypeLabel(selectedType),
+                    status: status === 'late' ? 'warning' : 'success'
+                }, ...prev.slice(0, 9)]);
+
+                // Set Cooldown (SUCCESS = 60s)
+                checkinCooldownsRef.current.set(userId, Date.now() + 60000);
+
+                // Show Popup
+                setResult({
+                    success: true,
+                    message: status === 'late' ? 'Check-in Muộn' : 'Check-in Thành công',
+                    user: { full_name: name, student_code: '' },
+                    status: status
+                });
+
+                // Auto close modal
+                setTimeout(() => {
+                    setResult(null);
+                    setIsProcessing(false);
+                    stableStartTimeRef.current = null;
+                    setStabilityProgress(0);
+                }, 3000);
+            } else {
+                // Error (e.g. already checking)
+                soundService.play('error');
+                checkinCooldownsRef.current.set(userId, Date.now() + 5000);
+                setIsProcessing(false);
+            }
+        } catch (e) {
+            console.error(e);
+            soundService.play('error');
+            checkinCooldownsRef.current.set(userId, Date.now() + 5000);
+            setIsProcessing(false);
+        }
+    };
+
+    // REF to handleAutoCheckin to avoid stale closures in loop
+    const handleAutoCheckinRef = useRef(handleAutoCheckin);
+    useEffect(() => { handleAutoCheckinRef.current = handleAutoCheckin; }, [handleAutoCheckin]);
+
+
+
+    // AUTO-SELECT Active Slot based on Time
     useEffect(() => {
-        const h = new Date().getHours();
-        if (h >= 5 && h < 11) setSelectedType('morning_in');
-        else if (h >= 11 && h < 12) setSelectedType('noon_in'); // 11h-12h
-        else if (h >= 12 && h < 13) setSelectedType('noon_out'); // 12h-13h (Corrected logic for noon out)
-        else if (h >= 13 && h < 17) setSelectedType('evening_in'); // 13h-17h Afternoon class?
-        else if (h >= 17) setSelectedType('evening_out'); // Night out / Free time
-        else setSelectedType('morning_in');
-    }, []);
+        if (timeSlots.length === 0) return;
+
+        const checkSlots = () => {
+            const now = new Date();
+            const currentMinutes = now.getHours() * 60 + now.getMinutes();
+            let foundSlot: BoardingTimeSlot | null = null;
+            let status: 'on_time' | 'late' | 'closed' = 'closed';
+
+            for (const slot of timeSlots) {
+                if (!slot.is_active) continue;
+
+                const [startH, startM] = slot.start_time.split(':').map(Number);
+                const [endH, endM] = slot.end_time.split(':').map(Number);
+                const startMins = startH * 60 + startM;
+                const endMins = endH * 60 + endM;
+
+                // Check Active Window (Start -> End + 60 mins allowable late)
+                if (currentMinutes >= startMins && currentMinutes <= endMins + 60) {
+                    foundSlot = slot;
+                    status = currentMinutes <= endMins ? 'on_time' : 'late';
+                    break;
+                }
+            }
+
+            if (foundSlot) {
+                if (selectedSlot?.id !== foundSlot.id || slotStatus !== status) {
+                    setSelectedSlot(foundSlot);
+                    setSlotStatus(status);
+                    const type = getCheckinTypeFromSlot(foundSlot);
+                    setSelectedType(type);
+                    console.log(`🔄 Auto-switched to slot: ${foundSlot.name} (${status.toUpperCase()})`);
+                }
+            } else {
+                if (slotStatus !== 'closed') {
+                    setSelectedSlot(null);
+                    setSlotStatus('closed');
+                    console.log('⛔ No active slot -> Closed');
+                }
+            }
+        };
+
+        checkSlots(); // Check immediately
+        const interval = setInterval(checkSlots, 10000); // Check every 10s
+        return () => clearInterval(interval);
+    }, [timeSlots, selectedSlot, slotStatus]);
 
     // Load Config from DB
     const [boardingConfig, setBoardingConfig] = useState<BoardingConfig>({
@@ -183,8 +320,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                         setSelectedSlot(currentSlot);
                         console.log('✅ Auto-selected time slot:', currentSlot.name);
                     } else {
-                        // Default to first slot if none matches
-                        setSelectedSlot(slotsRes.data[0]);
+                        // Don't default to first slot - wait for auto loop or stay closed
+                        console.log('⏳ No exact active slot found, waiting for auto-loop check...');
                     }
                 } else {
                     console.log('⚠️ No time slots found, using legacy mode');
@@ -253,7 +390,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
     // Detect Loop (Optimized + Security)
     useEffect(() => {
-        if (!modelsReady || !studentsLoaded || !videoRef.current) return;
+        if (!modelsReady || !studentsLoaded || !videoRef.current || !systemReady) return;
 
         let animationId: number;
         // FAST CHECK-IN: Reduced from 1200ms to 200ms for high volume
@@ -336,18 +473,28 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                                 setGuidance(`Giữ yên... ${Math.round(progress)}%`);
                                 setDetectedPerson({ name: match.name, confidence: match.confidence });
 
-                                // Check Cooldown
-                                const cooldown = checkinCooldownsRef.current.get(match.userId);
-                                const isCool = !cooldown || (now - cooldown > 60000); // 1 min cooldown
+                                // Check Cooldown (Map stores EXPIRY timestamp now)
+                                const cooldownExpiry = checkinCooldownsRef.current.get(match.userId);
+                                // const now = Date.now(); // REMOVED: Use outer 'now'
+                                const isCool = !cooldownExpiry || now > cooldownExpiry;
 
                                 if (stableDuration >= STABILITY_THRESHOLD) {
                                     // 7. TRIGGER CHECK-IN
                                     if (isCool && !isProcessingRef.current) {
                                         setGuidance('Đang check-in...');
-                                        handleAutoCheckin(match.userId, match.name, match.confidence);
+                                        handleAutoCheckinRef.current(match.userId, match.name, match.confidence);
                                     } else if (!isCool) {
-                                        setGuidance(`Đã check-in rồi (${Math.ceil((60000 - (now - cooldown)) / 1000)}s)`);
-                                        setStabilityProgress(100);
+                                        // Distinguish Success vs Error based on remaining time
+                                        const remaining = cooldownExpiry! - now;
+                                        if (remaining > 10000) {
+                                            // Long cooldown -> Success
+                                            setGuidance(`Đã check-in rồi (${Math.ceil(remaining / 1000)}s)`);
+                                            setStabilityProgress(100);
+                                        } else {
+                                            // Short cooldown -> Error/Wait
+                                            setGuidance(`Vui lòng đợi ${Math.ceil(remaining / 1000)}s...`);
+                                            setStabilityProgress(0); // Reset progress so it doesn't look like success
+                                        }
                                     }
                                 }
 
@@ -383,98 +530,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
         loop();
         return () => cancelAnimationFrame(animationId);
-    }, [modelsReady, studentsLoaded]);
-
-    const calculateStatus = (type: string, time: Date): 'on_time' | 'late' => {
-        const timeStr = time.toTimeString().slice(0, 5); // HH:mm
-
-        if (type === 'morning_in') {
-            return timeStr <= BOARDING_CONFIG.morning_curfew ? 'on_time' : 'late';
-        }
-        if (type === 'noon_in') {
-            return timeStr <= BOARDING_CONFIG.noon_curfew ? 'on_time' : 'late';
-        }
-        if (type === 'evening_in') {
-            return timeStr <= BOARDING_CONFIG.evening_curfew ? 'on_time' : 'late';
-        }
-        return 'on_time';
-    };
-
-    const handleAutoCheckin = async (userId: string, name: string, confidence: number) => {
-        setIsProcessing(true);
-        const now = new Date();
-        const status = calculateStatus(selectedType, now);
-
-        // Play Sound
-        if (status === 'late') soundService.play('warning');
-        else soundService.play('success');
-
-        try {
-            // Call API
-            const response = await dataService.boardingCheckin(userId, selectedType, status);
-
-            if (response.success) {
-                const message = status === 'late'
-                    ? `Check-in MUỘN (${now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })})`
-                    : `Check-in ĐÚNG GIỜ`;
-
-                setResult({
-                    success: true,
-                    message: message,
-                    data: response.data,
-                    user: { full_name: name } as any,
-                    status: status
-                });
-
-                // Update recent list
-                setRecentCheckins(prev => [{
-                    name: name,
-                    time: now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-                    type: getTypeLabel(selectedType),
-                    status: status === 'late' ? 'warning' : 'success' // Use warning for late
-                }, ...prev.slice(0, 9)]);
-
-                // Set Cooldown
-                checkinCooldownsRef.current.set(userId, Date.now());
-
-                // Auto close modal
-                setTimeout(() => {
-                    setResult(null);
-                    setIsProcessing(false);
-                    // Reset stability to prevent instant re-checkin
-                    stableStartTimeRef.current = null;
-                    setStabilityProgress(0);
-                }, 3000);
-            } else {
-                // Error (e.g. already checking)
-                soundService.play('error');
-                checkinCooldownsRef.current.set(userId, Date.now());
-                setIsProcessing(false);
-            }
-        } catch (e) {
-            console.error(e);
-            soundService.play('error');
-            setIsProcessing(false);
-        }
-    };
-
-    const getTypeLabel = (type: string) => {
-        switch (type) {
-            case 'morning_in': return 'Sáng - Vào Lớp';
-            case 'morning_out': return 'Sáng - Ra Về';
-            case 'noon_in': return 'Trưa - Vào';
-            case 'noon_out': return 'Trưa - Ra';
-            case 'evening_in': return 'Tối - Điểm danh';
-            case 'evening_out': return 'Tối - Ra';
-            default: return type;
-        }
-    };
-
-    const renderTypeIcon = (type: string) => {
-        if (type.includes('morning')) return <Sunrise className="w-5 h-5" />;
-        if (type.includes('noon')) return <Sun className="w-5 h-5" />;
-        return <Moon className="w-5 h-5" />;
-    };
+    }, [modelsReady, studentsLoaded, systemReady]);
 
     // QR Check-in Handler
     const handleQRCheckin = async (studentCode: string) => {
@@ -491,11 +547,16 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             return;
         }
 
-        // Check cooldown
+        // Check cooldown (Expiry Logic)
         const now = Date.now();
-        const cooldown = checkinCooldownsRef.current.get(student.id);
-        if (cooldown && (now - cooldown < 60000)) {
-            setGuidance(`${student.full_name} đã check-in (${Math.ceil((60000 - (now - cooldown)) / 1000)}s)`);
+        const cooldownExpiry = checkinCooldownsRef.current.get(student.id);
+        if (cooldownExpiry && now < cooldownExpiry) {
+            const remaining = cooldownExpiry - now;
+            if (remaining > 10000) {
+                setGuidance(`${student.full_name} đã check-in (${Math.ceil(remaining / 1000)}s)`);
+            } else {
+                setGuidance(`Vui lòng đợi ${Math.ceil(remaining / 1000)}s...`);
+            }
             return;
         }
 
@@ -503,7 +564,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         await handleAutoCheckin(student.id, student.full_name, 100);
     };
 
-    // Switch mode effect - FIX: Stop ALL scanners properly before switching
+    // Switch mode effect
     const switchCheckinMode = async (mode: 'face' | 'qr', newFacing?: 'environment' | 'user') => {
         // CRITICAL: Stop ALL active scanners first to prevent conflicts
         try {
@@ -513,7 +574,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             console.warn('Error stopping QR scanner:', e);
         }
 
-        // Stop face camera if switching to QR (to avoid camera conflict)
+        // Stop face camera if switching to QR
         if (mode === 'qr') {
             stopFaceCamera();
         }
@@ -529,7 +590,6 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         // Start QR scanner if switching to QR mode
         if (mode === 'qr') {
             setGuidance('Đưa mã QR vào khung hình...');
-            // Short delay to let DOM update and camera release
             setTimeout(async () => {
                 try {
                     await qrScannerService.startScanning(
@@ -543,16 +603,15 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                             console.error('QR Scanner error:', error);
                             setGuidance('Lỗi camera: ' + error);
                         },
-                        facing // Pass facingMode to scanner
+                        facing
                     );
                     setQrScannerActive(true);
                 } catch (err) {
                     console.error('Failed to start QR scanner:', err);
                 }
-            }, 400); // Increased delay for camera release
+            }, 400);
         } else {
             setGuidance('Đang tìm khuôn mặt...');
-            // Face camera will be started by useEffect watching checkinMode
         }
     };
 
@@ -741,7 +800,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                                         </svg>
                                     </span>
                                 )}
-                                {detectedPerson.name} ({stabilityProgress >= 100 ? 'Sẵn sàng' : `${Math.round(stabilityProgress)}%`})
+                                {detectedPerson.name} ({stabilityProgress >= 100 ? 'Đã check-in' : `${Math.round(stabilityProgress)}%`})
                             </div>
                         ) : (
                             <div className="bg-slate-900/60 text-white/70 px-6 py-2 rounded-full text-sm backdrop-blur-sm border border-white/10 flex items-center gap-2">
@@ -789,97 +848,79 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
             {/* Right: Controls */}
             <div className="w-full lg:w-96 flex flex-col gap-4">
-                {/* Time Slot Selector - NEW */}
-                <div className="bg-slate-800/50 backdrop-blur-md p-5 rounded-3xl border border-white/10 shadow-xl">
+                {/* Auto Status Display - REPLACES Manual Selector */}
+                <div className={`p-5 rounded-3xl border shadow-xl transition-all duration-500 ${selectedSlot
+                    ? (slotStatus === 'on_time'
+                        ? 'bg-emerald-900/40 border-emerald-500/30'
+                        : 'bg-amber-900/40 border-amber-500/30')
+                    : 'bg-slate-800/50 border-white/10'
+                    }`}>
+
                     <div className="flex items-center justify-between mb-4">
                         <h3 className="text-white/80 font-bold flex items-center gap-2 text-sm uppercase tracking-wider">
-                            <MapPin className="w-4 h-4 text-indigo-400" />
-                            Chọn khung giờ
+                            <Clock className="w-4 h-4 text-indigo-400" />
+                            Trạng thái hiện tại
                         </h3>
                         {/* System Ready Indicator */}
                         <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold ${systemReady
                             ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                             : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                             }`}>
-                            <div className={`w-2 h-2 rounded-full ${systemReady ? 'bg-emerald-400' : 'bg-amber-400'} animate-pulse`}></div>
+                            <div className={`w-2 h-2 rounded-full ${systemReady ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></div>
                             {systemReady ? 'Sẵn sàng' : 'Đang tải...'}
                         </div>
                     </div>
 
-                    <div className="space-y-3">
-                        {timeSlots.length > 0 ? (
-                            timeSlots.map(slot => {
-                                const isSelected = selectedSlot?.id === slot.id;
-                                const now = new Date();
-                                const currentMinutes = now.getHours() * 60 + now.getMinutes();
-                                const [endH, endM] = slot.end_time.split(':').map(Number);
-                                const endMinutes = endH * 60 + endM;
-                                const isCurrentSlot = dataService.getCurrentTimeSlot(timeSlots)?.id === slot.id;
-
-                                return (
-                                    <button
-                                        key={slot.id}
-                                        onClick={() => setSelectedSlot(slot)}
-                                        className={`w-full relative p-4 rounded-2xl text-left transition-all duration-200 border ${isSelected
-                                            ? 'bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-900/50'
-                                            : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10'
-                                            }`}
-                                    >
-                                        <div className="flex items-center justify-between">
-                                            <div>
-                                                <div className="text-sm font-bold text-white mb-1 flex items-center gap-2">
-                                                    {slot.name}
-                                                    {isCurrentSlot && (
-                                                        <span className="text-[10px] bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded-full">
-                                                            Hiện tại
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="text-xs text-slate-400 flex items-center gap-2">
-                                                    <Clock className="w-3 h-3" />
-                                                    {new Date(`2000-01-01T${slot.start_time}`).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })} → {new Date(`2000-01-01T${slot.end_time}`).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
-                                                    <span className="text-slate-500">(trễ sau)</span>
-                                                </div>
-                                            </div>
-                                            {isSelected && (
-                                                <div className="w-3 h-3 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_10px_#34d399]"></div>
-                                            )}
-                                        </div>
-                                    </button>
-                                );
-                            })
-                        ) : (
-                            // Fallback: Legacy 6 buttons
-                            <div className="grid grid-cols-2 gap-3">
-                                {(['morning_in', 'morning_out', 'noon_in', 'noon_out', 'evening_in', 'evening_out'] as CheckinType[]).map(type => (
-                                    <button
-                                        key={type}
-                                        onClick={() => setSelectedType(type)}
-                                        className={`relative p-3 rounded-2xl text-left transition-all duration-200 border ${selectedType === type
-                                            ? 'bg-indigo-600 border-indigo-500 shadow-lg shadow-indigo-900/50 scale-[1.02]'
-                                            : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:border-white/10'
-                                            }`}
-                                    >
-                                        <div className="text-xs font-bold uppercase mb-1 opacity-70 flex items-center gap-1">
-                                            {renderTypeIcon(type)}
-                                            {type.includes('morning') ? 'Sáng' : type.includes('noon') ? 'Trưa' : 'Tối'}
-                                        </div>
-                                        <div className={`text-lg font-black flex items-center gap-2 ${selectedType === type ? 'text-white' : 'text-slate-300'}`}>
-                                            {type.includes('in') ? <ArrowDown className="w-5 h-5" /> : <ArrowUp className="w-5 h-5" />}
-                                            {type.includes('in') ? 'Vào' : 'Ra'}
-                                        </div>
-                                        {selectedType === type && (
-                                            <div className="absolute top-2 right-2 w-2 h-2 bg-emerald-400 rounded-full animate-pulse shadow-[0_0_10px_#34d399]"></div>
-                                        )}
-                                    </button>
-                                ))}
+                    {selectedSlot ? (
+                        <div className="space-y-4">
+                            {/* Active Slot Name */}
+                            <div>
+                                <p className="text-slate-400 text-xs uppercase font-bold mb-1">Khung giờ đang mở</p>
+                                <h2 className="text-2xl font-black text-white">{selectedSlot.name}</h2>
+                                <p className="text-white/60 text-sm flex items-center gap-2 mt-1">
+                                    <Clock className="w-3 h-3" />
+                                    {selectedSlot.start_time} - {selectedSlot.end_time}
+                                </p>
                             </div>
-                        )}
-                    </div>
+
+                            {/* Status Badge */}
+                            <div className={`px-4 py-3 rounded-xl border flex items-center gap-3 ${slotStatus === 'on_time'
+                                ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400'
+                                : 'bg-amber-500/20 border-amber-500/50 text-amber-400'
+                                }`}>
+                                {slotStatus === 'on_time' ? (
+                                    <div className="bg-emerald-500 text-slate-900 p-2 rounded-lg">
+                                        <CheckCircle className="w-5 h-5" />
+                                    </div>
+                                ) : (
+                                    <div className="bg-amber-500 text-slate-900 p-2 rounded-lg">
+                                        <AlertTriangle className="w-5 h-5" />
+                                    </div>
+                                )}
+                                <div>
+                                    <p className="font-bold text-lg leading-tight">
+                                        {slotStatus === 'on_time' ? 'Đúng Giờ' : 'Đi Muộn'}
+                                    </p>
+                                    <p className="text-xs opacity-80">
+                                        {slotStatus === 'on_time' ? 'Check-in hợp lệ' : 'Sẽ bị trừ điểm'}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="text-center py-6">
+                            <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-3 text-slate-600">
+                                <Moon className="w-8 h-8" />
+                            </div>
+                            <h3 className="text-white font-bold text-lg">Chưa đến giờ điểm danh</h3>
+                            <p className="text-slate-400 text-sm mt-1">Vui lòng quay lại vào khung giờ tiếp theo</p>
+                        </div>
+                    )}
                 </div>
 
+
                 {/* Recent Use */}
-                <div className="flex-1 bg-slate-800/50 backdrop-blur-md p-5 rounded-3xl border border-white/10 shadow-xl overflow-hidden flex flex-col">
+                < div className="flex-1 bg-slate-800/50 backdrop-blur-md p-5 rounded-3xl border border-white/10 shadow-xl overflow-hidden flex flex-col" >
                     <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2 text-sm uppercase tracking-wider">
                         <History className="w-4 h-4 text-emerald-400" />
                         Vừa Check-in
@@ -909,100 +950,104 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                             ))
                         )}
                     </div>
-                </div>
-            </div>
+                </div >
+            </div >
 
             {/* Success Popup */}
-            {result && result.success && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
-                    <div className="bg-slate-800 border border-slate-700 p-8 rounded-[2rem] shadow-2xl max-w-sm w-full text-center relative overflow-hidden animate-scale-in">
-                        {/* Glow effect */}
-                        <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 blur-[50px] rounded-full pointer-events-none ${result.status === 'late' ? 'bg-amber-500/20' : 'bg-emerald-500/20'}`}></div>
+            {
+                result && result.success && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+                        <div className="bg-slate-800 border border-slate-700 p-8 rounded-[2rem] shadow-2xl max-w-sm w-full text-center relative overflow-hidden animate-scale-in">
+                            {/* Glow effect */}
+                            <div className={`absolute top-0 left-1/2 -translate-x-1/2 w-32 h-32 blur-[50px] rounded-full pointer-events-none ${result.status === 'late' ? 'bg-amber-500/20' : 'bg-emerald-500/20'}`}></div>
 
-                        <div className={`w-24 h-24 mx-auto bg-gradient-to-br rounded-full flex items-center justify-center mb-6 shadow-lg ${result.status === 'late' ? 'from-amber-400 to-orange-500 shadow-amber-500/30' : 'from-emerald-400 to-teal-500 shadow-emerald-500/30'}`}>
-                            {result.status === 'late' ? (
-                                <AlertTriangle className="w-12 h-12 text-white" />
-                            ) : (
-                                <CheckCircle className="w-12 h-12 text-white" />
-                            )}
+                            <div className={`w-24 h-24 mx-auto bg-gradient-to-br rounded-full flex items-center justify-center mb-6 shadow-lg ${result.status === 'late' ? 'from-amber-400 to-orange-500 shadow-amber-500/30' : 'from-emerald-400 to-teal-500 shadow-emerald-500/30'}`}>
+                                {result.status === 'late' ? (
+                                    <AlertTriangle className="w-12 h-12 text-white" />
+                                ) : (
+                                    <CheckCircle className="w-12 h-12 text-white" />
+                                )}
+                            </div>
+
+                            <h2 className="text-3xl font-black text-white mb-2 tracking-tight">{result.user?.full_name}</h2>
+                            <div className={`border px-4 py-1 rounded-full inline-block font-bold text-sm mb-6 ${result.status === 'late' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}>
+                                {result.message}
+                            </div>
+
+                            <p className="text-slate-400 text-sm">Cửa sổ sẽ đóng tự động...</p>
                         </div>
-
-                        <h2 className="text-3xl font-black text-white mb-2 tracking-tight">{result.user?.full_name}</h2>
-                        <div className={`border px-4 py-1 rounded-full inline-block font-bold text-sm mb-6 ${result.status === 'late' ? 'bg-amber-500/10 border-amber-500/30 text-amber-400' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'}`}>
-                            {result.message}
-                        </div>
-
-                        <p className="text-slate-400 text-sm">Cửa sổ sẽ đóng tự động...</p>
                     </div>
-                </div>
-            )}
+                )
+            }
 
             {/* Config Modal */}
-            {showConfigModal && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-                    <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md relative shadow-2xl animate-scale-in">
-                        <button
-                            onClick={() => setShowConfigModal(false)}
-                            className="absolute top-4 right-4 text-slate-500 hover:text-white"
-                        >
-                            <X className="w-5 h-5" />
-                        </button>
-
-                        <h3 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
-                            <Settings className="w-5 h-5 text-indigo-400" />
-                            Cấu hình khung giờ
-                        </h3>
-                        <p className="text-slate-400 text-sm mb-6">Điều chỉnh thời gian giới nghiêm cho các buổi.</p>
-
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Sáng</label>
-                                <input
-                                    type="time"
-                                    value={configForm.morning_curfew}
-                                    onChange={e => setConfigForm({ ...configForm, morning_curfew: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Trưa</label>
-                                <input
-                                    type="time"
-                                    value={configForm.noon_curfew}
-                                    onChange={e => setConfigForm({ ...configForm, noon_curfew: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Tối</label>
-                                <input
-                                    type="time"
-                                    value={configForm.evening_curfew}
-                                    onChange={e => setConfigForm({ ...configForm, evening_curfew: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="mt-8 flex gap-3">
+            {
+                showConfigModal && (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+                        <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md relative shadow-2xl animate-scale-in">
                             <button
                                 onClick={() => setShowConfigModal(false)}
-                                className="flex-1 py-3 rounded-xl font-bold text-slate-400 hover:bg-white/5 transition-colors"
+                                className="absolute top-4 right-4 text-slate-500 hover:text-white"
                             >
-                                Hủy
+                                <X className="w-5 h-5" />
                             </button>
-                            <button
-                                onClick={handleSaveConfig}
-                                className="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-2"
-                            >
-                                <Save className="w-5 h-5" />
-                                Lưu cấu hình
-                            </button>
+
+                            <h3 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
+                                <Settings className="w-5 h-5 text-indigo-400" />
+                                Cấu hình khung giờ
+                            </h3>
+                            <p className="text-slate-400 text-sm mb-6">Điều chỉnh thời gian giới nghiêm cho các buổi.</p>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Sáng</label>
+                                    <input
+                                        type="time"
+                                        value={configForm.morning_curfew}
+                                        onChange={e => setConfigForm({ ...configForm, morning_curfew: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Trưa</label>
+                                    <input
+                                        type="time"
+                                        value={configForm.noon_curfew}
+                                        onChange={e => setConfigForm({ ...configForm, noon_curfew: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Tối</label>
+                                    <input
+                                        type="time"
+                                        value={configForm.evening_curfew}
+                                        onChange={e => setConfigForm({ ...configForm, evening_curfew: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="mt-8 flex gap-3">
+                                <button
+                                    onClick={() => setShowConfigModal(false)}
+                                    className="flex-1 py-3 rounded-xl font-bold text-slate-400 hover:bg-white/5 transition-colors"
+                                >
+                                    Hủy
+                                </button>
+                                <button
+                                    onClick={handleSaveConfig}
+                                    className="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-2"
+                                >
+                                    <Save className="w-5 h-5" />
+                                    Lưu cấu hình
+                                </button>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
-        </div>
+                )
+            }
+        </div >
     );
 };
 
