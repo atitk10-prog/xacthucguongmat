@@ -770,7 +770,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     student_code: (participant as any).student_code, // Cast if needed or update interface
                     birth_date: participant?.birth_date
                         ? (isNaN(new Date(participant.birth_date).getTime()) ? participant.birth_date : new Date(participant.birth_date).toLocaleDateString('vi-VN'))
-                        : 'N/A'
+                        : 'N/A',
+                    points: checkinResult.data.checkin.points_earned,
+                    user_id: checkInUserId // Store user_id for duplicate detection
                 } as any, ...prev.slice(0, 9)]); // Keep last 10
 
                 // Add to cooldown to prevent duplicate check-in attempts
