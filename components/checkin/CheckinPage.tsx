@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { dataService } from '../../services/dataService';
+import { supabase } from '../../services/supabaseClient';
 import { faceService, faceMatcher, base64ToImage, stringToDescriptor, descriptorToString } from '../../services/faceService';
 import { Event, User, EventCheckin } from '../../types';
 
@@ -274,7 +275,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         loadParticipantsAndFaces();
     }, [event?.id, modelsReady]);
 
-    // OPTIMIZED: Load existing check-ins (limit 15)
+    // OPTIMIZED: Load existing check-ins (limit 15) + REALTIME SYNC
     useEffect(() => {
         if (!event?.id) return;
 
@@ -287,8 +288,6 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     // This ensures we know who checked in even after refresh
                     result.data.forEach(c => {
                         if (c.user_id) {
-                            // Store check-in timestamp (or Date.now() if we want to treat them as 'just checked in')
-                            // Storing actual time is better for data integrity, but for UX 'blocking', presence in Map is key.
                             checkinCooldownsRef.current.set(c.user_id, new Date(c.checkin_time).getTime());
                         }
                     });
@@ -298,13 +297,13 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         time: new Date(c.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
                         image: c.participants?.avatar_url,
                         status: c.status,
-                        // Extra fields for details modal
                         student_code: c.participants?.student_code || 'N/A',
                         organization: c.participants?.organization || 'N/A',
                         birth_date: c.participants?.birth_date
                             ? (isNaN(new Date(c.participants.birth_date).getTime()) ? c.participants.birth_date : new Date(c.participants.birth_date).toLocaleDateString('vi-VN'))
                             : 'N/A',
-                        points: c.points_earned
+                        points: c.points_earned,
+                        user_id: c.user_id // Store user_id for duplicate detection
                     }));
                     setRecentCheckins(mapped);
                     console.log(`📋 Loaded ${mapped.length} recent check-ins`);
@@ -316,9 +315,73 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
         loadCheckins();
 
-        // Subscribe to realtime changes (optional but good)
-        // For now, simpler to just load once
-    }, [event?.id]);
+        // ========== REALTIME SUBSCRIPTION ==========
+        // Subscribe to new check-ins for this event from ANY device
+        const channel = supabase
+            .channel(`checkins:${event.id}`)
+            .on(
+                'postgres_changes',
+                {
+                    event: 'INSERT',
+                    schema: 'public',
+                    table: 'checkins',
+                    filter: `event_id=eq.${event.id}`
+                },
+                async (payload) => {
+                    console.log('🔔 Realtime: New check-in received!', payload.new);
+                    const newCheckin = payload.new as any;
+
+                    // DUPLICATE FIX: Multiple checks to prevent duplicate entries
+                    if (newCheckin.user_id) {
+                        // Check 1: If this device just checked in this user (<5 sec ago), skip
+                        const existingCooldown = checkinCooldownsRef.current.get(newCheckin.user_id);
+                        if (existingCooldown && Date.now() - existingCooldown < 5000) {
+                            console.log('⏭️ Realtime: Skipping (cooldown active for this user)');
+                            return;
+                        }
+                        // Add/update cooldown for check-ins from OTHER devices
+                        checkinCooldownsRef.current.set(newCheckin.user_id, Date.now());
+                    }
+
+                    // Fetch participant info for display
+                    const participant = participants.find(p => p.id === newCheckin.user_id);
+
+                    // Check 2: Skip if this user is already in the recent list (prevents duplicates)
+                    setRecentCheckins(prev => {
+                        // Check if user ID or full name already exists in the list
+                        const alreadyExists = prev.some(c =>
+                            (c as any).user_id && (c as any).user_id === newCheckin.user_id ||
+                            c.name === participant?.full_name
+                        );
+
+                        if (alreadyExists) {
+                            console.log('⏭️ Realtime: Skipping (already in list)');
+                            return prev;
+                        }
+
+                        return [{
+                            name: participant?.full_name || 'Người tham gia',
+                            time: new Date(newCheckin.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
+                            image: participant?.avatar_url,
+                            status: newCheckin.status,
+                            student_code: 'N/A',
+                            organization: participant?.organization || 'N/A',
+                            user_id: newCheckin.user_id, // Store user_id for duplicate check
+                            points: newCheckin.points_earned
+                        } as any, ...prev.slice(0, 14)];
+                    });
+                }
+            )
+            .subscribe((status) => {
+                console.log(`📡 Realtime subscription status: ${status}`);
+            });
+
+        // Cleanup subscription on unmount
+        return () => {
+            console.log('🔌 Unsubscribing from realtime...');
+            supabase.removeChannel(channel);
+        };
+    }, [event?.id, participants]);
     // Store recognizedPerson in ref to avoid race conditions during check-in
     const recognizedPersonRef = useRef<{ id: string; name: string; confidence: number } | null>(null);
     useEffect(() => {
@@ -499,18 +562,28 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 if (lastReportedCheckinIdRef.current !== match.userId) {
                                     setRecognizedPerson({ id: match.userId, name: match.name, confidence: match.confidence });
 
-                                    // Show "already checked in" message if not already showing
+                                    // Show SUCCESS popup first (confirming their previous check-in)
                                     if (!result) {
                                         setResult({
                                             success: true,
-                                            message: `✅ ${match.name} đã check-in sự kiện rồi!`,
+                                            message: `✅ ${match.name} đã check-in thành công!`,
                                             userName: match.name
                                         });
-                                        // Show brief popup for feedback (shorter than new check-in)
+                                        // Show success popup
                                         setShowSuccessOverlay(true);
-                                        setTimeout(() => setShowSuccessOverlay(false), 1500);
-                                        // Play sound ONLY ONCE per detection session
-                                        // playSound('error'); // Optional: mute sound for duplicate checkins
+
+                                        // After popup closes, if user still detected, show "please leave" message
+                                        setTimeout(() => {
+                                            setShowSuccessOverlay(false);
+                                            // Show gentle reminder to leave
+                                            if (faceDetectedRef.current && recognizedPersonRef.current?.id === match.userId) {
+                                                setResult({
+                                                    success: true,
+                                                    message: `📍 ${match.name} - Vui lòng rời khỏi để người khác check-in`,
+                                                    userName: match.name
+                                                });
+                                            }
+                                        }, 2500);
                                     }
 
                                     // Mark this user as reported so we don't beep again
@@ -1404,7 +1477,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                         ].filter(Boolean).join(' • ')}
                                     </p>
                                 )}
-                                <p className="text-slate-400 text-sm mb-4">{selectedUser.birth_date !== 'N/A' ? `NS: ${selectedUser.birth_date}` : ''}</p>
+                                {/* Organization already shown above, removed birth_date display */}
 
                                 <div className="grid grid-cols-2 gap-3 mb-6">
                                     <div className="bg-slate-700/50 p-3 rounded-xl border border-slate-600">
