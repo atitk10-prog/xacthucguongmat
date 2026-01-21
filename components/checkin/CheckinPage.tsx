@@ -761,6 +761,58 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         }
     }, [event, currentUser, isProcessing, facesLoaded, recognizedPerson]);
 
+    // Fullscreen Loading Overlay (Models or Participants)
+    if (isLoadingModels || loadingFaces) {
+        return (
+            <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center relative overflow-hidden">
+                {/* Background Animation */}
+                <div className="absolute inset-0 z-0">
+                    <div className="absolute w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl -top-20 -left-20 animate-pulse"></div>
+                    <div className="absolute w-96 h-96 bg-purple-500/20 rounded-full blur-3xl -bottom-20 -right-20 animate-pulse" style={{ animationDelay: '1s' }}></div>
+                </div>
+
+                <div className="z-10 text-center p-8 bg-white/5 backdrop-blur-xl rounded-3xl border border-white/10 shadow-2xl max-w-md w-full mx-4">
+                    {/* Loading Spinner */}
+                    <div className="relative w-24 h-24 mx-auto mb-8">
+                        <div className="absolute inset-0 border-4 border-white/10 rounded-full"></div>
+                        <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                        <div className="absolute inset-4 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '2s' }}></div>
+
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-2xl">🤖</span>
+                        </div>
+                    </div>
+
+                    <h2 className="text-2xl font-black text-white mb-2">Đang khởi tạo hệ thống</h2>
+
+                    <div className="space-y-3">
+                        <div className={`flex items-center gap-3 p-3 rounded-xl transition-all ${isLoadingModels ? 'bg-indigo-500/20 border border-indigo-500/30' : 'bg-emerald-500/10 border border-emerald-500/20'}`}>
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center ${isLoadingModels ? 'animate-pulse' : 'bg-emerald-500'}`}>
+                                {isLoadingModels ? '⏳' : '✓'}
+                            </div>
+                            <span className={`text-sm font-medium ${isLoadingModels ? 'text-indigo-200' : 'text-emerald-400'}`}>
+                                {isLoadingModels ? 'Đang tải trí tuệ nhân tạo (AI)...' : 'AI đã sẵn sàng!'}
+                            </span>
+                        </div>
+
+                        <div className={`flex items-center gap-3 p-3 rounded-xl transition-all ${loadingFaces ? 'bg-indigo-500/20 border border-indigo-500/30' : !isLoadingModels ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-white/5'}`}>
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center ${loadingFaces ? 'animate-pulse' : !isLoadingModels && !loadingFaces ? 'bg-emerald-500' : 'opacity-50'}`}>
+                                {loadingFaces ? '⏳' : (!isLoadingModels && !loadingFaces ? '✓' : '•')}
+                            </div>
+                            <span className={`text-sm font-medium ${loadingFaces ? 'text-indigo-200' : !isLoadingModels && !loadingFaces ? 'text-emerald-400' : 'text-slate-500'}`}>
+                                {loadingFaces ? `Đang tải dữ liệu người tham gia...` : 'Dữ liệu đã sẵn sàng'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <p className="mt-6 text-xs text-slate-500 font-mono">
+                        Vui lòng đợi giây lát...
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     if (cameraError) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex items-center justify-center p-4">
@@ -801,6 +853,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     </div>
                 </div>
             )}
+
+            {/* ... Rest of existing JSX ... */}
 
             {/* Fullscreen Success Overlay */}
             {showSuccessOverlay && result?.success && (

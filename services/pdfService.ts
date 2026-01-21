@@ -46,10 +46,12 @@ export function generateCardHTML(data: CardData): string {
       
       <div style="display:flex;gap:12px;align-items:flex-start;">
         <!-- Photo 4x6 Ratio (60x90) -->
-        ${data.avatarUrl
-      ? `<img src="${data.avatarUrl}" style="width:60px;height:90px;border-radius:8px;object-fit:cover;border:2px solid rgba(255,255,255,0.5);background:white;" />`
-      : `<div style="width:60px;height:90px;border-radius:8px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:24px;border:2px solid rgba(255,255,255,0.3);">👤</div>`
+        <div style="position:relative;width:60px;height:90px;margin-top:-20px;">
+            ${data.avatarUrl
+      ? `<img src="${data.avatarUrl}" style="width:100%;height:100%;border-radius:8px;object-fit:cover;border:2px solid rgba(255,255,255,0.5);background:white;" />`
+      : `<div style="width:100%;height:100%;border-radius:8px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:24px;border:2px solid rgba(255,255,255,0.3);">👤</div>`
     }
+        </div>
         
         <div style="flex:1;z-index: 1;padding-top:2px;">
             <div style="font-size:16px;font-weight:800;line-height:1.2;margin-bottom:4px;">${data.fullName}</div>

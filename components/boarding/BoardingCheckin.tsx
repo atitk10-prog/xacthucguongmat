@@ -562,6 +562,58 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         };
     }, []);
 
+    // Fullscreen Loading Overlay
+    if (!systemReady) {
+        return (
+            <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center relative overflow-hidden">
+                {/* Background Animation */}
+                <div className="absolute inset-0 z-0">
+                    <div className="absolute w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl -top-20 -left-20 animate-pulse"></div>
+                    <div className="absolute w-96 h-96 bg-purple-500/20 rounded-full blur-3xl -bottom-20 -right-20 animate-pulse" style={{ animationDelay: '1s' }}></div>
+                </div>
+
+                <div className="z-10 text-center p-8 bg-white/5 backdrop-blur-xl rounded-3xl border border-white/10 shadow-2xl max-w-md w-full mx-4">
+                    {/* Loading Spinner */}
+                    <div className="relative w-24 h-24 mx-auto mb-8">
+                        <div className="absolute inset-0 border-4 border-white/10 rounded-full"></div>
+                        <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                        <div className="absolute inset-4 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '2s' }}></div>
+
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <span className="text-2xl">⚡</span>
+                        </div>
+                    </div>
+
+                    <h2 className="text-2xl font-black text-white mb-2">Đang khởi động check-in</h2>
+
+                    <div className="space-y-3">
+                        <div className={`flex items-center gap-3 p-3 rounded-xl transition-all ${!modelsReady ? 'bg-indigo-500/20 border border-indigo-500/30' : 'bg-emerald-500/10 border border-emerald-500/20'}`}>
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center ${!modelsReady ? 'animate-pulse' : 'bg-emerald-500'}`}>
+                                {!modelsReady ? '⏳' : '✓'}
+                            </div>
+                            <span className={`text-sm font-medium ${!modelsReady ? 'text-indigo-200' : 'text-emerald-400'}`}>
+                                {!modelsReady ? 'Đang tải AI...' : 'AI đã sẵn sàng'}
+                            </span>
+                        </div>
+
+                        <div className={`flex items-center gap-3 p-3 rounded-xl transition-all ${!studentsLoaded ? 'bg-indigo-500/20 border border-indigo-500/30' : 'bg-emerald-500/10 border border-emerald-500/20'}`}>
+                            <div className={`w-5 h-5 rounded-full flex items-center justify-center ${!studentsLoaded ? 'animate-pulse' : 'bg-emerald-500'}`}>
+                                {!studentsLoaded ? '⏳' : '✓'}
+                            </div>
+                            <span className={`text-sm font-medium ${!studentsLoaded ? 'text-indigo-200' : 'text-emerald-400'}`}>
+                                {!studentsLoaded ? `Đang tải danh sách học sinh...` : 'Danh sách học sinh sẵn sàng'}
+                            </span>
+                        </div>
+                    </div>
+
+                    <p className="mt-6 text-xs text-slate-500 font-mono">
+                        Đang tải dữ liệu, vui lòng đợi...
+                    </p>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="min-h-screen bg-slate-900 flex flex-col pt-16 px-4 pb-4 gap-4 lg:flex-row font-sans">
             {/* Header */}

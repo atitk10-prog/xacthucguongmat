@@ -327,7 +327,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                     birth_date: p.birth_date || '',
                     organization: p.organization || '',
                     address: p.address || '',
-                    avatar_url: p.avatar_url || ''
+                    avatar_url: p.avatar_url || '',
+                    face_descriptor: p.face_descriptor // Include computed descriptor
                 })), ...selectedUsersToSave];
 
                 if (allParticipantsToSave.length > 0) {
