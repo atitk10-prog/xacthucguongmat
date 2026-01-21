@@ -367,10 +367,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
         let lastDetectionTime = 0;
         // MOBILE OPTIMIZATION: Adaptive detection interval
-        // - Mobile: 250ms (~4 FPS) to prevent lag and battery drain
-        // - Desktop: 100ms (~10 FPS) for faster response
+        // - Mobile: 400ms (~2.5 FPS) to prevent lag and battery drain
+        // - Desktop: 150ms (~6.5 FPS) for smoother experience
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        const DETECTION_INTERVAL = isMobile ? 250 : 100;
+        const DETECTION_INTERVAL = isMobile ? 400 : 150;
 
         const detectLoop = async () => {
             if (!videoRef.current || videoRef.current.readyState !== 4) {
@@ -506,6 +506,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                             message: `✅ ${match.name} đã check-in sự kiện rồi!`,
                                             userName: match.name
                                         });
+                                        // Show brief popup for feedback (shorter than new check-in)
+                                        setShowSuccessOverlay(true);
+                                        setTimeout(() => setShowSuccessOverlay(false), 1500);
                                         // Play sound ONLY ONCE per detection session
                                         // playSound('error'); // Optional: mute sound for duplicate checkins
                                     }
@@ -1096,16 +1099,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                 {/* Status badges - LEFT CORNER */}
                 <div className="absolute top-20 left-4 flex flex-col items-start gap-2 z-10">
-                    <div className={`px-5 py-2 rounded-full backdrop-blur-md text-white text-sm font-bold shadow-lg ${event?.require_face ? 'bg-indigo-600/80' : 'bg-emerald-600/80'
+                    {/* Mode badge - hidden on mobile to save space */}
+                    <div className={`hidden md:flex px-4 py-1.5 rounded-full backdrop-blur-md text-white text-xs font-bold shadow-lg ${event?.require_face ? 'bg-indigo-600/80' : 'bg-emerald-600/80'
                         }`}>
                         {event?.require_face ? (
-                            <span className="flex items-center gap-2">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <span className="flex items-center gap-1.5">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
                                 </svg>
-                                Xác nhận khuôn mặt
+                                Face ID
                             </span>
-                        ) : 'Check-in nhanh'}
+                        ) : 'Nhanh'}
                     </div>
 
                     {isLoadingModels && (
@@ -1115,31 +1119,34 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         </div>
                     )}
 
+                    {/* Face status badge - compact on mobile */}
                     {modelsReady && event?.require_face && (
-                        <div className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 transition-all ${multipleFaces ? 'bg-red-500/90 text-white animate-pulse' :
-                            faceDetected ? 'bg-emerald-500/80 text-white scale-105' : 'bg-orange-500/80 text-white'
+                        <div className={`px-2 py-1 md:px-3 md:py-1.5 rounded-full text-[10px] md:text-xs font-bold flex items-center gap-1 md:gap-1.5 transition-all ${multipleFaces ? 'bg-red-500/90 text-white animate-pulse' :
+                            faceDetected ? 'bg-emerald-500/80 text-white' : 'bg-orange-500/80 text-white'
                             }`}>
                             {multipleFaces ? (
                                 <>
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg className="w-3 h-3 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                                     </svg>
-                                    Chỉ 1 người trong khung hình!
+                                    <span className="hidden md:inline">Chỉ 1 người!</span>
+                                    <span className="md:hidden">1 người!</span>
                                 </>
                             ) : faceDetected ? (
                                 <>
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg className="w-3 h-3 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                                     </svg>
-                                    Đã nhận diện khuôn mặt
+                                    <span className="hidden md:inline">Đã nhận diện</span>
+                                    <span className="md:hidden">OK</span>
                                 </>
                             ) : (
                                 <>
-                                    <svg className="w-4 h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg className="w-3 h-3 md:w-4 md:h-4 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
                                     </svg>
-                                    Đưa khuôn mặt vào khung
+                                    <span className="hidden md:inline">Đưa khuôn mặt vào</span>
+                                    <span className="md:hidden">Tìm mặt...</span>
                                 </>
                             )}
                         </div>
@@ -1168,12 +1175,14 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     )}
 
                     {/* No match warning */}
+                    {/* No match warning - compact */}
                     {faceDetected && facesLoaded && !recognizedPerson && !isProcessing && (
-                        <div className="px-4 py-2 bg-amber-500/90 rounded-full text-white text-xs font-bold flex items-center gap-2">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <div className="px-2 py-1 md:px-3 md:py-1.5 bg-amber-500/90 rounded-full text-white text-[10px] md:text-xs font-bold flex items-center gap-1">
+                            <svg className="w-3 h-3 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                             </svg>
-                            Không nhận ra - không có trong danh sách sự kiện
+                            <span className="hidden md:inline">Không nhận ra - không có trong danh sách</span>
+                            <span className="md:hidden">Không nhận ra</span>
                         </div>
 
                     )}
