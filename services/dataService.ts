@@ -562,23 +562,22 @@ async function getEventCheckins(eventId: string): Promise<ApiResponse<EventCheck
 // =====================================================
 
 
-async function getEventParticipants(eventId: string): Promise<ApiResponse<EventParticipant[]>> {
+async function getEventParticipants(eventId: string, lightweight: boolean = false): Promise<ApiResponse<EventParticipant[]>> {
     try {
+        // OPTIMIZATION: Lightweight mode only fetches fields needed for face matching (MUCH FASTER)
+        const selectFields = lightweight
+            ? 'id, full_name, face_descriptor, user_id, user:users!user_id (face_descriptor)'
+            : 'id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor, user_id, user:users!user_id (face_descriptor, avatar_url)';
+
         const { data, error } = await supabase
             .from('event_participants')
-            .select(`
-                id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor, user_id,
-                user:users!user_id (
-                    face_descriptor,
-                    avatar_url
-                )
-            `) // Join with users to get the latest face_descriptor
+            .select(selectFields)
             .eq('event_id', eventId)
             .order('full_name', { ascending: true })
             .range(0, 4999); // Increase limit to 5000
 
         if (error) return { success: false, error: error.message };
-        return { success: true, data: data as EventParticipant[] };
+        return { success: true, data: data as unknown as EventParticipant[] };
     } catch (err) {
         return { success: false, error: 'Lỗi tải danh sách người tham gia' };
     }

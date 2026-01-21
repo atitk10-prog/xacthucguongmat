@@ -189,8 +189,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             faceMatcher.clearAll(); // Clear previous faces
 
             try {
-                // Load participants from Event_Participants sheet
-                const result = await dataService.getEventParticipants(event.id);
+                // Load participants from Event_Participants - LIGHTWEIGHT MODE (skip avatar for speed)
+                const result = await dataService.getEventParticipants(event.id, true);
                 console.log('📋 getEventParticipants result:', result);
 
                 if (result.success && result.data) {
