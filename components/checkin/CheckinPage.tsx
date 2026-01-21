@@ -144,6 +144,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     const [participants, setParticipants] = useState<EventParticipant[]>([]);
     const [loadingFaces, setLoadingFaces] = useState(false);
     const [facesLoaded, setFacesLoaded] = useState(false);
+    const [loadingProgress, setLoadingProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
     const [recognizedPerson, setRecognizedPerson] = useState<{ id: string; name: string; confidence: number } | null>(null);
 
     // Dynamic Face Tracking Box State
@@ -207,10 +208,16 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     console.log('👥 Loaded participants:', loadedParticipants.length, loadedParticipants.map(p => ({ name: p.full_name, hasAvatar: !!p.avatar_url, avatarLength: p.avatar_url?.length || 0 })));
                     setParticipants(loadedParticipants);
 
-                    // Generate face descriptors in PARALLEL with DB optimization
+                    // Generate face descriptors SEQUENTIALLY with progress tracking
                     const participantsWithAvatars = loadedParticipants.filter(p => p.avatar_url);
 
-                    const loadFacePromises = participantsWithAvatars.map(async (participant) => {
+                    // Initialize progress
+                    setLoadingProgress({ current: 0, total: participantsWithAvatars.length });
+                    let loadedCount = 0;
+
+                    // Process SEQUENTIALLY so we can show real progress (and avoid overwhelming browser)
+                    for (let i = 0; i < participantsWithAvatars.length; i++) {
+                        const participant = participantsWithAvatars[i];
                         try {
                             // OPTIMIZATION: Try to use cached face_descriptor first (MUCH FASTER)
                             if (participant.face_descriptor) {
@@ -219,7 +226,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                     faceMatcher.addFace(participant.id, descriptor, participant.full_name);
                                     participant.hasFaceDescriptor = true;
                                     console.log(`⚡ Used cached descriptor for ${participant.full_name}`);
-                                    return true;
+                                    loadedCount++;
+                                    setLoadingProgress({ current: i + 1, total: participantsWithAvatars.length });
+                                    continue;
                                 } catch (e) {
                                     console.warn(`⚠️ Invalid cached descriptor for ${participant.full_name}, will recompute`);
                                 }
@@ -231,6 +240,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             if (descriptor) {
                                 faceMatcher.addFace(participant.id, descriptor, participant.full_name);
                                 participant.hasFaceDescriptor = true;
+                                loadedCount++;
 
                                 // OPTIMIZATION: Save computed descriptor to DB for next time
                                 const descriptorStr = descriptorToString(descriptor);
@@ -239,17 +249,14 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                     .then(res => {
                                         if (res.success) console.log(`💾 Saved face descriptor for ${participant.full_name}`);
                                     });
-
-                                return true;
                             }
                         } catch (err) {
                             console.error(`❌ Failed to load face for ${participant.full_name}:`, err);
                         }
-                        return false;
-                    });
 
-                    const results = await Promise.all(loadFacePromises);
-                    const loadedCount = results.filter(Boolean).length;
+                        // Update progress
+                        setLoadingProgress({ current: i + 1, total: participantsWithAvatars.length });
+                    }
 
                     console.log(`✅ Total: Loaded ${loadedCount} face descriptors for ${loadedParticipants.length} participants`);
                     facesLoadedRef.current = true; // Update ref for closure
@@ -828,7 +835,23 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 )}
                                 <div>
                                     <p className={`font-bold ${facesLoaded ? 'text-emerald-400' : 'text-white'}`}>Dữ liệu người tham gia ({participants.length})</p>
-                                    <p className={`text-sm ${facesLoaded ? 'text-emerald-400/70' : 'text-indigo-300/70'}`}>{facesLoaded ? 'Đã sẵn sàng' : 'Đang đồng bộ khuôn mặt...'}</p>
+                                    <p className={`text-sm ${facesLoaded ? 'text-emerald-400/70' : 'text-indigo-300/70'}`}>
+                                        {facesLoaded
+                                            ? 'Đã sẵn sàng'
+                                            : loadingProgress.total > 0
+                                                ? `Đang xử lý ${loadingProgress.current}/${loadingProgress.total}...`
+                                                : 'Đang tải danh sách...'
+                                        }
+                                    </p>
+                                    {/* Progress Bar */}
+                                    {!facesLoaded && loadingProgress.total > 0 && (
+                                        <div className="w-full h-1.5 bg-white/20 rounded-full mt-2 overflow-hidden">
+                                            <div
+                                                className="h-full bg-indigo-400 rounded-full transition-all duration-300"
+                                                style={{ width: `${(loadingProgress.current / loadingProgress.total) * 100}%` }}
+                                            />
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </div>
