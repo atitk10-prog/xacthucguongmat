@@ -344,7 +344,32 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     }
 
                     // Fetch participant info for display
-                    const participant = participants.find(p => p.id === newCheckin.user_id);
+                    let participant = participants.find(p => p.id === newCheckin.user_id);
+
+                    // If not found locally, fetch from DB to avoid "Người tham gia" placeholder
+                    if (!participant && newCheckin.user_id) {
+                        try {
+                            const { data: user } = await supabase
+                                .from('event_participants')
+                                .select('full_name, avatar_url, student_code, organization, birth_date')
+                                .eq('event_id', event.id)
+                                .eq('user_id', newCheckin.user_id)
+                                .single();
+
+                            if (user) {
+                                participant = {
+                                    id: newCheckin.user_id,
+                                    full_name: user.full_name,
+                                    avatar_url: user.avatar_url,
+                                    student_code: user.student_code,
+                                    organization: user.organization,
+                                    birth_date: user.birth_date
+                                } as any;
+                            }
+                        } catch (err) {
+                            console.error('Error fetching participant details for realtime:', err);
+                        }
+                    }
 
                     // Check 2: Skip if this user is already in the recent list (prevents duplicates)
                     setRecentCheckins(prev => {
@@ -359,12 +384,18 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             return prev;
                         }
 
+                        // Should skip if name is unknown to avoid confusing "Người tham gia" duplicates
+                        if (!participant?.full_name) {
+                            console.log('⏭️ Realtime: Skipping (unknown user details)');
+                            return prev;
+                        }
+
                         return [{
                             name: participant?.full_name || 'Người tham gia',
                             time: new Date(newCheckin.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
                             image: participant?.avatar_url,
                             status: newCheckin.status,
-                            student_code: 'N/A',
+                            student_code: (participant as any).student_code || 'N/A',
                             organization: participant?.organization || 'N/A',
                             user_id: newCheckin.user_id, // Store user_id for duplicate check
                             points: newCheckin.points_earned
