@@ -256,8 +256,9 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         if (!modelsReady || !studentsLoaded || !videoRef.current) return;
 
         let animationId: number;
-        const STABILITY_THRESHOLD = 1200; // 1.2s stable matching required
-        const PROCESSING_THROTTLE = 100; // 100ms between runs (10 FPS is enough)
+        // FAST CHECK-IN: Reduced from 1200ms to 200ms for high volume
+        const STABILITY_THRESHOLD = 200;
+        const PROCESSING_THROTTLE = 80; // ~12 FPS, good balance
 
         const loop = async () => {
             if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
