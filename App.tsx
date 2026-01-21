@@ -16,7 +16,6 @@ import SystemConfig from './components/settings/SystemConfig';
 import PointManagement from './components/settings/PointManagement';
 import { Icons } from './components/ui';
 import { dataService } from './services/dataService';
-import { faceService } from './services/faceService';
 import { ToastProvider } from './components/ui/Toast';
 import { User, Event } from './types';
 
@@ -44,12 +43,6 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const initApp = async () => {
-      // 1. Pre-load Face Models (Optimistic Loading)
-      // This runs in background to ensure Check-in page is instant
-      faceService.loadModels().then(() => {
-        console.log('🤖 Face models pre-loaded globally');
-      }).catch(err => console.warn('⚠️ Model pre-load failed:', err));
-
       const storedUser = dataService.getStoredUser();
 
       // Check for Check-in URL parsing FIRST

@@ -754,10 +754,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             playSound('error');
             setResult({ success: false, message: 'Lỗi hệ thống: ' + (error.message || 'Unknown') });
             setNotification({ type: 'error', message: 'Lỗi kết nối khi check-in' });
-            ```
-                autoCheckInRef.current = false;
-                setIsProcessing(false);
-            }
+            autoCheckInRef.current = false;
+            setIsProcessing(false);
         } finally {
             setIsProcessing(false);
         }
@@ -783,64 +781,67 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     }
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex relative overflow-hidden">
-            {/* Fullscreen Loading Overlay (Models or Participants) */}
+        <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex">
+            {/* ========== LOADING OVERLAY ========== */}
             {(isLoadingModels || loadingFaces) && (
-                <div className="absolute inset-0 z-50 bg-slate-900 flex flex-col items-center justify-center">
-                    {/* Background Animation */}
-                    <div className="absolute inset-0 z-0">
-                        <div className="absolute w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl -top-20 -left-20 animate-pulse"></div>
-                        <div className="absolute w-96 h-96 bg-purple-500/20 rounded-full blur-3xl -bottom-20 -right-20 animate-pulse" style={{ animationDelay: '1s' }}></div>
-                    </div>
-
-                    <div className="z-10 text-center p-8 bg-white/5 backdrop-blur-xl rounded-3xl border border-white/10 shadow-2xl max-w-md w-full mx-4">
-                        {/* Loading Spinner */}
-                        <div className="relative w-24 h-24 mx-auto mb-8">
-                            <div className="absolute inset-0 border-4 border-white/10 rounded-full"></div>
-                            <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                            <div className="absolute inset-4 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '2s' }}></div>
-                            
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <span className="text-2xl">🤖</span>
-                            </div>
+                <div className="fixed inset-0 z-[200] bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex flex-col items-center justify-center">
+                    <div className="text-center">
+                        {/* Animated Logo */}
+                        <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-3xl flex items-center justify-center mx-auto mb-8 animate-pulse shadow-2xl shadow-indigo-500/30">
+                            <svg className="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                            </svg>
                         </div>
 
-                        <h2 className="text-2xl font-black text-white mb-2">Đang khởi tạo hệ thống</h2>
-                        
-                        <div className="space-y-3">
-                            <div className={`flex items - center gap - 3 p - 3 rounded - xl transition - all ${ isLoadingModels ? 'bg-indigo-500/20 border border-indigo-500/30' : 'bg-emerald-500/10 border border-emerald-500/20' } `}>
-                                <div className={`w - 5 h - 5 rounded - full flex items - center justify - center ${ isLoadingModels ? 'animate-pulse' : 'bg-emerald-500' } `}>
-                                    {isLoadingModels ? '⏳' : '✓'}
+                        <h2 className="text-3xl font-black text-white mb-4">Đang khởi tạo hệ thống</h2>
+                        <p className="text-indigo-300 text-lg mb-10 max-w-md mx-auto">Vui lòng chờ trong giây lát để đảm bảo hệ thống check-in hoạt động chính xác nhất.</p>
+
+                        {/* Loading Steps */}
+                        <div className="space-y-4 max-w-sm mx-auto text-left">
+                            {/* Step 1: AI Models */}
+                            <div className={`flex items-center gap-4 px-6 py-4 rounded-2xl ${modelsReady ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
+                                {modelsReady ? (
+                                    <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                                    </div>
+                                ) : (
+                                    <div className="w-10 h-10 bg-indigo-500/50 rounded-xl flex items-center justify-center flex-shrink-0 animate-spin">
+                                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                    </div>
+                                )}
+                                <div>
+                                    <p className={`font-bold ${modelsReady ? 'text-emerald-400' : 'text-white'}`}>Mô hình AI nhận diện khuôn mặt</p>
+                                    <p className={`text-sm ${modelsReady ? 'text-emerald-400/70' : 'text-indigo-300/70'}`}>{modelsReady ? 'Đã sẵn sàng' : 'Đang tải...'}</p>
                                 </div>
-                                <span className={`text - sm font - medium ${ isLoadingModels ? 'text-indigo-200' : 'text-emerald-400' } `}>
-                                    {isLoadingModels ? 'Đang tải trí tuệ nhân tạo (AI)...' : 'AI đã sẵn sàng!'}
-                                </span>
                             </div>
 
-                            <div className={`flex items - center gap - 3 p - 3 rounded - xl transition - all ${ loadingFaces ? 'bg-indigo-500/20 border border-indigo-500/30' : !isLoadingModels ? 'bg-emerald-500/10 border border-emerald-500/20' : 'bg-white/5' } `}>
-                                <div className={`w - 5 h - 5 rounded - full flex items - center justify - center ${ loadingFaces ? 'animate-pulse' : !isLoadingModels && !loadingFaces ? 'bg-emerald-500' : 'opacity-50' } `}>
-                                    {loadingFaces ? '⏳' : (!isLoadingModels && !loadingFaces ? '✓' : '•')}
+                            {/* Step 2: User Data */}
+                            <div className={`flex items-center gap-4 px-6 py-4 rounded-2xl ${facesLoaded ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
+                                {facesLoaded ? (
+                                    <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" /></svg>
+                                    </div>
+                                ) : (
+                                    <div className="w-10 h-10 bg-indigo-500/50 rounded-xl flex items-center justify-center flex-shrink-0 animate-spin">
+                                        <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                                    </div>
+                                )}
+                                <div>
+                                    <p className={`font-bold ${facesLoaded ? 'text-emerald-400' : 'text-white'}`}>Dữ liệu người tham gia ({participants.length})</p>
+                                    <p className={`text-sm ${facesLoaded ? 'text-emerald-400/70' : 'text-indigo-300/70'}`}>{facesLoaded ? 'Đã sẵn sàng' : 'Đang đồng bộ khuôn mặt...'}</p>
                                 </div>
-                                <span className={`text - sm font - medium ${ loadingFaces ? 'text-indigo-200' : !isLoadingModels && !loadingFaces ? 'text-emerald-400' : 'text-slate-500' } `}>
-                                    {loadingFaces ? `Đang tải dữ liệu người tham gia...` : 'Dữ liệu đã sẵn sàng'}
-                                </span>
                             </div>
                         </div>
-
-                        <p className="mt-6 text-xs text-slate-500 font-mono">
-                             Vui lòng đợi giây lát...
-                        </p>
                     </div>
                 </div>
             )}
 
             {/* Notification Toast */}
             {notification && (
-                <div className={`fixed top - 4 right - 4 z - [60] px - 6 py - 4 rounded - xl shadow - 2xl flex items - center gap - 3 animate - slide -in ${
-        notification.type === 'success' ? 'bg-emerald-500 text-white' :
-            notification.type === 'error' ? 'bg-red-500 text-white' :
-                'bg-amber-500 text-white'
-    }`}>
+                <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-slide-in ${notification.type === 'success' ? 'bg-emerald-500 text-white' :
+                    notification.type === 'error' ? 'bg-red-500 text-white' :
+                        'bg-amber-500 text-white'
+                    }`}>
                     {notification.type === 'success' ? (
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                     ) : notification.type === 'error' ? (
@@ -855,8 +856,6 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 </div>
             )}
 
-            {/* ... Rest of existing JSX ... */}
-
             {/* Fullscreen Success Overlay */}
             {showSuccessOverlay && result?.success && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-600 animate-fade-in">
@@ -867,10 +866,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 key={i}
                                 className="absolute w-4 h-4 bg-white/20 rounded-full animate-float"
                                 style={{
-                                    left: `${ Math.random() * 100 } % `,
-                                    top: `${ Math.random() * 100 } % `,
-                                    animationDelay: `${ Math.random() * 2 }s`,
-                                    animationDuration: `${ 3 + Math.random() * 2 }s`
+                                    left: `${Math.random() * 100}%`,
+                                    top: `${Math.random() * 100}%`,
+                                    animationDelay: `${Math.random() * 2}s`,
+                                    animationDuration: `${3 + Math.random() * 2}s`
                                 }}
                             />
                         ))}
@@ -911,18 +910,16 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         {/* Status and points */}
                         {result.checkin && (
                             <div className="flex items-center justify-center gap-6 text-xl">
-                                <span className={`px - 6 py - 3 rounded - full font - bold ${
-        result.checkin.status === 'on_time'
-            ? 'bg-white/20 text-white'
-            : 'bg-amber-500/30 text-amber-200'
-    }`}>
+                                <span className={`px-6 py-3 rounded-full font-bold ${result.checkin.status === 'on_time'
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-amber-500/30 text-amber-200'
+                                    }`}>
                                     {result.checkin.status === 'on_time' ? '✓ Đúng giờ' : '⚠ Đi muộn'}
                                 </span>
-                                <span className={`px - 6 py - 3 rounded - full font - bold ${
-        result.checkin.points_earned >= 0
-            ? 'bg-white/20 text-white'
-            : 'bg-red-500/30 text-red-200'
-    }`}>
+                                <span className={`px-6 py-3 rounded-full font-bold ${result.checkin.points_earned >= 0
+                                    ? 'bg-white/20 text-white'
+                                    : 'bg-red-500/30 text-red-200'
+                                    }`}>
                                     {result.checkin.points_earned >= 0 ? '+' : ''}{result.checkin.points_earned} điểm
                                 </span>
                             </div>
@@ -954,13 +951,12 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         {/* Auto check-in toggle */}
                         <button
                             onClick={() => setAutoCheckInMode(!autoCheckInMode)}
-                            className={`px - 3 py - 2 backdrop - blur - md rounded - xl font - semibold text - xs transition - all flex items - center gap - 1 ${
-        autoCheckInMode
-        ? 'bg-emerald-500/80 text-white'
-            : 'bg-white/10 text-white/70'
-    }`}
+                            className={`px-3 py-2 backdrop-blur-md rounded-xl font-semibold text-xs transition-all flex items-center gap-1 ${autoCheckInMode
+                                ? 'bg-emerald-500/80 text-white'
+                                : 'bg-white/10 text-white/70'
+                                }`}
                         >
-                            <div className={`w - 3 h - 3 rounded - full border - 2 ${ autoCheckInMode? 'bg-white border-white': 'border-white/50' }`} />
+                            <div className={`w-3 h-3 rounded-full border-2 ${autoCheckInMode ? 'bg-white border-white' : 'border-white/50'}`} />
                             <span className="hidden md:inline">Auto</span>
                         </button>
 
@@ -977,7 +973,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     <div className="bg-black/60 backdrop-blur-md rounded-xl p-3 border border-white/10">
                         <div className="flex justify-between items-center mb-1">
                             <span className="text-white/70 text-xs">Độ nhạy</span>
-                            <span className={`text - sm font - bold ${ sensitivity< 35? 'text-green-400' : 'text-blue-400'}`}>
+                            <span className={`text-sm font-bold ${sensitivity < 35 ? 'text-green-400' : 'text-blue-400'}`}>
                                 {sensitivity}%
                             </span>
                         </div>
@@ -1015,7 +1011,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
                                 <div
                                     className="h-full bg-gradient-to-r from-emerald-400 to-teal-400 rounded-full transition-all duration-150"
-                                    style={{ width: `${ Math.min((faceStableTime / 1000) * 100, 100) } % ` }}
+                                    style={{ width: `${Math.min((faceStableTime / 1000) * 100, 100)}%` }}
                                 />
                             </div>
                             <p className="text-center text-white/70 text-xs mt-1">
@@ -1038,22 +1034,21 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 {/* Dynamic Face Tracking Box */}
                 {faceBox && (
                     <div
-                        className={`absolute border - 4 rounded - xl transition - all duration - 100 ease - linear ${
-        isProcessing? 'border-indigo-500 animate-pulse':
-            faceDetected ? 'border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.5)]' : 'border-white/40'
-    }`}
+                        className={`absolute border-4 rounded-xl transition-all duration-100 ease-linear ${isProcessing ? 'border-indigo-500 animate-pulse' :
+                            faceDetected ? 'border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.5)]' : 'border-white/40'
+                            }`}
                         style={{
-                            top: `${ faceBox.y }px`,
-                            left: `${ faceBox.x }px`,
-                            width: `${ faceBox.width }px`,
-                            height: `${ faceBox.height }px`
+                            top: `${faceBox.y}px`,
+                            left: `${faceBox.x}px`,
+                            width: `${faceBox.width}px`,
+                            height: `${faceBox.height}px`
                         }}
                     >
                         {/* Tracking Corners */}
-                        <div className={`absolute - top - 1 - left - 1 w - 4 h - 4 border - t - 4 border - l - 4 rounded - tl - lg ${ faceDetected? 'border-emerald-400': 'border-indigo-400' }`} />
-                        <div className={`absolute - top - 1 - right - 1 w - 4 h - 4 border - t - 4 border - r - 4 rounded - tr - lg ${ faceDetected? 'border-emerald-400': 'border-indigo-400' }`} />
-                        <div className={`absolute - bottom - 1 - left - 1 w - 4 h - 4 border - b - 4 border - l - 4 rounded - bl - lg ${ faceDetected? 'border-emerald-400': 'border-indigo-400' }`} />
-                        <div className={`absolute - bottom - 1 - right - 1 w - 4 h - 4 border - b - 4 border - r - 4 rounded - br - lg ${ faceDetected? 'border-emerald-400': 'border-indigo-400' }`} />
+                        <div className={`absolute -top-1 -left-1 w-4 h-4 border-t-4 border-l-4 rounded-tl-lg ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
+                        <div className={`absolute -top-1 -right-1 w-4 h-4 border-t-4 border-r-4 rounded-tr-lg ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
+                        <div className={`absolute -bottom-1 -left-1 w-4 h-4 border-b-4 border-l-4 rounded-bl-lg ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
+                        <div className={`absolute -bottom-1 -right-1 w-4 h-4 border-b-4 border-r-4 rounded-br-lg ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
 
                         {/* Auto check-in progress (attached to moving box) */}
                         {autoCheckInMode && faceDetected && faceStableTime > 0 && !isProcessing && !result && (
@@ -1061,7 +1056,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 <div className="w-full h-1.5 bg-black/50 rounded-full overflow-hidden backdrop-blur-sm">
                                     <div
                                         className="h-full bg-emerald-400 rounded-full transition-all duration-150"
-                                        style={{ width: `${ Math.min((faceStableTime / 1000) * 100, 100) } % ` }}
+                                        style={{ width: `${Math.min((faceStableTime / 1000) * 100, 100)}%` }}
                                     />
                                 </div>
                             </div>
@@ -1078,9 +1073,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                 {/* Status badges - LEFT CORNER */}
                 <div className="absolute top-20 left-4 flex flex-col items-start gap-2 z-10">
-                    <div className={`px - 5 py - 2 rounded - full backdrop - blur - md text - white text - sm font - bold shadow - lg ${
-        event?.require_face? 'bg-indigo-600/80': 'bg-emerald-600/80'
-    }`}>
+                    <div className={`px-5 py-2 rounded-full backdrop-blur-md text-white text-sm font-bold shadow-lg ${event?.require_face ? 'bg-indigo-600/80' : 'bg-emerald-600/80'
+                        }`}>
                         {event?.require_face ? (
                             <span className="flex items-center gap-2">
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1099,10 +1093,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     )}
 
                     {modelsReady && event?.require_face && (
-                        <div className={`px - 4 py - 2 rounded - full text - xs font - bold flex items - center gap - 2 transition - all ${
-        multipleFaces? 'bg-red-500/90 text-white animate-pulse':
-            faceDetected ? 'bg-emerald-500/80 text-white scale-105' : 'bg-orange-500/80 text-white'
-    }`}>
+                        <div className={`px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 transition-all ${multipleFaces ? 'bg-red-500/90 text-white animate-pulse' :
+                            faceDetected ? 'bg-emerald-500/80 text-white scale-105' : 'bg-orange-500/80 text-white'
+                            }`}>
                             {multipleFaces ? (
                                 <>
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1189,13 +1182,12 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             <button
                                 onClick={handleCheckIn}
                                 disabled={isProcessing || (event?.require_face && !faceDetected)}
-                                className={`px - 12 py - 5 rounded - 2xl font - bold text - xl shadow - 2xl transition - all transform ${
-        isProcessing
-        ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
-            : faceDetected || !event?.require_face
-                ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:scale-105 hover:shadow-emerald-500/50'
-                : 'bg-slate-700 text-slate-400 cursor-not-allowed'
-    }`}
+                                className={`px-12 py-5 rounded-2xl font-bold text-xl shadow-2xl transition-all transform ${isProcessing
+                                    ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
+                                    : faceDetected || !event?.require_face
+                                        ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:scale-105 hover:shadow-emerald-500/50'
+                                        : 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                                    }`}
                             >
                                 {isProcessing ? (
                                     <span className="flex items-center gap-3">
@@ -1225,9 +1217,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             <p className="text-indigo-200 text-sm font-medium">Sự kiện</p>
                             <h2 className="text-white text-xl font-black">{event?.name}</h2>
                         </div>
-                        <div className={`px - 3 py - 1 rounded - full text - xs font - bold ${
-        event?.require_face? 'bg-white/20 text-white': 'bg-emerald-400/20 text-emerald-300'
-    }`}>
+                        <div className={`px-3 py-1 rounded-full text-xs font-bold ${event?.require_face ? 'bg-white/20 text-white' : 'bg-emerald-400/20 text-emerald-300'
+                            }`}>
                             {event?.require_face ? 'Face ID' : 'QR'}
                         </div>
                     </div>
@@ -1290,19 +1281,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                             </div>
                                         )}
                                         {/* Status dot */}
-                                        <div className={`absolute - bottom - 1 - right - 1 w - 4 h - 4 rounded - full border - 2 border - slate - 900 ${
-        checkin.status === 'late' ? 'bg-amber-500' : 'bg-emerald-500'
-    }`} />
+                                        <div className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-900 ${checkin.status === 'late' ? 'bg-amber-500' : 'bg-emerald-500'
+                                            }`} />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <h4 className="font-bold text-white truncate">{checkin.name}</h4>
                                         <p className="text-xs text-slate-400">{checkin.time}</p>
                                     </div>
-                                    <div className={`px - 2 py - 1 rounded - lg text - [10px] font - bold ${
-        checkin.status === 'late'
-            ? 'bg-amber-500/20 text-amber-400'
-            : 'bg-emerald-500/20 text-emerald-400'
-    }`}>
+                                    <div className={`px-2 py-1 rounded-lg text-[10px] font-bold ${checkin.status === 'late'
+                                        ? 'bg-amber-500/20 text-amber-400'
+                                        : 'bg-emerald-500/20 text-emerald-400'
+                                        }`}>
                                         {checkin.status === 'late' ? 'Đi muộn' : 'Đúng giờ'}
                                     </div>
                                 </div>
@@ -1328,37 +1317,37 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
             {/* CSS Animations */}
             <style>{`
-                @keyframes fade -in {
-        from { opacity: 0; }
+                @keyframes fade-in {
+                    from { opacity: 0; }
                     to { opacity: 1; }
                 }
-@keyframes scale -in {
-    from { transform: scale(0.8); opacity: 0; }
+                @keyframes scale-in {
+                    from { transform: scale(0.8); opacity: 0; }
                     to { transform: scale(1); opacity: 1; }
                 }
-@keyframes bounce - once {
-    0 %, 100 % { transform: scale(1); }
-    50 % { transform: scale(1.1); }
-}
-@keyframes float {
-    0 %, 100 % { transform: translateY(0) rotate(0deg); opacity: 0.5; }
-    50 % { transform: translateY(-20px) rotate(180deg); opacity: 1; }
-}
-@keyframes shrink {
-                    from { width: 100 %; }
-                    to { width: 0 %; }
-}
-@keyframes slide -in {
-    from { transform: translateX(20px); opacity: 0; }
+                @keyframes bounce-once {
+                    0%, 100% { transform: scale(1); }
+                    50% { transform: scale(1.1); }
+                }
+                @keyframes float {
+                    0%, 100% { transform: translateY(0) rotate(0deg); opacity: 0.5; }
+                    50% { transform: translateY(-20px) rotate(180deg); opacity: 1; }
+                }
+                @keyframes shrink {
+                    from { width: 100%; }
+                    to { width: 0%; }
+                }
+                @keyframes slide-in {
+                    from { transform: translateX(20px); opacity: 0; }
                     to { transform: translateX(0); opacity: 1; }
                 }
-                .animate - fade -in { animation: fade -in 0.3s ease- out; }
-                .animate - scale -in { animation: scale -in 0.4s ease- out; }
-                .animate - bounce - once { animation: bounce - once 0.5s ease - out; }
-                .animate - float { animation: float 3s ease -in -out infinite; }
-                .animate - shrink { animation: shrink 4s linear forwards; }
-                .animate - slide -in { animation: slide -in 0.3s ease- out; }
-`}</style>
+                .animate-fade-in { animation: fade-in 0.3s ease-out; }
+                .animate-scale-in { animation: scale-in 0.4s ease-out; }
+                .animate-bounce-once { animation: bounce-once 0.5s ease-out; }
+                .animate-float { animation: float 3s ease-in-out infinite; }
+                .animate-shrink { animation: shrink 4s linear forwards; }
+                .animate-slide-in { animation: slide-in 0.3s ease-out; }
+            `}</style>
 
             {/* User Details Modal */}
             {
@@ -1383,7 +1372,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                         ].filter(Boolean).join(' • ')}
                                     </p>
                                 )}
-                                <p className="text-slate-400 text-sm mb-4">{selectedUser.birth_date !== 'N/A' ? `NS: ${ selectedUser.birth_date } ` : ''}</p>
+                                <p className="text-slate-400 text-sm mb-4">{selectedUser.birth_date !== 'N/A' ? `NS: ${selectedUser.birth_date}` : ''}</p>
 
                                 <div className="grid grid-cols-2 gap-3 mb-6">
                                     <div className="bg-slate-700/50 p-3 rounded-xl border border-slate-600">
@@ -1392,7 +1381,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                     </div>
                                     <div className="bg-slate-700/50 p-3 rounded-xl border border-slate-600">
                                         <p className="text-slate-400 text-xs">Trạng thái</p>
-                                        <p className={`${ selectedUser.status === 'on_time' ? 'text-emerald-400' : 'text-amber-400' } font - bold`}>
+                                        <p className={`${selectedUser.status === 'on_time' ? 'text-emerald-400' : 'text-amber-400'} font-bold`}>
                                             {selectedUser.status === 'on_time' ? 'Đúng giờ' : 'Đi muộn'}
                                         </p>
                                     </div>

@@ -317,7 +317,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                         organization: user.class_id || user.organization || user.role,
                         address: '', // User table doesn't have address
                         avatar_url: user.avatar_url || '',
-                        user_id: user.id // Link to system user
+                        user_id: user.id, // Link to system user
+                        face_descriptor: user.face_descriptor || '' // Copy user's face descriptor
                     };
                 }).filter(Boolean) as any[];
 
@@ -328,7 +329,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                     organization: p.organization || '',
                     address: p.address || '',
                     avatar_url: p.avatar_url || '',
-                    face_descriptor: p.face_descriptor // Include computed descriptor
+                    face_descriptor: p.face_descriptor || '' // Pass face descriptor to save
                 })), ...selectedUsersToSave];
 
                 if (allParticipantsToSave.length > 0) {

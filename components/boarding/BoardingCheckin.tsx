@@ -563,56 +563,59 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     }, []);
 
     return (
-        <div className="min-h-screen bg-slate-900 flex flex-col pt-16 px-4 pb-4 gap-4 lg:flex-row font-sans relative">
-            {/* Fullscreen Loading Overlay */}
-            {!systemReady && (
-                <div className="absolute inset-0 z-[60] bg-slate-900 flex flex-col items-center justify-center">
-                    {/* Background Animation */}
-                    <div className="absolute inset-0 z-0">
-                        <div className="absolute w-96 h-96 bg-indigo-500/20 rounded-full blur-3xl -top-20 -left-20 animate-pulse"></div>
-                        <div className="absolute w-96 h-96 bg-purple-500/20 rounded-full blur-3xl -bottom-20 -right-20 animate-pulse" style={{ animationDelay: '1s' }}></div>
-                    </div>
-
-                    <div className="z-10 text-center p-8 bg-white/5 backdrop-blur-xl rounded-3xl border border-white/10 shadow-2xl max-w-md w-full mx-4">
-                        {/* Loading Spinner */}
-                        <div className="relative w-24 h-24 mx-auto mb-8">
-                            <div className="absolute inset-0 border-4 border-white/10 rounded-full"></div>
-                            <div className="absolute inset-0 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                            <div className="absolute inset-4 border-4 border-purple-500 border-t-transparent rounded-full animate-spin" style={{ animationDirection: 'reverse', animationDuration: '2s' }}></div>
-
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                <span className="text-2xl">⚡</span>
-                            </div>
+        <div className="min-h-screen bg-slate-900 flex flex-col pt-16 px-4 pb-4 gap-4 lg:flex-row font-sans">
+            {/* ========== LOADING OVERLAY ========== */}
+            {(!modelsReady || !studentsLoaded) && (
+                <div className="fixed inset-0 z-[200] bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col items-center justify-center">
+                    <div className="text-center">
+                        {/* Animated Logo */}
+                        <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-emerald-500 rounded-3xl flex items-center justify-center mx-auto mb-8 animate-pulse shadow-2xl shadow-indigo-500/30">
+                            <UserCheck className="w-12 h-12 text-white" />
                         </div>
 
-                        <h2 className="text-2xl font-black text-white mb-2">Đang khởi động check-in</h2>
+                        <h2 className="text-3xl font-black text-white mb-4">Đang khởi tạo hệ thống</h2>
+                        <p className="text-slate-400 text-lg mb-10 max-w-md mx-auto">Vui lòng chờ trong giây lát để đảm bảo hệ thống check-in hoạt động chính xác.</p>
 
-                        <div className="space-y-3">
-                            <div className={`flex items-center gap-3 p-3 rounded-xl transition-all ${!modelsReady ? 'bg-indigo-500/20 border border-indigo-500/30' : 'bg-emerald-500/10 border border-emerald-500/20'}`}>
-                                <div className={`w-5 h-5 rounded-full flex items-center justify-center ${!modelsReady ? 'animate-pulse' : 'bg-emerald-500'}`}>
-                                    {!modelsReady ? '⏳' : '✓'}
+                        {/* Loading Steps */}
+                        <div className="space-y-4 max-w-sm mx-auto text-left">
+                            {/* Step 1: AI Models */}
+                            <div className={`flex items-center gap-4 px-6 py-4 rounded-2xl ${modelsReady ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
+                                {modelsReady ? (
+                                    <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                                        <CheckCircle className="w-6 h-6 text-white" />
+                                    </div>
+                                ) : (
+                                    <div className="w-10 h-10 bg-indigo-500/50 rounded-xl flex items-center justify-center flex-shrink-0 animate-spin">
+                                        <RefreshCw className="w-6 h-6 text-white" />
+                                    </div>
+                                )}
+                                <div>
+                                    <p className={`font-bold ${modelsReady ? 'text-emerald-400' : 'text-white'}`}>Mô hình AI nhận diện</p>
+                                    <p className={`text-sm ${modelsReady ? 'text-emerald-400/70' : 'text-slate-400'}`}>{modelsReady ? 'Đã sẵn sàng' : 'Đang tải...'}</p>
                                 </div>
-                                <span className={`text-sm font-medium ${!modelsReady ? 'text-indigo-200' : 'text-emerald-400'}`}>
-                                    {!modelsReady ? 'Đang tải AI...' : 'AI đã sẵn sàng'}
-                                </span>
                             </div>
 
-                            <div className={`flex items-center gap-3 p-3 rounded-xl transition-all ${!studentsLoaded ? 'bg-indigo-500/20 border border-indigo-500/30' : 'bg-emerald-500/10 border border-emerald-500/20'}`}>
-                                <div className={`w-5 h-5 rounded-full flex items-center justify-center ${!studentsLoaded ? 'animate-pulse' : 'bg-emerald-500'}`}>
-                                    {!studentsLoaded ? '⏳' : '✓'}
+                            {/* Step 2: Student Data */}
+                            <div className={`flex items-center gap-4 px-6 py-4 rounded-2xl ${studentsLoaded ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
+                                {studentsLoaded ? (
+                                    <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                                        <CheckCircle className="w-6 h-6 text-white" />
+                                    </div>
+                                ) : (
+                                    <div className="w-10 h-10 bg-indigo-500/50 rounded-xl flex items-center justify-center flex-shrink-0 animate-spin">
+                                        <RefreshCw className="w-6 h-6 text-white" />
+                                    </div>
+                                )}
+                                <div>
+                                    <p className={`font-bold ${studentsLoaded ? 'text-emerald-400' : 'text-white'}`}>Dữ liệu học sinh ({studentsData.length})</p>
+                                    <p className={`text-sm ${studentsLoaded ? 'text-emerald-400/70' : 'text-slate-400'}`}>{studentsLoaded ? 'Đã sẵn sàng' : 'Đang đồng bộ khuôn mặt...'}</p>
                                 </div>
-                                <span className={`text-sm font-medium ${!studentsLoaded ? 'text-indigo-200' : 'text-emerald-400'}`}>
-                                    {!studentsLoaded ? `Đang tải danh sách học sinh...` : 'Danh sách học sinh sẵn sàng'}
-                                </span>
                             </div>
                         </div>
-
-                        <p className="mt-6 text-xs text-slate-500 font-mono">
-                            Đang tải dữ liệu, vui lòng đợi...
-                        </p>
                     </div>
                 </div>
             )}
+
             {/* Header */}
             <div className="absolute top-0 left-0 right-0 h-16 bg-slate-800/80 backdrop-blur-md flex items-center justify-between px-4 z-20 border-b border-white/10">
                 <div className="flex items-center gap-3">
