@@ -189,8 +189,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             faceMatcher.clearAll(); // Clear previous faces
 
             try {
-                // Load participants from Event_Participants - LIGHTWEIGHT MODE (skip avatar for speed)
-                const result = await dataService.getEventParticipants(event.id, true);
+                // Load participants from Event_Participants sheet
+                const result = await dataService.getEventParticipants(event.id);
                 console.log('📋 getEventParticipants result:', result);
 
                 if (result.success && result.data) {
@@ -671,37 +671,23 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 playSound('success');
                 console.log('Check-in SUCCESS:', checkinResult);
 
-                // Find participant (for name, not for avatar since we're in lightweight mode)
+                // Find participant to get avatar
                 const participant = participants.find(p => p.id === checkInUserId);
+                const displayAvatar = participant?.avatar_url || undefined;
 
-                // Set initial result WITHOUT avatar (will be loaded async)
                 setResult({
                     success: true,
                     message: `Check-in lúc ${new Date().toLocaleTimeString('vi-VN')}${latestRecognizedPerson ? ` (${Math.round(latestRecognizedPerson.confidence)}% match)` : ''}`,
                     checkin: checkinResult.data.checkin,
-                    capturedImage: undefined, // Will be loaded async
+                    capturedImage: displayAvatar, // Use avatar for success screen
                     userName: checkInUserName
                 });
 
-                // LAZY LOAD AVATAR: Fetch avatar in background and update result
-                dataService.getParticipantAvatar(checkInUserId).then(avatarRes => {
-                    if (avatarRes.success && avatarRes.data) {
-                        setResult(prev => prev ? { ...prev, capturedImage: avatarRes.data } : prev);
-                        // Also update recent checkins list
-                        setRecentCheckins(prevList => {
-                            if (prevList.length > 0 && prevList[0].name === checkInUserName) {
-                                return [{ ...prevList[0], image: avatarRes.data }, ...prevList.slice(1)];
-                            }
-                            return prevList;
-                        });
-                    }
-                });
-
-                // Update recent checkins list for right sidebar (image will be updated by lazy load above)
+                // Update recent checkins list for right sidebar
                 setRecentCheckins(prev => [{
                     name: checkInUserName,
                     time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
-                    image: undefined, // Will be updated by lazy load above
+                    image: displayAvatar, // Use avatar
                     status: checkinResult.data.checkin.status,
                     full_name: participant?.full_name, // Add these for details
                     organization: participant?.organization,

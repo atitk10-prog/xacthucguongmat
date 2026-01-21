@@ -562,22 +562,23 @@ async function getEventCheckins(eventId: string): Promise<ApiResponse<EventCheck
 // =====================================================
 
 
-async function getEventParticipants(eventId: string, lightweight: boolean = false): Promise<ApiResponse<EventParticipant[]>> {
+async function getEventParticipants(eventId: string): Promise<ApiResponse<EventParticipant[]>> {
     try {
-        // OPTIMIZATION: Lightweight mode only fetches fields needed for face matching (MUCH FASTER)
-        const selectFields = lightweight
-            ? 'id, full_name, face_descriptor, user_id, user:users!user_id (face_descriptor)'
-            : 'id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor, user_id, user:users!user_id (face_descriptor, avatar_url)';
-
         const { data, error } = await supabase
             .from('event_participants')
-            .select(selectFields)
+            .select(`
+                id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor, user_id,
+                user:users!user_id (
+                    face_descriptor,
+                    avatar_url
+                )
+            `) // Join with users to get the latest face_descriptor
             .eq('event_id', eventId)
             .order('full_name', { ascending: true })
             .range(0, 4999); // Increase limit to 5000
 
         if (error) return { success: false, error: error.message };
-        return { success: true, data: data as unknown as EventParticipant[] };
+        return { success: true, data: data as EventParticipant[] };
     } catch (err) {
         return { success: false, error: 'Lỗi tải danh sách người tham gia' };
     }
@@ -608,25 +609,6 @@ async function updateParticipantFaceDescriptor(participantId: string, descriptor
         return { success: true, message: 'Updated face descriptor' };
     } catch (err) {
         return { success: false, error: 'Failed to update face descriptor' };
-    }
-}
-
-// LAZY LOAD: Fetch avatar only when needed (after successful check-in)
-async function getParticipantAvatar(participantId: string): Promise<ApiResponse<string | null>> {
-    try {
-        const { data, error } = await supabase
-            .from('event_participants')
-            .select('avatar_url, user:users!user_id (avatar_url)')
-            .eq('id', participantId)
-            .single();
-
-        if (error) return { success: false, error: error.message };
-
-        // Prefer user's avatar (more reliable), fallback to participant's avatar
-        const avatarUrl = (data as any)?.user?.avatar_url || (data as any)?.avatar_url || null;
-        return { success: true, data: avatarUrl };
-    } catch (err) {
-        return { success: false, error: 'Failed to load avatar' };
     }
 }
 
@@ -1950,7 +1932,6 @@ export const dataService = {
     getEventParticipants,
     getEventParticipantCount,
     updateParticipantFaceDescriptor,
-    getParticipantAvatar, // LAZY LOAD: Fetch avatar only when needed
     uploadParticipantAvatarWithFaceID, // NEW: Auto-compute face ID when uploading avatar
     saveEventParticipants,
     deleteEventParticipant,
