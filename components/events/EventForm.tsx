@@ -411,6 +411,38 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
         setTimeout(() => setImportNotification(null), 2000);
     };
 
+    // Load default values from system config
+    const handleLoadSystemDefaults = async () => {
+        setIsLoading(true);
+        try {
+            const configRes = await dataService.getConfigs();
+            if (configRes.success && configRes.data) {
+                const configs = configRes.data.reduce((acc: Record<string, string>, c: { key: string; value: string }) => {
+                    acc[c.key] = c.value;
+                    return acc;
+                }, {} as Record<string, string>);
+
+                setFormData(prev => ({
+                    ...prev,
+                    points_on_time: parseInt(configs.points_on_time) || 10,
+                    points_late: parseInt(configs.points_late) || -5,
+                    late_threshold_mins: parseInt(configs.late_threshold_mins) || 15,
+                    face_threshold: parseInt(configs.face_threshold) || 40,
+                }));
+                setImportNotification({ type: 'success', message: 'Đã tải cấu hình mặc định từ hệ thống!' });
+            } else {
+                setImportNotification({ type: 'error', message: 'Không thể tải cấu hình hệ thống' });
+            }
+        } catch (e) {
+            console.error('Error loading system defaults:', e);
+            setImportNotification({ type: 'error', message: 'Lỗi khi tải cấu hình hệ thống' });
+        } finally {
+            setIsLoading(false);
+            // Clear notification after 3s
+            setTimeout(() => setImportNotification(null), 3000);
+        }
+    };
+
     // Download Excel template as .xlsx
     const downloadTemplate = async () => {
         try {
@@ -805,20 +837,68 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                         </div>
                                     </div>
 
-                                    <div>
-                                        <label className="block text-xs font-black text-slate-400 uppercase mb-2">Thời gian đi muộn (phút)</label>
-                                        <input type="number" value={formData.late_threshold_mins} onChange={(e) => setFormData({ ...formData, late_threshold_mins: parseInt(e.target.value) })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                                    <div className="md:col-span-3 mb-4 flex justify-between items-end">
+                                        <div>
+                                            <label className="block text-xs font-black text-slate-400 uppercase mb-2">Thời gian đi muộn (phút)</label>
+                                            <input
+                                                type="number"
+                                                value={formData.late_threshold_mins}
+                                                onChange={(e) => {
+                                                    const val = e.target.value;
+                                                    setFormData({
+                                                        ...formData,
+                                                        late_threshold_mins: val === '' ? '' as any : parseInt(val)
+                                                    });
+                                                }}
+                                                className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                            />
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={handleLoadSystemDefaults}
+                                            className="ml-4 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 whitespace-nowrap"
+                                            title="Tải lại cấu hình mặc định từ hệ thống"
+                                        >
+                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                            Tải từ cấu hình hệ thống
+                                        </button>
                                     </div>
 
                                     {(!formData.checkin_mode || formData.checkin_mode === 'student') && (
                                         <>
                                             <div>
                                                 <label className="block text-xs font-black text-slate-400 uppercase mb-2">Điểm đúng giờ</label>
-                                                <input type="number" value={formData.points_on_time} onChange={(e) => setFormData({ ...formData, points_on_time: parseInt(e.target.value) })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                                                <input
+                                                    type="number"
+                                                    value={formData.points_on_time}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        // Allow empty string or just "-" for negative numbers typing
+                                                        if (val === '' || val === '-') {
+                                                            setFormData({ ...formData, points_on_time: val as any });
+                                                        } else {
+                                                            setFormData({ ...formData, points_on_time: parseInt(val) });
+                                                        }
+                                                    }}
+                                                    className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                                />
                                             </div>
                                             <div>
                                                 <label className="block text-xs font-black text-slate-400 uppercase mb-2">Điểm đi muộn</label>
-                                                <input type="number" value={formData.points_late} onChange={(e) => setFormData({ ...formData, points_late: parseInt(e.target.value) })} className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                                                <input
+                                                    type="number"
+                                                    value={formData.points_late}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        // Allow empty string or just "-" for negative numbers typing
+                                                        if (val === '' || val === '-') {
+                                                            setFormData({ ...formData, points_late: val as any });
+                                                        } else {
+                                                            setFormData({ ...formData, points_late: parseInt(val) });
+                                                        }
+                                                    }}
+                                                    className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                                />
                                             </div>
                                         </>
                                     )}
