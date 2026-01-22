@@ -314,45 +314,45 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
     return (
         <div className="space-y-6">
             {/* Header */}
-            <div className="flex justify-between items-center flex-wrap gap-4">
-                <div>
-                    <h2 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-                        <svg className="w-8 h-8 text-amber-500" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                <div className="w-full md:w-auto">
+                    <h2 className="text-2xl md:text-3xl font-black text-slate-900 flex items-center gap-2 md:gap-3">
+                        <svg className="w-6 h-6 md:w-8 md:h-8 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-.871M7.5 18.75v-3.375c0-.621.504-1.125 1.125-1.125h.872m5.007 0H9.497m5.007 0a7.454 7.454 0 01-.982-3.172M9.497 14.25a7.454 7.454 0 00.981-3.172M5.25 4.236c-.982.143-1.954.317-2.916.52A6.003 6.003 0 007.73 9.728M5.25 4.236V4.5c0 2.108.966 3.99 2.48 5.228M5.25 4.236V2.721C7.456 2.41 9.71 2.25 12 2.25c2.291 0 4.545.16 6.75.47v1.516M7.73 9.728a6.726 6.726 0 002.748 1.35m8.272-6.842V4.5c0 2.108-.966 3.99-2.48 5.228m2.48-5.492a46.32 46.32 0 012.916.52 6.003 6.003 0 01-5.395 4.972m0 0a6.726 6.726 0 01-2.749 1.35m0 0a6.772 6.772 0 01-3.044 0" />
                         </svg>
-                        Bảng xếp hạng Nề nếp
+                        <span className="truncate">BXH Nề nếp</span>
                     </h2>
-                    <p className="text-slate-500 font-medium mt-1">Xếp hạng theo điểm chuyên cần</p>
+                    <p className="text-slate-500 font-medium mt-1 text-xs md:text-sm">Xếp hạng theo điểm chuyên cần</p>
                 </div>
 
-                <div className="flex gap-2 items-center">
+                <div className="flex w-full md:w-auto gap-2 items-center flex-wrap">
                     {/* View Type Toggle */}
-                    <div className="flex gap-2 bg-white rounded-2xl p-1 shadow-sm border border-slate-100 overflow-hidden">
+                    <div className="flex flex-1 md:flex-none gap-1 bg-white rounded-xl md:rounded-2xl p-1 shadow-sm border border-slate-100 overflow-hidden">
                         {filterClass ? (
                             <button
                                 onClick={handleBackToClasses}
-                                className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 flex items-center gap-2 w-full justify-center md:w-auto shadow-sm transition-all"
+                                className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg md:rounded-xl font-bold hover:bg-indigo-700 flex items-center gap-2 w-full justify-center md:w-auto shadow-sm transition-all text-xs md:text-sm"
                             >
                                 <ArrowLeft className="w-4 h-4" />
-                                Quay lại DS Lớp
+                                <span className="truncate">Quay lại DS Lớp</span>
                             </button>
                         ) : (
                             <>
                                 <button
                                     onClick={() => setViewType('student')}
-                                    className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'student' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
+                                    className={`flex-1 md:flex-none px-3 py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${viewType === 'student' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
                                         }`}
                                 >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
                                     Cá nhân
                                 </button>
                                 <button
                                     onClick={() => setViewType('class')}
-                                    className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'class' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
+                                    className={`flex-1 md:flex-none px-3 py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${viewType === 'class' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
                                         }`}
                                 >
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
-                                    Theo lớp
+                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
+                                    Lớp
                                 </button>
                             </>
                         )}
@@ -360,20 +360,21 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
 
                     <button
                         onClick={handleExport}
-                        className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 flex items-center gap-2 shadow-lg shadow-emerald-200"
+                        className="px-3 py-2 bg-emerald-600 text-white rounded-xl font-bold hover:bg-emerald-700 flex items-center gap-1.5 shadow-lg shadow-emerald-200 text-xs md:text-sm flex-1 md:flex-none justify-center"
                     >
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
-                        Xuất Excel
+                        <Download className="w-4 h-4 md:w-5 md:h-5" />
+                        <span className="hidden sm:inline">Xuất Excel</span>
+                        <span className="sm:hidden">Excel</span>
                     </button>
 
                     {(currentUserRole === 'admin' || currentUserRole === 'teacher') && (
                         <button
                             onClick={handleBatchExport}
                             disabled={isGenerating}
-                            className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 flex items-center gap-2 shadow-lg shadow-indigo-200"
+                            className="px-3 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 flex items-center gap-1.5 shadow-lg shadow-indigo-200 text-xs md:text-sm flex-1 md:flex-none justify-center"
                         >
-                            {isGenerating ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileDown className="w-5 h-5" />}
-                            Tải Top 10
+                            {isGenerating ? <Loader2 className="w-4 h-4 md:w-5 md:h-5 animate-spin" /> : <FileDown className="w-4 h-4 md:w-5 md:h-5" />}
+                            <span className="truncate">Top 10</span>
                         </button>
                     )}
                 </div>
@@ -381,46 +382,46 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
 
             {/* Top 3 Podium */}
             {rankings.length >= 3 && (
-                <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-6 text-white relative">
-                    <h3 className="text-center font-bold text-white/80 mb-6">TOP 3</h3>
-                    <div className="flex justify-center items-end gap-4">
+                <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-4 md:p-6 text-white relative">
+                    <h3 className="text-center font-bold text-white/80 mb-4 md:mb-6 uppercase tracking-widest text-xs md:text-sm">Bảng Vàng Danh Dự</h3>
+                    <div className="flex justify-center items-end gap-2 md:gap-8 max-w-md mx-auto">
                         {/* 2nd Place */}
-                        <div className="text-center">
-                            <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-3 mx-auto relative overflow-hidden bg-white/20 backdrop-blur-sm border-2 border-white/30">
+                        <div className="text-center flex-1 min-w-0">
+                            <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl flex items-center justify-center mb-2 md:mb-3 mx-auto relative overflow-hidden bg-white/20 backdrop-blur-sm border-2 border-white/30">
                                 {rankings[1]?.avatar_url ? (
                                     <img src={rankings[1].avatar_url} className="w-full h-full object-cover" alt="Rank 2" />
                                 ) : (
-                                    <div className="w-12 h-12 rounded-full bg-slate-300 flex items-center justify-center text-white font-black text-xl">2</div>
+                                    <div className="w-full h-full flex items-center justify-center text-white font-black text-xl bg-slate-400">2</div>
                                 )}
                             </div>
-                            <p className="font-bold text-sm truncate max-w-[100px]">{rankings[1]?.user_name}</p>
-                            <p className="text-white/60 text-xs">{rankings[1]?.total_points} điểm</p>
+                            <p className="font-bold text-[10px] md:text-sm truncate w-full">{rankings[1]?.user_name}</p>
+                            <p className="text-white/60 text-[8px] md:text-xs">{rankings[1]?.total_points} đ</p>
                         </div>
 
                         {/* 1st Place */}
-                        <div className="text-center -mt-4">
-                            <div className="w-24 h-24 rounded-2xl flex items-center justify-center mb-3 mx-auto relative overflow-hidden ring-4 ring-yellow-400/50 bg-yellow-400/30 backdrop-blur-sm shadow-xl">
+                        <div className="text-center flex-1 min-w-0 -mt-4 md:-mt-8 scale-110 md:scale-125">
+                            <div className="w-20 h-20 md:w-24 md:h-24 rounded-2xl flex items-center justify-center mb-2 md:mb-3 mx-auto relative overflow-hidden ring-4 ring-yellow-400/50 bg-yellow-400/30 backdrop-blur-sm shadow-xl z-10">
                                 {rankings[0]?.avatar_url ? (
                                     <img src={rankings[0].avatar_url} className="w-full h-full object-cover" alt="Rank 1" />
                                 ) : (
-                                    <div className="w-16 h-16 rounded-full bg-yellow-400 flex items-center justify-center text-white font-black text-2xl">1</div>
+                                    <div className="w-full h-full flex items-center justify-center text-white font-black text-2xl bg-yellow-400">1</div>
                                 )}
                             </div>
-                            <p className="font-black text-lg truncate max-w-[120px]">{rankings[0]?.user_name}</p>
-                            <p className="text-yellow-300 font-bold">{rankings[0]?.total_points} điểm</p>
+                            <p className="font-black text-xs md:text-lg truncate w-full">{rankings[0]?.user_name}</p>
+                            <p className="text-yellow-300 font-bold text-[10px] md:text-base">{rankings[0]?.total_points} đ</p>
                         </div>
 
                         {/* 3rd Place */}
-                        <div className="text-center">
-                            <div className="w-20 h-20 rounded-2xl flex items-center justify-center mb-3 mx-auto relative overflow-hidden bg-white/20 backdrop-blur-sm border-2 border-white/30">
+                        <div className="text-center flex-1 min-w-0">
+                            <div className="w-16 h-16 md:w-20 md:h-20 rounded-2xl flex items-center justify-center mb-2 md:mb-3 mx-auto relative overflow-hidden bg-white/20 backdrop-blur-sm border-2 border-white/30">
                                 {rankings[2]?.avatar_url ? (
                                     <img src={rankings[2].avatar_url} className="w-full h-full object-cover" alt="Rank 3" />
                                 ) : (
-                                    <div className="w-12 h-12 rounded-full bg-amber-600 flex items-center justify-center text-white font-black text-xl">3</div>
+                                    <div className="w-full h-full flex items-center justify-center text-white font-black text-xl bg-amber-600">3</div>
                                 )}
                             </div>
-                            <p className="font-bold text-sm truncate max-w-[100px]">{rankings[2]?.user_name}</p>
-                            <p className="text-white/60 text-xs">{rankings[2]?.total_points} điểm</p>
+                            <p className="font-bold text-[10px] md:text-sm truncate w-full">{rankings[2]?.user_name}</p>
+                            <p className="text-white/60 text-[8px] md:text-xs">{rankings[2]?.total_points} đ</p>
                         </div>
                     </div>
                     {/* Instant Cert Button for Top 1 */}
@@ -440,7 +441,7 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
             {/* Full Ranking Table */}
             <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
                 <div className="overflow-x-auto">
-                    <table className="w-full">
+                    <table className="w-full min-w-[1000px]">
                         <thead>
                             <tr className="bg-slate-50 text-left">
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Hạng</th>

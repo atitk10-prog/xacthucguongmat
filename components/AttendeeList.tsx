@@ -17,7 +17,7 @@ const AttendeeList: React.FC<AttendeeListProps> = ({ attendees, onEdit, onDelete
           <h2 className="text-3xl font-black text-slate-900 tracking-tight">Quản lý nhân sự</h2>
           <p className="text-slate-500 font-medium">Danh sách các đối tượng được phép điểm danh bằng AI.</p>
         </div>
-        <button 
+        <button
           onClick={onAdd}
           className="px-8 py-3.5 bg-indigo-600 text-white rounded-2xl font-black text-sm flex items-center gap-2 shadow-lg shadow-indigo-600/20 hover:bg-indigo-700 transition-all hover:-translate-y-1 active:scale-95"
         >
@@ -28,7 +28,7 @@ const AttendeeList: React.FC<AttendeeListProps> = ({ attendees, onEdit, onDelete
 
       <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="w-full text-left">
+          <table className="w-full min-w-[1000px] text-left">
             <thead>
               <tr className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] bg-slate-50/50">
                 <th className="px-8 py-6">Nhân sự</th>
@@ -72,14 +72,14 @@ const AttendeeList: React.FC<AttendeeListProps> = ({ attendees, onEdit, onDelete
                   </td>
                   <td className="px-8 py-5">
                     <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-all">
-                      <button 
+                      <button
                         onClick={() => onEdit(attendee)}
                         className="w-10 h-10 bg-white border border-slate-200 text-slate-600 rounded-xl flex items-center justify-center hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 transition-all shadow-sm"
                         title="Chỉnh sửa"
                       >
                         ✏️
                       </button>
-                      <button 
+                      <button
                         onClick={() => onDelete(attendee.id)}
                         className="w-10 h-10 bg-white border border-slate-200 text-slate-600 rounded-xl flex items-center justify-center hover:bg-red-50 hover:text-red-600 hover:border-red-200 transition-all shadow-sm"
                         title="Xóa"

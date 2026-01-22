@@ -100,9 +100,9 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         if (!isOpen || !modelsReady || !usersLoaded || !videoRef.current || loginSuccess) return;
 
         let animationId: number;
-        const STABILITY_THRESHOLD = 800; // 0.8s for login security
+        const STABILITY_THRESHOLD = 400; // Optimized for speed (0.4s)
         const PROCESSING_THROTTLE = 100; // ~10 FPS
-        const CONFIDENCE_THRESHOLD = 55; // 60% as requested
+        const CONFIDENCE_THRESHOLD = 48; // Slightly more balanced sensitivity
 
         const loop = async () => {
             if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
@@ -306,7 +306,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
                 {/* Camera View */}
                 {!isLoading && !loginSuccess && (
-                    <div className="relative w-full max-w-md aspect-[3/4] rounded-3xl overflow-hidden bg-black shadow-2xl border-4 border-white/20">
+                    <div className="relative w-full max-w-sm md:max-w-md aspect-[3/4] rounded-2xl md:rounded-3xl overflow-hidden bg-black shadow-2xl border-2 md:border-4 border-white/20">
                         <video
                             ref={videoRef}
                             autoPlay

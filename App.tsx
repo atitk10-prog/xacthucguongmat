@@ -13,9 +13,11 @@ import CertificateGenerator from './components/certificates/CertificateGenerator
 import CardGenerator from './components/certificates/CardGenerator';
 import UserManagement from './components/users/UserManagement';
 import SystemConfig from './components/settings/SystemConfig';
+import FaceIDManagement from './components/settings/FaceIDManagement';
 import PointManagement from './components/settings/PointManagement';
 import PointStatistics from './components/reports/PointStatistics';
 import StudentLayout from './components/student/StudentLayout'; // Import StudentLayout
+import SelfCheckinPage from './components/checkin/SelfCheckinPage';
 import { Icons } from './components/ui';
 import { dataService } from './services/dataService';
 import { useToast } from './components/ui/Toast';
@@ -25,8 +27,8 @@ type AppView =
   | 'login' | 'dashboard' | 'events' | 'event-form' | 'checkin'
   | 'boarding' | 'rooms' | 'exit-permission' | 'boarding-config' | 'boarding-run'
   | 'reports' | 'event-report' | 'ranking' | 'points-stats'
-  | 'users' | 'certificates' | 'cards'
-  | 'settings' | 'points';
+  | 'users' | 'certificates' | 'cards' | 'faceid'
+  | 'settings' | 'points' | 'self-checkin';
 
 interface MenuItem {
   id: string;
@@ -39,8 +41,10 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [view, setView] = useState<AppView>('login');
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
+  const [selectedEventId, setSelectedEventId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [boardingTab, setBoardingTab] = useState<'dashboard' | 'config' | 'rooms' | 'exit' | 'report'>('dashboard');
@@ -57,6 +61,23 @@ const App: React.FC = () => {
         if (storedUser && dataService.isAuthenticated()) {
           setCurrentUser(storedUser);
           setView('boarding-run' as AppView);
+          setIsLoading(false);
+          return;
+        }
+      }
+
+      if (path.startsWith('/self-checkin/')) {
+        const eventId = path.split('/')[2];
+        if (eventId) {
+          if (storedUser && dataService.isAuthenticated()) {
+            setCurrentUser(storedUser);
+            setSelectedEventId(eventId);
+            setView('self-checkin');
+          } else {
+            // Need login, but remember where to go
+            localStorage.setItem('redirect_after_login', path);
+            setView('login');
+          }
           setIsLoading(false);
           return;
         }
@@ -150,6 +171,21 @@ const App: React.FC = () => {
 
   const handleLoginSuccess = (user: User) => {
     setCurrentUser(user);
+
+    // Check for pending redirection
+    const redirectPath = localStorage.getItem('redirect_after_login');
+    if (redirectPath) {
+      localStorage.removeItem('redirect_after_login');
+      if (redirectPath.startsWith('/self-checkin/')) {
+        const eventId = redirectPath.split('/')[2];
+        if (eventId) {
+          setSelectedEventId(eventId);
+          setView('self-checkin');
+          return;
+        }
+      }
+    }
+
     setView('dashboard');
     loadUsers();
   };
@@ -199,6 +235,18 @@ const App: React.FC = () => {
     return <CheckinPage event={selectedEvent} currentUser={currentUser} onBack={() => setView('events')} />;
   }
 
+  if (view === 'self-checkin' && selectedEventId) {
+    return (
+      <SelfCheckinPage
+        eventId={selectedEventId}
+        currentUser={currentUser}
+        onLoginNeeded={() => setView('login')}
+        onSuccess={() => setView('dashboard')}
+        onBack={() => setView('dashboard')}
+      />
+    );
+  }
+
   if (view === 'boarding-run') {
     return <BoardingCheckin currentUser={currentUser} onBack={() => window.close()} />;
   }
@@ -244,6 +292,7 @@ const App: React.FC = () => {
       { id: 'points', icon: <Icons.Points className="w-5 h-5" />, label: 'Quản lý điểm' },
       { id: 'certificates', icon: <Icons.Certificates className="w-5 h-5" />, label: 'Chứng nhận' },
       { id: 'cards', icon: <Icons.Cards className="w-5 h-5" />, label: 'Tạo thẻ' },
+      { id: 'faceid', icon: <Icons.User className="w-5 h-5" />, label: 'Quản lý Face ID' },
       { id: 'settings', icon: <Icons.Settings className="w-5 h-5" />, label: 'Cấu hình' },
     ];
 
@@ -259,9 +308,22 @@ const App: React.FC = () => {
   const menuItems = getMenuItems();
 
   return (
-    <div className="min-h-screen flex bg-slate-100">
+    <div className="min-h-screen flex bg-slate-100 relative">
+      {/* Mobile Backdrop */}
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-40 lg:hidden"
+          onClick={() => setMobileMenuOpen(false)}
+        ></div>
+      )}
+
       {/* Sidebar */}
-      <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} bg-slate-900 text-white min-h-screen flex flex-col transition-all duration-300 relative shadow-2xl`}>
+      <aside className={`
+        ${sidebarOpen ? 'w-64' : 'w-20'} 
+        bg-slate-900 text-white min-h-screen flex flex-col transition-all duration-300 shadow-2xl z-50
+        fixed inset-y-0 left-0 lg:relative
+        ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
+      `}>
         {/* Logo */}
         <div className="p-4 border-b border-slate-800/50">
           <div className="flex items-center gap-3">
@@ -301,7 +363,10 @@ const App: React.FC = () => {
             return (
               <button
                 key={item.id}
-                onClick={() => setView(item.id as AppView)}
+                onClick={() => {
+                  setView(item.id as AppView);
+                  setMobileMenuOpen(false); // Close on mobile after click
+                }}
                 className={`w-full px-3 py-2.5 rounded-xl text-left flex items-center gap-3 transition-all group ${view === item.id
                   ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
                   : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
@@ -340,8 +405,27 @@ const App: React.FC = () => {
       </aside>
 
       {/* Main */}
-      <main className="flex-1 p-6 overflow-auto">
-        <div className="max-w-7xl mx-auto">
+      <main className="flex-1 min-w-0 overflow-auto">
+        {/* Mobile Header */}
+        <header className="lg:hidden bg-white border-b border-slate-200 p-4 flex items-center justify-between sticky top-0 z-30">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setMobileMenuOpen(true)}
+              className="p-2 -ml-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+            >
+              <Icons.Menu className="w-6 h-6" />
+            </button>
+            <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-lg flex items-center justify-center text-white shadow-sm">
+              <Icons.Shield className="w-4 h-4" />
+            </div>
+            <span className="font-black text-slate-800 tracking-tight">EduCheck</span>
+          </div>
+          <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center">
+            <span className="text-xs font-bold text-slate-600">{currentUser.full_name.charAt(0)}</span>
+          </div>
+        </header>
+
+        <div className="p-4 md:p-6 lg:p-8 max-w-7xl mx-auto">
           {view === 'dashboard' && (
             <DashboardView
               setView={setView}
@@ -360,6 +444,7 @@ const App: React.FC = () => {
           {view === 'certificates' && <CertificateGenerator />}
           {view === 'cards' && <CardGenerator users={allUsers} />}
           {view === 'settings' && <SystemConfig />}
+          {view === 'faceid' && <FaceIDManagement />}
           {view === 'reports' && <EventReport />}
           {view === 'points-stats' && <PointStatistics />}
         </div>
@@ -394,11 +479,11 @@ const DashboardView: React.FC<{
   return (
     <div className="space-y-6">
       {/* Welcome */}
-      <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 rounded-3xl p-8 text-white relative overflow-hidden flex justify-between items-center">
+      <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 rounded-2xl md:rounded-3xl p-6 md:p-8 text-white relative overflow-hidden flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
         <div className="relative z-10">
           <p className="text-white/70 font-medium">Chào mừng trở lại,</p>
-          <h2 className="text-3xl font-black mt-1">{currentUser.full_name}!</h2>
-          <p className="text-white/70 mt-2">
+          <h2 className="text-2xl md:text-3xl font-black mt-1">{currentUser.full_name}!</h2>
+          <p className="text-white/70 mt-2 text-sm md:text-base">
             {new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
@@ -410,30 +495,35 @@ const DashboardView: React.FC<{
             setBoardingTab('exit');
             setView('boarding-config');
           }}
-          className="relative z-10 p-4 bg-white/20 backdrop-blur-md rounded-2xl hover:bg-white/30 transition-all border border-white/30 group shadow-xl"
+          className="relative z-10 p-3 md:p-4 bg-white/20 backdrop-blur-md rounded-2xl hover:bg-white/30 transition-all border border-white/30 group shadow-xl flex items-center gap-3 md:block"
         >
-          <Icons.Bell className="w-8 h-8 text-white group-hover:animate-bounce" />
-          {pendingCount > 0 && (
-            <span className="absolute -top-2 -right-2 min-w-[24px] h-[24px] px-1.5 bg-red-500 text-white text-xs font-black rounded-full flex items-center justify-center border-4 border-white animate-pulse">
-              {pendingCount}
-            </span>
-          )}
-          <p className="text-[10px] font-bold mt-1 uppercase opacity-80">Đơn xin phép</p>
+          <div className="relative">
+            <Icons.Bell className="w-6 h-6 md:w-8 md:h-8 text-white group-hover:animate-bounce" />
+            {pendingCount > 0 && (
+              <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] md:min-w-[24px] md:h-[24px] px-1 bg-red-500 text-white text-[10px] md:text-xs font-black rounded-full flex items-center justify-center border-2 md:border-4 border-white animate-pulse">
+                {pendingCount}
+              </span>
+            )}
+          </div>
+          <div className="text-left md:text-center mt-0 md:mt-1">
+            <p className="text-[10px] font-bold uppercase opacity-80 leading-tight">Đơn xin phép</p>
+            <p className="md:hidden text-[10px] opacity-60">Xem chi tiết</p>
+          </div>
         </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard icon={<Icons.Users className="w-6 h-6" />} label="Tổng người dùng" value={stats?.totalUsers || 0} color="indigo" />
-        <StatCard icon={<Icons.Events className="w-6 h-6" />} label="Tổng sự kiện" value={stats?.totalEvents || 0} color="emerald" />
-        <StatCard icon={<Icons.CheckIn className="w-6 h-6" />} label="Tổng check-in" value={stats?.totalCheckins || 0} color="amber" />
-        <StatCard icon={<Icons.CheckIn className="w-6 h-6" />} label="Check-in hôm nay" value={stats?.todayCheckins || 0} color="purple" />
+      <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        <StatCard icon={<Icons.Users className="w-5 h-5 md:w-6 md:h-6" />} label="Tổng người dùng" value={stats?.totalUsers || 0} color="indigo" />
+        <StatCard icon={<Icons.Events className="w-5 h-5 md:w-6 md:h-6" />} label="Tổng sự kiện" value={stats?.totalEvents || 0} color="emerald" />
+        <StatCard icon={<Icons.CheckIn className="w-5 h-5 md:w-6 md:h-6" />} label="Tổng check-in" value={stats?.totalCheckins || 0} color="amber" />
+        <StatCard icon={<Icons.CheckIn className="w-5 h-5 md:w-6 md:h-6" />} label="Check-in hôm nay" value={stats?.todayCheckins || 0} color="purple" />
       </div>
 
       {/* Quick Actions */}
-      <div className="bg-white rounded-2xl p-6 shadow-sm">
+      <div className="bg-white rounded-2xl p-5 md:p-6 shadow-sm border border-slate-100">
         <h3 className="text-lg font-black text-slate-900 mb-4">Thao tác nhanh</h3>
-        <div className="flex flex-wrap gap-3">
+        <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 md:gap-3">
           <QuickButton icon={<Icons.Events className="w-5 h-5" />} label="Quản lý sự kiện" onClick={() => setView('events')} color="indigo" />
           <QuickButton icon={<Icons.Boarding className="w-5 h-5" />} label="Quản lý Nội trú" onClick={() => setView('boarding-config')} color="emerald" />
           <QuickButton icon={<Icons.Ranking className="w-5 h-5" />} label="Bảng xếp hạng" onClick={() => setView('ranking')} color="purple" />
@@ -467,12 +557,12 @@ const StatCard: React.FC<{ icon: React.ReactNode; label: string; value: number; 
   };
 
   return (
-    <div className="bg-white rounded-2xl p-5 shadow-sm">
-      <div className={`w-12 h-12 rounded-xl bg-gradient-to-br ${colors[color]} flex items-center justify-center text-white mb-3`}>
+    <div className="bg-white rounded-2xl p-4 md:p-5 shadow-sm border border-slate-100">
+      <div className={`w-10 h-10 md:w-12 md:h-12 rounded-xl bg-gradient-to-br ${colors[color]} flex items-center justify-center text-white mb-3`}>
         {icon}
       </div>
-      <p className="text-slate-500 text-sm">{label}</p>
-      <p className="text-2xl font-black text-slate-900">{value}</p>
+      <p className="text-slate-500 text-[10px] md:text-sm font-medium">{label}</p>
+      <p className="text-xl md:text-2xl font-black text-slate-900 mt-0.5">{value}</p>
     </div>
   );
 };
@@ -487,20 +577,23 @@ const QuickButton: React.FC<{ icon: React.ReactNode; label: string; onClick: () 
   };
 
   return (
-    <button onClick={onClick} className={`px-5 py-2.5 ${colors[color]} text-white rounded-xl font-semibold flex items-center gap-2 transition-all hover:scale-105 shadow-lg`}>
-      {icon}
-      <span>{label}</span>
+    <button
+      onClick={onClick}
+      className={`px-4 md:px-5 py-2.5 ${colors[color]} text-white rounded-xl font-bold md:font-semibold flex items-center justify-center md:justify-start gap-2 transition-all active:scale-95 sm:hover:scale-105 shadow-md overflow-hidden`}
+    >
+      <span className="flex-shrink-0">{icon}</span>
+      <span className="text-sm truncate">{label}</span>
     </button>
   );
 };
 
 const FeatureCard: React.FC<{ icon: React.ReactNode; title: string; desc: string; onClick: () => void }> = ({ icon, title, desc, onClick }) => (
-  <button onClick={onClick} className="bg-white rounded-2xl p-5 shadow-sm text-left hover:shadow-lg hover:-translate-y-1 transition-all group">
-    <div className="w-12 h-12 bg-slate-100 rounded-xl flex items-center justify-center text-slate-600 mb-3 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
+  <button onClick={onClick} className="bg-white rounded-2xl p-4 md:p-5 shadow-sm text-left hover:shadow-lg hover:-translate-y-1 transition-all group overflow-hidden border border-slate-100">
+    <div className="w-10 h-10 md:w-12 md:h-12 bg-slate-100 rounded-xl flex items-center justify-center text-slate-600 mb-3 group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">
       {icon}
     </div>
-    <h3 className="font-bold text-slate-900">{title}</h3>
-    <p className="text-slate-500 text-sm">{desc}</p>
+    <h3 className="font-bold text-slate-900 truncate text-sm md:text-base">{title}</h3>
+    <p className="text-slate-500 text-xs md:text-sm truncate">{desc}</p>
   </button>
 );
 

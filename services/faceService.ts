@@ -235,7 +235,21 @@ export function descriptorToString(descriptor: Float32Array): string {
 
 // Utility: Convert string back to Float32Array
 export function stringToDescriptor(str: string): Float32Array {
-    return new Float32Array(JSON.parse(str));
+    try {
+        if (!str || str === 'undefined' || str === 'null') {
+            console.warn('⚠️ stringToDescriptor received invalid string:', str);
+            return new Float32Array(0);
+        }
+        const arr = JSON.parse(str);
+        if (!Array.isArray(arr)) {
+            console.warn('⚠️ stringToDescriptor: parsed value is not an array');
+            return new Float32Array(0);
+        }
+        return new Float32Array(arr);
+    } catch (e) {
+        console.error('❌ Failed to parse face descriptor:', e, 'Input:', str);
+        return new Float32Array(0);
+    }
 }
 
 // Main function: Verify face from video/image against registered users

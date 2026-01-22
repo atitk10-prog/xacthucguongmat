@@ -6,13 +6,15 @@ import { Event, User, EventCheckin } from '../../types';
 
 // Interface for event participant with face data
 interface EventParticipant {
-    id: string;
+    id: string; // The participant ID (from event_participants table)
     full_name: string;
     avatar_url?: string;
     birth_date?: string;
     organization?: string;
+    student_code?: string; // Added field
     hasFaceDescriptor?: boolean;
     face_descriptor?: string; // Stored JSON descriptor
+    user_id?: string; // Link to system user
 }
 
 interface CheckinPageProps {
@@ -114,7 +116,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     // Check-in cooldown map (userId -> timestamp)
     const checkinCooldownsRef = useRef<Map<string, number>>(new Map());
     const COOLDOWN_PERIOD = 60000; // 60 seconds cooldown
-    const [sensitivity, setSensitivity] = useState(55); // Default 55% (Khắt khe hơn để tránh ghost)
+    const [sensitivity, setSensitivity] = useState(50); // Optimized: 50% (Slightly more sensitive for speed)
 
     // New states for improvements
     const [autoCheckInMode, setAutoCheckInMode] = useState(true);
@@ -464,7 +466,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         // - Mobile: 400ms (~2.5 FPS) to prevent lag and battery drain
         // - Desktop: 150ms (~6.5 FPS) for smoother experience
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        const DETECTION_INTERVAL = isMobile ? 400 : 150;
+        const DETECTION_INTERVAL = isMobile ? 200 : 100; // Optimized: 10 FPS on desktop, 5 FPS on mobile
 
         const detectLoop = async () => {
             if (!videoRef.current || videoRef.current.readyState !== 4) {
@@ -663,9 +665,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                 if (autoCheckInMode && singleFaceDetected && currentMatch && lastTime && !checkInAttempted && !isCooldown) {
                     const stableMs = Date.now() - lastTime;
-                    setFaceStableTime(Math.min(stableMs, 1000));
+                    const TARGET_STABILITY = 400; // Optimized for speed (0.4s)
+                    setFaceStableTime(Math.min(stableMs, TARGET_STABILITY));
 
-                    if (stableMs >= 1000) {
+                    if (stableMs >= TARGET_STABILITY) {
                         console.log('🚀 Check-in after 1s stable:', currentMatch.name);
                         checkInAttempted = true;
                         autoCheckInRef.current = true;
@@ -766,9 +769,12 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // For `require_face` and a recognized person, it's implicitly verified.
             }
 
+            const participant = participants.find(p => p.id === checkInUserId);
+
             const checkinResult = await dataService.checkin({
                 event_id: event.id,
-                user_id: checkInUserId,
+                participant_id: checkInUserId, // This is event_participants.id
+                user_id: participant?.user_id, // Link to system users
                 face_confidence: faceConfidence,
                 face_verified: faceVerified,
                 checkin_mode: event.checkin_mode || 'student'
@@ -1143,7 +1149,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             <div className="w-full h-2 bg-white/20 rounded-full overflow-hidden">
                                 <div
                                     className="h-full bg-gradient-to-r from-emerald-400 to-teal-400 rounded-full transition-all duration-150"
-                                    style={{ width: `${Math.min((faceStableTime / 1000) * 100, 100)}%` }}
+                                    style={{ width: `${Math.min((faceStableTime / 400) * 100, 100)}%` }}
                                 />
                             </div>
                             <p className="text-center text-white/70 text-xs mt-1">
@@ -1188,7 +1194,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 <div className="w-full h-1.5 bg-black/50 rounded-full overflow-hidden backdrop-blur-sm">
                                     <div
                                         className="h-full bg-emerald-400 rounded-full transition-all duration-150"
-                                        style={{ width: `${Math.min((faceStableTime / 1000) * 100, 100)}%` }}
+                                        style={{ width: `${Math.min((faceStableTime / 400) * 100, 100)}%` }}
                                     />
                                 </div>
                             </div>

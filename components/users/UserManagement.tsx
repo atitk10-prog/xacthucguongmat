@@ -70,6 +70,11 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
     const [filterRole, setFilterRole] = useState<string>('all');
     const [searchQuery, setSearchQuery] = useState('');
 
+    // Pagination States
+    const [currentPage, setCurrentPage] = useState(1);
+    const [pageSize, setPageSize] = useState(20);
+    const [totalUsers, setTotalUsers] = useState(0);
+
     // Modal States
     const [showModal, setShowModal] = useState(false);
     const [showBatchModal, setShowBatchModal] = useState(false);
@@ -101,19 +106,44 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
     const [rooms, setRooms] = useState<any[]>([]); // Use any or Room interface if available
 
     useEffect(() => {
-        loadData();
-    }, []);
+        loadUsers();
+    }, [currentPage, pageSize, filterRole]);
+
+    // Debounced search
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            if (currentPage !== 1) setCurrentPage(1);
+            else loadUsers();
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [searchQuery]);
+
+    // Subscribe to Face ID computation updates
+    useEffect(() => {
+        const unsubscribe = dataService.onFaceComputeComplete((userId, result) => {
+            const user = users.find(u => u.id === userId);
+            const userName = user?.full_name || 'Người dùng';
+
+            if (result.success) {
+                success(`✅ Face ID: ${userName} - Thành công!`);
+                // Update local state to reflect the new face_descriptor
+                setUsers(prev => prev.map(u =>
+                    u.id === userId ? { ...u, face_descriptor: 'computed' } as User : u
+                ));
+            } else {
+                toastError(`❌ Face ID: ${userName} - ${result.error || 'Thất bại'}`);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [users, success, toastError]);
 
     const loadData = async () => {
         setIsLoading(true);
         try {
-            const [usersRes, roomsRes] = await Promise.all([
-                dataService.getUsers(),
-                dataService.getRooms()
-            ]);
-
-            if (usersRes.success && usersRes.data) setUsers(usersRes.data);
+            const roomsRes = await dataService.getRooms();
             if (roomsRes.success && roomsRes.data) setRooms(roomsRes.data);
+            await loadUsers();
         } catch (error) {
             console.error('Failed to load data:', error);
         } finally {
@@ -121,10 +151,22 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
         }
     };
 
-    // Remove separate loadUsers and use loadData instead (or keep for refresh)
     const loadUsers = async () => {
-        const result = await dataService.getUsers();
-        if (result.success && result.data) setUsers(result.data);
+        setIsLoading(true);
+        const result = await dataService.getUsers({
+            role: filterRole,
+            search: searchQuery,
+            page: currentPage,
+            pageSize: pageSize
+        });
+
+        if (result.success && result.data) {
+            setUsers(result.data);
+            if (result.data.total !== undefined) {
+                setTotalUsers(result.data.total);
+            }
+        }
+        setIsLoading(false);
     };
 
     const handleSingleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -238,7 +280,11 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
 
                 if (updateError) throw updateError;
 
-                setUploadLogs(prev => [`✅ Đã cập nhật ảnh cho: ${foundUsers.full_name}`, ...prev]);
+                // 4. Trigger Face ID auto-compute
+                dataService.computeAndSaveFaceDescriptor(foundUsers.id, urlData.publicUrl)
+                    .catch(e => console.error('Batch face compute trigger error:', e));
+
+                setUploadLogs(prev => [`✅ Đã cập nhật ảnh & đang phân tích Face ID cho: ${foundUsers.full_name}`, ...prev]);
                 successCount++;
 
             } catch (err: any) {
@@ -432,15 +478,8 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
         } catch (error) { console.error(error); }
     };
 
-    const filteredUsers = users.filter(user => {
-        const matchesRole = filterRole === 'all' || user.role === filterRole;
-        const q = searchQuery.toLowerCase();
-        const matchesSearch =
-            user.full_name.toLowerCase().includes(q) ||
-            (user.email && user.email.toLowerCase().includes(q)) ||
-            (user.student_code && user.student_code.toLowerCase().includes(q));
-        return matchesRole && matchesSearch;
-    });
+    const filteredUsers = users; // Filtering is now done on server-side
+
 
     const getRoleBadge = (role: string) => {
         const badges: Record<string, { text: string; color: string }> = {
@@ -506,7 +545,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                         className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     />
                 </div>
-                <div className="flex gap-2 bg-white rounded-2xl p-1 shadow-sm border border-slate-100">
+                <div className="flex gap-2 bg-white rounded-2xl p-1 shadow-sm border border-slate-100 overflow-x-auto scrollbar-hide w-full md:w-fit">
                     {[
                         { id: 'all', label: 'Tất cả' },
                         { id: 'admin', label: 'Quản trị' },
@@ -516,7 +555,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                         <button
                             key={role.id}
                             onClick={() => setFilterRole(role.id)}
-                            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${filterRole === role.id ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
+                            className={`flex-shrink-0 px-4 py-2 rounded-xl text-sm font-bold transition-all ${filterRole === role.id ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'}`}
                         >
                             {role.label}
                         </button>
@@ -525,76 +564,151 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
             </div>
 
             {/* Users Table */}
-            <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
-                <table className="w-full">
-                    <thead className="bg-slate-50 border-b border-slate-100">
-                        <tr>
-                            <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Họ tên / Ảnh</th>
-                            <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Mã số</th>
-                            <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Vai trò</th>
-                            <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Ngày sinh</th>
-                            <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Lớp/Tổ/Phòng</th>
-                            <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase text-right">Thao tác</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {filteredUsers.length === 0 ? (
-                            <tr><td colSpan={5} className="px-4 py-12 text-center text-slate-400">Không tìm thấy dữ liệu</td></tr>
-                        ) : (
-                            filteredUsers.map(user => (
-                                <tr key={user.id} className="hover:bg-slate-50 transition-colors">
-                                    <td className="px-4 py-3">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
-                                                {user.avatar_url ? (
-                                                    <img src={user.avatar_url} alt={user.full_name} className="w-full h-full object-cover" />
-                                                ) : (
-                                                    <div className="w-full h-full flex items-center justify-center text-slate-300">
-                                                        <Icons.User className="w-6 h-6" />
-                                                    </div>
+            <div className="bg-white rounded-2xl md:rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                <div className="overflow-x-auto">
+                    <table className="w-full min-w-[1000px] md:min-w-0">
+                        <thead className="bg-slate-50 border-b border-slate-100">
+                            <tr>
+                                <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Họ tên / Ảnh</th>
+                                <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Mã số</th>
+                                <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Vai trò</th>
+                                <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Ngày sinh</th>
+                                <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Lớp/Tổ/Phòng</th>
+                                <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase text-right">Thao tác</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
+                            {filteredUsers.length === 0 ? (
+                                <tr><td colSpan={5} className="px-4 py-12 text-center text-slate-400">Không tìm thấy dữ liệu</td></tr>
+                            ) : (
+                                filteredUsers.map(user => (
+                                    <tr key={user.id} className="hover:bg-slate-50 transition-colors">
+                                        <td className="px-4 py-3">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
+                                                    {user.avatar_url ? (
+                                                        <img src={user.avatar_url} alt={user.full_name} className="w-full h-full object-cover" />
+                                                    ) : (
+                                                        <div className="w-full h-full flex items-center justify-center text-slate-300">
+                                                            <Icons.User className="w-6 h-6" />
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="text-left">
+                                                    <p className="font-bold text-slate-900">{user.full_name}</p>
+                                                    <p className="text-xs text-slate-500">{user.email}</p>
+                                                </div>
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 font-mono text-sm text-slate-600">{user.student_code || '—'}</td>
+                                        <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-xs font-bold ${getRoleBadge(user.role).color}`}>{getRoleBadge(user.role).text}</span></td>
+                                        <td className="px-4 py-3 text-slate-600">{user.birth_date ? new Date(user.birth_date).toLocaleDateString('vi-VN') : '—'}</td>
+                                        <td className="px-4 py-3 text-slate-600">
+                                            <div className="flex flex-col">
+                                                <span className="font-bold">{user.class_id || user.organization || '—'}</span>
+                                                {user.room_id && (() => {
+                                                    const r = rooms.find(room => room.id === user.room_id);
+                                                    if (!r) return null;
+                                                    return (
+                                                        <div className="flex items-center gap-1 mt-1 text-xs text-indigo-600 font-bold bg-indigo-50 px-2 py-1 rounded-lg w-fit">
+                                                            <Icons.Home className="w-3 h-3" />
+                                                            <span>{r.name} - Khu {r.zone}</span>
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </div>
+                                        </td>
+                                        <td className="px-4 py-3 text-right">
+                                            <div className="flex gap-2 justify-end">
+                                                <button onClick={() => handleEdit(user)} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg">
+                                                    <Icons.Edit className="w-5 h-5" />
+                                                </button>
+                                                {user.email !== 'admin@educheck.com' && (
+                                                    <button onClick={() => handleDelete(user)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg">
+                                                        <Icons.Trash className="w-5 h-5" />
+                                                    </button>
                                                 )}
                                             </div>
-                                            <div className="text-left">
-                                                <p className="font-bold text-slate-900">{user.full_name}</p>
-                                                <p className="text-xs text-slate-500">{user.email}</p>
-                                            </div>
-                                        </div>
-                                    </td>
-                                    <td className="px-4 py-3 font-mono text-sm text-slate-600">{user.student_code || '—'}</td>
-                                    <td className="px-4 py-3"><span className={`px-2 py-1 rounded-full text-xs font-bold ${getRoleBadge(user.role).color}`}>{getRoleBadge(user.role).text}</span></td>
-                                    <td className="px-4 py-3 text-slate-600">{user.birth_date ? new Date(user.birth_date).toLocaleDateString('vi-VN') : '—'}</td>
-                                    <td className="px-4 py-3 text-slate-600">
-                                        <div className="flex flex-col">
-                                            <span className="font-bold">{user.class_id || user.organization || '—'}</span>
-                                            {user.room_id && (() => {
-                                                const r = rooms.find(room => room.id === user.room_id);
-                                                if (!r) return null;
-                                                return (
-                                                    <div className="flex items-center gap-1 mt-1 text-xs text-indigo-600 font-bold bg-indigo-50 px-2 py-1 rounded-lg w-fit">
-                                                        <Icons.Home className="w-3 h-3" />
-                                                        <span>{r.name} - Khu {r.zone}</span>
-                                                    </div>
-                                                );
-                                            })()}
-                                        </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-right">
-                                        <div className="flex gap-2 justify-end">
-                                            <button onClick={() => handleEdit(user)} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg">
-                                                <Icons.Edit className="w-5 h-5" />
+                                        </td>
+                                    </tr>
+                                ))
+                            )}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* Pagination UI */}
+                <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
+                    <div className="text-sm font-medium text-slate-500">
+                        Hiển thị <span className="text-slate-900 font-bold">{(currentPage - 1) * pageSize + 1} - {Math.min(currentPage * pageSize, totalUsers)}</span> trong tổng số <span className="text-slate-900 font-bold">{totalUsers}</span> người dùng
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 mr-4">
+                            <span className="text-xs font-bold text-slate-400 uppercase">Hiển thị:</span>
+                            <select
+                                value={pageSize}
+                                onChange={(e) => {
+                                    setPageSize(Number(e.target.value));
+                                    setCurrentPage(1);
+                                }}
+                                className="bg-white border border-slate-200 rounded-lg px-2 py-1 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                            >
+                                <option value={10}>10</option>
+                                <option value={20}>20</option>
+                                <option value={50}>50</option>
+                                <option value={100}>100</option>
+                            </select>
+                        </div>
+
+                        <div className="flex gap-1">
+                            <button
+                                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                                disabled={currentPage === 1}
+                                className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 disabled:opacity-30 hover:bg-slate-50 transition-colors"
+                            >
+                                <Icons.ChevronLeft className="w-5 h-5" />
+                            </button>
+
+                            {/* Page Numbers */}
+                            <div className="flex gap-1">
+                                {(() => {
+                                    const totalPages = Math.ceil(totalUsers / pageSize);
+                                    const pages = [];
+                                    const maxVisible = 5;
+
+                                    let start = Math.max(1, currentPage - Math.floor(maxVisible / 2));
+                                    let end = Math.min(totalPages, start + maxVisible - 1);
+
+                                    if (end - start + 1 < maxVisible) {
+                                        start = Math.max(1, end - maxVisible + 1);
+                                    }
+
+                                    for (let i = start; i <= end; i++) {
+                                        pages.push(
+                                            <button
+                                                key={i}
+                                                onClick={() => setCurrentPage(i)}
+                                                className={`w-10 h-10 rounded-xl font-bold transition-all ${currentPage === i ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                                            >
+                                                {i}
                                             </button>
-                                            {user.email !== 'admin@educheck.com' && (
-                                                <button onClick={() => handleDelete(user)} className="p-2 text-red-600 hover:bg-red-50 rounded-lg">
-                                                    <Icons.Trash className="w-5 h-5" />
-                                                </button>
-                                            )}
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
-                        )}
-                    </tbody>
-                </table>
+                                        );
+                                    }
+                                    return pages;
+                                })()}
+                            </div>
+
+                            <button
+                                onClick={() => setCurrentPage(prev => Math.min(Math.ceil(totalUsers / pageSize), prev + 1))}
+                                disabled={currentPage >= Math.ceil(totalUsers / pageSize)}
+                                className="p-2 rounded-xl bg-white border border-slate-200 text-slate-600 disabled:opacity-30 hover:bg-slate-50 transition-colors"
+                            >
+                                <Icons.ChevronLeft className="w-5 h-5 rotate-180" />
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             {/* Single Add/Edit Modal */}

@@ -5,6 +5,7 @@
 
 import { supabase, isSupabaseConfigured } from './supabaseClient';
 import { User, Event, EventCheckin, EventParticipant, BoardingConfig, BoardingTimeSlot, Certificate } from '../types';
+import { faceService, descriptorToString, base64ToImage } from './faceService';
 
 // =====================================================
 // CACHING SYSTEM (kept for offline support)
@@ -181,26 +182,332 @@ async function getMe(): Promise<ApiResponse<User>> {
 }
 
 // =====================================================
+// FACE DESCRIPTOR AUTO-COMPUTE
+// =====================================================
+
+// Track pending Face ID computations for UI status
+const pendingFaceComputes = new Map<string, { status: 'processing' | 'success' | 'failed'; error?: string }>();
+
+// Listeners for Face ID computation updates
+const faceComputeListeners: ((userId: string, result: { success: boolean; error?: string }) => void)[] = [];
+
+/**
+ * Register a listener for Face ID computation updates
+ */
+function onFaceComputeComplete(callback: (userId: string, result: { success: boolean; error?: string }) => void) {
+    faceComputeListeners.push(callback);
+    return () => {
+        const idx = faceComputeListeners.indexOf(callback);
+        if (idx > -1) faceComputeListeners.splice(idx, 1);
+    };
+}
+
+/**
+ * Get pending Face ID computation status for a user
+ */
+function getFaceComputeStatus(userId: string): { status: 'processing' | 'success' | 'failed' | 'none'; error?: string } {
+    const pending = pendingFaceComputes.get(userId);
+    return pending || { status: 'none' };
+}
+
+/**
+ * Get all pending Face ID computations
+ */
+function getPendingFaceComputes(): Map<string, { status: 'processing' | 'success' | 'failed'; error?: string }> {
+    return new Map(pendingFaceComputes);
+}
+
+/**
+ * Auto-compute face descriptor from avatar image and save to database
+ * Enhanced with callbacks, auto-retry, and status tracking
+ * 
+ * @param userId - ID of the user to update
+ * @param avatarUrl - Base64 or URL of the avatar image
+ * @param options - Optional configuration
+ * @returns Promise with success/failure result
+ */
+async function computeAndSaveFaceDescriptor(
+    userId: string,
+    avatarUrl: string,
+    options?: {
+        onComplete?: (result: { success: boolean; error?: string }) => void;
+        maxRetries?: number;
+    }
+): Promise<{ success: boolean; error?: string }> {
+    console.log(`🔄 [FaceCompute] Starting for user ${userId}...`);
+
+    const maxRetries = options?.maxRetries ?? 3;
+    let retryCount = 0;
+
+    // Mark as processing
+    pendingFaceComputes.set(userId, { status: 'processing' });
+
+    // Helper to notify completion
+    const notifyResult = (result: { success: boolean; error?: string }) => {
+        pendingFaceComputes.set(userId, {
+            status: result.success ? 'success' : 'failed',
+            error: result.error
+        });
+
+        // Auto-clear status after 10 seconds
+        setTimeout(() => pendingFaceComputes.delete(userId), 10000);
+
+        // Notify callback
+        options?.onComplete?.(result);
+
+        // Notify all listeners
+        faceComputeListeners.forEach(listener => listener(userId, result));
+
+        return result;
+    };
+
+    // Skip if no avatar
+    if (!avatarUrl || avatarUrl.trim() === '') {
+        const error = 'Không có ảnh avatar';
+        console.warn(`⚠️ [FaceCompute] No avatar URL for user ${userId}`);
+        return notifyResult({ success: false, error });
+    }
+
+    // Retry loop for model loading
+    while (retryCount <= maxRetries) {
+        try {
+            console.log(`🔄 [FaceCompute] Loading face models... (attempt ${retryCount + 1}/${maxRetries + 1})`);
+
+            // Ensure models are loaded with retry
+            if (!faceService.isModelsLoaded()) {
+                await faceService.loadModels();
+            }
+
+            // Double-check models are loaded
+            if (!faceService.isModelsLoaded()) {
+                throw new Error('MODEL_NOT_LOADED');
+            }
+
+            console.log(`🔄 [FaceCompute] Models ready, loading image...`);
+
+            // Handle different URL types
+            let img: HTMLImageElement;
+
+            if (avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://')) {
+                // For HTTP URLs, we need to handle CORS
+                try {
+                    img = await base64ToImage(avatarUrl);
+                } catch (corsError) {
+                    console.log(`🔄 [FaceCompute] Direct load failed, trying fetch...`);
+                    const response = await fetch(avatarUrl);
+                    const blob = await response.blob();
+                    const blobUrl = URL.createObjectURL(blob);
+                    img = await base64ToImage(blobUrl);
+                    URL.revokeObjectURL(blobUrl);
+                }
+            } else {
+                // Base64 or data URL
+                img = await base64ToImage(avatarUrl);
+            }
+
+            console.log(`🔄 [FaceCompute] Image loaded (${img.width}x${img.height}), detecting face...`);
+
+            // Detect face
+            const descriptor = await faceService.getFaceDescriptor(img);
+
+            if (descriptor) {
+                const descriptorStr = descriptorToString(descriptor);
+                console.log(`🔄 [FaceCompute] Face detected! Saving to database...`);
+
+                // Save to database
+                const { error } = await supabase
+                    .from('users')
+                    .update({ face_descriptor: descriptorStr })
+                    .eq('id', userId);
+
+                if (error) {
+                    console.error(`❌ [FaceCompute] DB save failed for user ${userId}:`, error.message);
+                    return notifyResult({ success: false, error: 'Lỗi lưu vào database: ' + error.message });
+                } else {
+                    console.log(`✅ [FaceCompute] SUCCESS! Face descriptor saved for user ${userId}`);
+                    return notifyResult({ success: true });
+                }
+            } else {
+                console.warn(`⚠️ [FaceCompute] No face detected in avatar for user ${userId}`);
+                return notifyResult({ success: false, error: 'Không tìm thấy khuôn mặt trong ảnh' });
+            }
+        } catch (e: any) {
+            const errorMsg = e.message || String(e);
+            console.error(`❌ [FaceCompute] Error for user ${userId} (attempt ${retryCount + 1}):`, errorMsg);
+
+            // Retry if model not loaded
+            if (errorMsg === 'MODEL_NOT_LOADED' && retryCount < maxRetries) {
+                retryCount++;
+                console.log(`🔄 [FaceCompute] Retrying in 1 second...`);
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                continue;
+            }
+
+            return notifyResult({ success: false, error: 'Lỗi xử lý: ' + errorMsg });
+        }
+    }
+
+    return notifyResult({ success: false, error: 'Đã thử ' + (maxRetries + 1) + ' lần nhưng không thành công' });
+}
+
+/**
+ * Batch compute face descriptors for all users with avatar but no face_descriptor
+ * Returns progress updates via callback
+ */
+async function batchComputeFaceDescriptors(
+    onProgress?: (current: number, total: number, name: string) => void
+): Promise<{ success: number; failed: number; total: number }> {
+    try {
+        // Get users with avatar but no face_descriptor
+        const { data: users, error } = await supabase
+            .from('users')
+            .select('id, full_name, avatar_url')
+            .not('avatar_url', 'is', null)
+            .is('face_descriptor', null)
+            .neq('avatar_url', '');
+
+        if (error || !users) {
+            console.error('Failed to fetch users for batch compute:', error);
+            return { success: 0, failed: 0, total: 0 };
+        }
+
+        const total = users.length;
+        let success = 0;
+        let failed = 0;
+
+        console.log(`🚀 Starting batch compute for ${total} users...`);
+
+        // Dynamic import
+        const { faceService, descriptorToString } = await import('./faceService');
+        if (!faceService.isModelsLoaded()) {
+            await faceService.loadModels();
+        }
+
+        // Helper function to load image with CORS handling
+        const loadImageWithCors = async (url: string): Promise<HTMLImageElement> => {
+            // For URLs (not base64), fetch as blob to avoid CORS tainted canvas
+            if (url.startsWith('http://') || url.startsWith('https://')) {
+                const response = await fetch(url);
+                const blob = await response.blob();
+                const blobUrl = URL.createObjectURL(blob);
+
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.crossOrigin = 'anonymous';
+                    img.onload = () => {
+                        URL.revokeObjectURL(blobUrl); // Clean up
+                        resolve(img);
+                    };
+                    img.onerror = () => {
+                        URL.revokeObjectURL(blobUrl);
+                        reject(new Error('Failed to load image'));
+                    };
+                    img.src = blobUrl;
+                });
+            } else {
+                // Base64 image
+                return new Promise((resolve, reject) => {
+                    const img = new Image();
+                    img.onload = () => resolve(img);
+                    img.onerror = reject;
+                    img.src = url;
+                });
+            }
+        };
+
+        // Process sequentially to avoid overwhelming the browser
+        for (let i = 0; i < users.length; i++) {
+            const user = users[i];
+            onProgress?.(i + 1, total, user.full_name);
+
+            try {
+                const img = await loadImageWithCors(user.avatar_url);
+                const descriptor = await faceService.getFaceDescriptor(img);
+
+                if (descriptor) {
+                    const descriptorStr = descriptorToString(descriptor);
+
+                    const { error: updateError } = await supabase
+                        .from('users')
+                        .update({ face_descriptor: descriptorStr })
+                        .eq('id', user.id);
+
+                    if (!updateError) {
+                        success++;
+                        console.log(`✅ ${i + 1}/${total} - ${user.full_name}`);
+                    } else {
+                        failed++;
+                        console.warn(`❌ ${i + 1}/${total} - ${user.full_name}: DB Error`);
+                    }
+                } else {
+                    failed++;
+                    console.warn(`⚠️ ${i + 1}/${total} - ${user.full_name}: No face detected`);
+                }
+            } catch (e) {
+                failed++;
+                console.warn(`❌ ${i + 1}/${total} - ${user.full_name}: ${e}`);
+            }
+        }
+
+        console.log(`🏁 Batch complete: ${success} success, ${failed} failed out of ${total}`);
+        return { success, failed, total };
+    } catch (e) {
+        console.error('Batch compute error:', e);
+        return { success: 0, failed: 0, total: 0 };
+    }
+}
+
+// =====================================================
 // USERS API
 // =====================================================
-async function getUsers(filters?: { role?: string; status?: string }): Promise<ApiResponse<User[]>> {
+async function getUsers(options?: {
+    role?: string;
+    status?: string;
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    missingFaceId?: boolean;
+}): Promise<ApiResponse<User[] & { total?: number }>> {
     try {
-        // Select only necessary fields for faster loading
-        let query = supabase.from('users').select('id, full_name, email, role, avatar_url, status, student_code, organization, created_at, birth_date, room_id, face_descriptor, total_points');
+        const isPaging = options?.page !== undefined && options?.pageSize !== undefined;
 
-        if (filters?.role) {
-            query = query.eq('role', filters.role);
+        let query = supabase.from('users').select(
+            'id, full_name, email, role, avatar_url, status, student_code, organization, created_at, birth_date, room_id, face_descriptor, total_points',
+            { count: isPaging ? 'exact' : undefined }
+        );
+
+        if (options?.role && options.role !== 'all') {
+            query = query.eq('role', options.role);
         }
-        if (filters?.status) {
-            query = query.eq('status', filters.status);
+        if (options?.status && options.status !== 'all') {
+            query = query.eq('status', options.status);
+        }
+        if (options?.search) {
+            const q = options.search;
+            query = query.or(`full_name.ilike.%${q}%,email.ilike.%${q}%,student_code.ilike.%${q}%`);
+        }
+        if (options?.missingFaceId) {
+            query = query.is('face_descriptor', null);
         }
 
-        const { data, error } = await query
-            .order('created_at', { ascending: false })
-            .range(0, 4999); // Increase limit to load up to 5000 users
+        if (isPaging) {
+            const from = (options!.page! - 1) * options!.pageSize!;
+            const to = from + options!.pageSize! - 1;
+            query = query.range(from, to);
+        } else {
+            query = query.range(0, 4999);
+        }
+
+        const { data, error, count } = await query.order('created_at', { ascending: false });
 
         if (error) return { success: false, error: error.message };
-        return { success: true, data: data as User[] };
+
+        const result = data as User[] & { total?: number };
+        if (isPaging && count !== null) {
+            result.total = count;
+        }
+
+        return { success: true, data: result };
     } catch (err) {
         return { success: false, error: 'Lỗi tải danh sách người dùng' };
     }
@@ -243,6 +550,13 @@ async function createUser(userData: Partial<User> & { password?: string }): Prom
             .single();
 
         if (error) return { success: false, error: error.message };
+
+        // Auto-compute face descriptor if avatar is provided (runs in background)
+        if (userData.avatar_url && !userData.face_descriptor) {
+            computeAndSaveFaceDescriptor(data.id, userData.avatar_url)
+                .catch(e => console.warn('Background face compute failed:', e));
+        }
+
         clearCache('users');
         return { success: true, data: data as User, message: 'Tạo người dùng thành công!' };
     } catch (err) {
@@ -289,6 +603,14 @@ async function updateUser(id: string, userData: Partial<User> & { password?: str
             .single();
 
         if (error) return { success: false, error: error.message };
+
+        // Auto re-compute face descriptor if avatar changed (runs in background)
+        // Only if face_descriptor is not explicitly provided in the update
+        if (userData.avatar_url && !userData.face_descriptor) {
+            computeAndSaveFaceDescriptor(id, userData.avatar_url)
+                .catch(e => console.warn('Background face compute failed:', e));
+        }
+
         clearCache('users');
         return { success: true, data: data as User, message: 'Cập nhật thành công!' };
     } catch (err) {
@@ -368,6 +690,61 @@ async function getEvents(filters?: { status?: string }): Promise<ApiResponse<Eve
     }
 }
 
+async function getEventsWithCounts(): Promise<ApiResponse<{
+    events: Event[],
+    participantCounts: Record<string, number>,
+    checkedInCounts: Record<string, number>
+}>> {
+    try {
+        const cacheKey = 'events_with_counts';
+        const cached = getFromCache<any>(cacheKey);
+        if (cached) return { success: true, data: cached };
+
+        const eventsResult = await getEvents();
+        if (!eventsResult.success || !eventsResult.data) {
+            return { success: false, error: eventsResult.error };
+        }
+
+        const events = eventsResult.data;
+        const eventIds = events.map(e => e.id);
+
+        if (eventIds.length === 0) {
+            return { success: true, data: { events, participantCounts: {}, checkedInCounts: {} } };
+        }
+
+        // Fetch all participant counts in ONE query
+        const { data: pData, error: pError } = await supabase
+            .from('event_participants')
+            .select('event_id')
+            .in('event_id', eventIds);
+
+        // Fetch all check-in counts in ONE query
+        const { data: cData, error: cError } = await supabase
+            .from('checkins')
+            .select('event_id')
+            .in('event_id', eventIds);
+
+        const pCounts: Record<string, number> = {};
+        const cCounts: Record<string, number> = {};
+
+        eventIds.forEach(id => {
+            pCounts[id] = 0;
+            cCounts[id] = 0;
+        });
+
+        pData?.forEach(row => { if (pCounts[row.event_id] !== undefined) pCounts[row.event_id]++; });
+        cData?.forEach(row => { if (cCounts[row.event_id] !== undefined) cCounts[row.event_id]++; });
+
+        const resultData = { events, participantCounts: pCounts, checkedInCounts: cCounts };
+        setCache(cacheKey, resultData, 30000); // 30s cache
+
+        return { success: true, data: resultData };
+    } catch (err: any) {
+        console.error('getEventsWithCounts error:', err);
+        return { success: false, error: 'Lỗi tải danh sách sự kiện và thống kê' };
+    }
+}
+
 
 
 async function getEvent(id: string): Promise<ApiResponse<Event>> {
@@ -442,12 +819,19 @@ async function deleteEvent(id: string): Promise<ApiResponse<void>> {
 
 async function checkin(data: {
     event_id: string;
-    user_id: string;
+    user_id?: string;
+    participant_id?: string;
     face_confidence?: number;
     face_verified?: boolean;
-    checkin_mode?: 'student' | 'event'; // New parameter
+    checkin_mode?: 'student' | 'event';
+    device_info?: string;
+    ip_address?: string;
 }): Promise<ApiResponse<{ checkin: EventCheckin; event: Event }>> {
     try {
+        if (!data.user_id && !data.participant_id) {
+            return { success: false, error: 'Thiếu thông tin người điểm danh' };
+        }
+
         // Get event first
         const { data: event, error: eventError } = await supabase
             .from('events')
@@ -460,12 +844,15 @@ async function checkin(data: {
         }
 
         // Check if already checked in
-        const { data: existingCheckin } = await supabase
-            .from('checkins')
-            .select('id')
-            .eq('event_id', data.event_id)
-            .eq('participant_id', data.user_id)
-            .single();
+        let query = supabase.from('checkins').select('id').eq('event_id', data.event_id);
+
+        if (data.participant_id) {
+            query = query.eq('participant_id', data.participant_id);
+        } else if (data.user_id) {
+            query = query.eq('user_id', data.user_id);
+        }
+
+        const { data: existingCheckin } = await query.single();
 
         if (existingCheckin) {
             return { success: false, error: 'Bạn đã check-in sự kiện này rồi' };
@@ -488,43 +875,22 @@ async function checkin(data: {
         }
 
         // Create checkin
-        // Note: participant_id should only be set if it's a valid UUID from event_participants
-        // Check if user_id looks like a UUID (36 chars with dashes)
-        const isValidUUID = data.user_id && data.user_id.length === 36 && data.user_id.includes('-');
-
-        let { data: newCheckin, error: checkinError } = await supabase
+        const { data: newCheckin, error: checkinError } = await supabase
             .from('checkins')
             .insert({
                 event_id: data.event_id,
-                participant_id: isValidUUID ? data.user_id : null,
+                user_id: data.user_id || null,
+                participant_id: data.participant_id || null,
                 checkin_time: checkinTime.toISOString(),
                 status,
                 face_confidence: data.face_confidence || 0,
                 face_verified: data.face_verified || false,
-                points_earned: points
+                points_earned: points,
+                device_info: data.device_info,
+                ip_address: data.ip_address
             })
             .select()
             .single();
-
-        // RETRY: If Foreign Key violation (user not in event_participants), try inserting with null participant_id
-        if (checkinError && checkinError.code === '23503') {
-            const { data: retryData, error: retryError } = await supabase
-                .from('checkins')
-                .insert({
-                    event_id: data.event_id,
-                    participant_id: null, // Set to null to fallback
-                    checkin_time: checkinTime.toISOString(),
-                    status,
-                    face_confidence: data.face_confidence || 0,
-                    face_verified: data.face_verified || false,
-                    points_earned: points
-                })
-                .select()
-                .single();
-
-            newCheckin = retryData;
-            checkinError = retryError;
-        }
 
         if (checkinError) {
             return { success: false, error: checkinError.message };
@@ -617,6 +983,20 @@ async function getEventParticipantCount(eventId: string): Promise<ApiResponse<nu
         return { success: true, data: count || 0 };
     } catch (err) {
         return { success: false, error: 'Lỗi đếm số lượng người tham gia' };
+    }
+}
+
+async function getEventCheckedInCount(eventId: string): Promise<ApiResponse<number>> {
+    try {
+        const { count, error } = await supabase
+            .from('checkins')
+            .select('*', { count: 'exact', head: true })
+            .eq('event_id', eventId);
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: count || 0 };
+    } catch (err) {
+        return { success: false, error: 'Lỗi đếm số lượng người đã check-in' };
     }
 }
 
@@ -1648,6 +2028,10 @@ async function getRanking(options?: {
         const page = options?.page || 0;
         const offset = page * limit;
 
+        const cacheKey = `ranking_${type}_${options?.role || 'all'}_${options?.organization || 'all'}_${page}`;
+        const cached = getFromCache<RankingUser[]>(cacheKey);
+        if (cached) return { success: true, data: cached };
+
         if (type === 'student') {
             let query = supabase
                 .from('users')
@@ -1694,6 +2078,7 @@ async function getRanking(options?: {
                 absent_count: attendanceMap[user.id]?.absent || 0
             }));
 
+            setCache(cacheKey, rankedData, 30000); // 30s cache
             return { success: true, data: rankedData as RankingUser[] };
         } else {
             // Class Ranking: Group by organization
@@ -1705,7 +2090,7 @@ async function getRanking(options?: {
 
             if (error) return { success: false, error: error.message };
 
-            // Manual grouping (SQL GROUP BY + AVG is better but this is safer for complex schemas)
+            // Manual grouping
             const classMap: Record<string, { name: string, total: number, count: number }> = {};
             data?.forEach(u => {
                 const org = u.organization;
@@ -1724,12 +2109,15 @@ async function getRanking(options?: {
                 average_points: Math.round((c.total / c.count) * 10) / 10
             })).sort((a, b) => b.average_points - a.average_points);
 
+            const result = classList.slice(offset, offset + limit).map((c, i) => ({
+                ...c,
+                rank: offset + i + 1
+            })) as any;
+
+            setCache(cacheKey, result, 30000); // 30s cache
             return {
                 success: true,
-                data: classList.slice(offset, offset + limit).map((c, i) => ({
-                    ...c,
-                    rank: offset + i + 1
-                })) as any
+                data: result
             };
         }
     } catch (err: any) {
@@ -2364,6 +2752,7 @@ export const dataService = {
 
     // Events
     getEvents,
+    getEventsWithCounts,
     getEvent,
     createEvent,
     updateEvent,
@@ -2376,6 +2765,7 @@ export const dataService = {
     // Participants
     getEventParticipants,
     getEventParticipantCount,
+    getEventCheckedInCount,
     updateParticipantFaceDescriptor,
     uploadParticipantAvatarWithFaceID, // NEW: Auto-compute face ID when uploading avatar
     saveEventParticipants,
@@ -2455,7 +2845,14 @@ export const dataService = {
 
     // Cache
     clearCache,
-    getAllStudentsForCheckin // Export new function
+    getAllStudentsForCheckin, // Export new function
+
+    // Face ID
+    batchComputeFaceDescriptors,
+    computeAndSaveFaceDescriptor,
+    onFaceComputeComplete,
+    getFaceComputeStatus,
+    getPendingFaceComputes
 };
 
 /**
@@ -2692,6 +3089,10 @@ async function getPointStatistics(options: {
     userId?: string;
 }): Promise<ApiResponse<any>> {
     try {
+        const cacheKey = `point_stats_${options.range}_${options.userId || 'all'}`;
+        const cached = getFromCache<any>(cacheKey);
+        if (cached) return { success: true, data: cached };
+
         const now = new Date();
         let startDate = new Date();
 
@@ -2735,16 +3136,19 @@ async function getPointStatistics(options: {
             }
         });
 
+        const resultData = {
+            totalPoints,
+            totalAdded,
+            totalDeducted,
+            byCategory,
+            logsCount: logs.length,
+            range: options.range
+        };
+
+        setCache(cacheKey, resultData, 30000); // 30s cache
         return {
             success: true,
-            data: {
-                totalPoints,
-                totalAdded,
-                totalDeducted,
-                byCategory,
-                logsCount: logs.length,
-                range: options.range
-            }
+            data: resultData
         };
     } catch (err: any) {
         console.error('getPointStatistics error:', err);

@@ -119,9 +119,59 @@ const BoardingConfigTab: React.FC = () => {
     // Edit Form State
     const [editForm, setEditForm] = useState<Partial<User>>({});
 
+    // Batch Face ID Compute State
+    const [showBatchModal, setShowBatchModal] = useState(false);
+    const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0, name: '' });
+    const [batchResult, setBatchResult] = useState<{ success: number; failed: number; total: number } | null>(null);
+    const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+
+    const handleBatchComputeFaceID = async () => {
+        setShowBatchModal(true);
+        setIsBatchProcessing(true);
+        setBatchResult(null);
+        setBatchProgress({ current: 0, total: 0, name: 'Đang khởi tạo...' });
+
+        try {
+            const result = await dataService.batchComputeFaceDescriptors((current, total, name) => {
+                setBatchProgress({ current, total, name });
+            });
+            setBatchResult(result);
+
+            if (result.success > 0) {
+                toastSuccess(`Đã tính toán Face ID cho ${result.success}/${result.total} học sinh`);
+                // Reload students to update face_descriptor status
+                loadData();
+            }
+        } catch (e) {
+            toastError('Lỗi xử lý batch: ' + e);
+        } finally {
+            setIsBatchProcessing(false);
+        }
+    };
+
     useEffect(() => {
         loadData();
     }, []);
+
+    // Subscribe to Face ID computation updates
+    useEffect(() => {
+        const unsubscribe = dataService.onFaceComputeComplete((userId, result) => {
+            const student = students.find(s => s.id === userId);
+            const name = student?.full_name || 'Học sinh';
+
+            if (result.success) {
+                toastSuccess(`✅ Face ID: ${name} - Thành công!`);
+                // Update local state
+                setStudents(prev => prev.map(s =>
+                    s.id === userId ? { ...s, face_descriptor: 'computed' } as User : s
+                ));
+            } else {
+                toastError(`❌ Face ID: ${name} - ${result.error || 'Thất bại'}`);
+            }
+        });
+
+        return () => unsubscribe();
+    }, [students, toastSuccess, toastError]);
 
     const loadData = async () => {
         setIsLoading(true);
@@ -313,7 +363,14 @@ const BoardingConfigTab: React.FC = () => {
                     <h2 className="text-2xl font-black text-slate-900">Cấu hình & Danh sách</h2>
                     <p className="text-slate-500">Thiết lập giờ giới nghiêm và quản lý học sinh nội trú</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
+                    <Button
+                        onClick={handleBatchComputeFaceID}
+                        icon={<Icons.User className="w-4 h-4" />}
+                        variant="secondary"
+                    >
+                        Batch Compute Face ID
+                    </Button>
                     <Button
                         onClick={() => window.open('/boarding-run', '_blank')}
                         icon={<Icons.CheckIn className="w-4 h-4" />}
@@ -441,8 +498,8 @@ const BoardingConfigTab: React.FC = () => {
                             </div>
                         </div>
 
-                        <div className="overflow-y-auto flex-1 min-h-[500px]">
-                            <table className="w-full">
+                        <div className="overflow-x-auto overflow-y-auto flex-1 min-h-[400px] md:min-h-[500px]">
+                            <table className="w-full min-w-[700px]">
                                 <thead className="bg-slate-50 sticky top-0 z-10 text-xs font-semibold text-slate-500 uppercase tracking-wider text-left">
                                     <tr>
                                         <th className="px-4 py-3">Học sinh</th>
@@ -760,6 +817,85 @@ const BoardingConfigTab: React.FC = () => {
                             >
                                 {isProcessing ? 'Đang lưu...' : 'Lưu'}
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Batch Compute Face ID Modal */}
+            {showBatchModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl w-full max-w-md p-6 animate-scale-in">
+                        <div className="text-center mb-6">
+                            <div className="w-16 h-16 bg-indigo-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                                <Icons.User className="w-8 h-8 text-indigo-600" />
+                            </div>
+                            <h3 className="text-xl font-bold text-slate-900">Batch Compute Face ID</h3>
+                            <p className="text-slate-500 text-sm mt-1">
+                                Tự động tính toán Face ID cho tất cả học sinh có ảnh nhưng chưa có Face ID
+                            </p>
+                        </div>
+
+                        {isBatchProcessing ? (
+                            <div className="space-y-4">
+                                <div className="bg-slate-100 rounded-lg p-4">
+                                    <div className="flex justify-between text-sm mb-2">
+                                        <span className="font-medium text-slate-700">Đang xử lý...</span>
+                                        <span className="font-bold text-indigo-600">
+                                            {batchProgress.current}/{batchProgress.total}
+                                        </span>
+                                    </div>
+                                    <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full bg-indigo-600 transition-all duration-300"
+                                            style={{ width: `${batchProgress.total > 0 ? (batchProgress.current / batchProgress.total) * 100 : 0}%` }}
+                                        />
+                                    </div>
+                                    <p className="text-xs text-slate-500 mt-2 truncate">
+                                        {batchProgress.name}
+                                    </p>
+                                </div>
+                            </div>
+                        ) : batchResult ? (
+                            <div className="space-y-4">
+                                <div className="grid grid-cols-3 gap-3 text-center">
+                                    <div className="bg-slate-50 rounded-lg p-3">
+                                        <p className="text-2xl font-bold text-slate-900">{batchResult.total}</p>
+                                        <p className="text-xs text-slate-500">Tổng cộng</p>
+                                    </div>
+                                    <div className="bg-emerald-50 rounded-lg p-3">
+                                        <p className="text-2xl font-bold text-emerald-600">{batchResult.success}</p>
+                                        <p className="text-xs text-emerald-600">Thành công</p>
+                                    </div>
+                                    <div className="bg-red-50 rounded-lg p-3">
+                                        <p className="text-2xl font-bold text-red-600">{batchResult.failed}</p>
+                                        <p className="text-xs text-red-600">Thất bại</p>
+                                    </div>
+                                </div>
+                                {batchResult.total === 0 && (
+                                    <p className="text-center text-slate-500 text-sm">
+                                        Không có học sinh nào cần xử lý. Tất cả đã có Face ID hoặc không có ảnh.
+                                    </p>
+                                )}
+                            </div>
+                        ) : null}
+
+                        <div className="flex gap-3 mt-6">
+                            <button
+                                onClick={() => setShowBatchModal(false)}
+                                disabled={isBatchProcessing}
+                                className="flex-1 py-2.5 text-slate-600 font-bold hover:bg-slate-100 rounded-xl disabled:opacity-50"
+                            >
+                                {batchResult ? 'Đóng' : 'Hủy'}
+                            </button>
+                            {!batchResult && !isBatchProcessing && (
+                                <button
+                                    onClick={handleBatchComputeFaceID}
+                                    className="flex-1 py-2.5 bg-indigo-600 text-white font-bold rounded-xl hover:bg-indigo-700"
+                                >
+                                    Bắt đầu
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>

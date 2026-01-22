@@ -93,6 +93,127 @@
                 opacity: 0.9;
             }
         }
+
+        /* ==========================================
+           MOBILE-FIRST UTILITIES
+           ========================================== */
+
+        /* Responsive Text - Tránh chữ to nhỏ không đều */
+        .text-responsive {
+            font-size: clamp(0.875rem, 2.5vw, 1rem);
+            line-height: 1.5;
+        }
+
+        .text-responsive-lg {
+            font-size: clamp(1.125rem, 3vw, 1.5rem);
+        }
+
+        .text-responsive-xl {
+            font-size: clamp(1.5rem, 4vw, 2rem);
+        }
+
+        /* Prevent Text Overflow */
+        .text-truncate-custom {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .text-wrap-break {
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            hyphens: auto;
+        }
+
+        /* Horizontal Scroll Container */
+        .scroll-container {
+            overflow-x: auto;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: thin;
+        }
+
+        .scroll-container::-webkit-scrollbar {
+            height: 6px;
+        }
+
+        .scroll-container::-webkit-scrollbar-thumb {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 3px;
+        }
+
+        /* Modal scale-in animation */
+        @keyframes scale-in {
+            from {
+                opacity: 0;
+                transform: scale(0.95);
+            }
+
+            to {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        .animate-scale-in {
+            animation: scale-in 0.2s ease-out;
+        }
+
+        /* Mobile-specific utilities */
+        @media (max-width: 768px) {
+            .mobile-text-sm {
+                font-size: 0.875rem !important;
+            }
+
+            .mobile-text-xs {
+                font-size: 0.75rem !important;
+            }
+
+            .mobile-p-2 {
+                padding: 0.5rem !important;
+            }
+
+            .mobile-p-3 {
+                padding: 0.75rem !important;
+            }
+
+            .mobile-gap-2 {
+                gap: 0.5rem !important;
+            }
+
+            .mobile-hidden {
+                display: none !important;
+            }
+
+            .mobile-block {
+                display: block !important;
+            }
+
+            .mobile-w-full {
+                width: 100% !important;
+            }
+
+            .mobile-flex-col {
+                flex-direction: column !important;
+            }
+
+            /* Card padding reduction on mobile */
+            .card-responsive {
+                padding: 0.75rem !important;
+            }
+
+            /* Table cell padding */
+            .table-responsive td,
+            .table-responsive th {
+                padding: 0.5rem 0.75rem !important;
+                font-size: 0.875rem !important;
+            }
+        }
+
+        /* Touch-friendly minimum sizes */
+        .touch-target {
+            min-height: 44px;
+            min-width: 44px;
+        }
     </style>
     <script type="importmap">
 {

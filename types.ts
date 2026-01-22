@@ -79,6 +79,9 @@ export interface Event {
   face_threshold: number;
   created_by: string;
   status: EventStatus;
+  latitude?: number;
+  longitude?: number;
+  radius_meters?: number;
   participants?: string[]; // Array of user IDs
   checkin_mode?: 'student' | 'event';
   enable_popup?: boolean;
@@ -89,7 +92,8 @@ export type CheckinStatus = 'on_time' | 'late' | 'absent' | 'excused';
 export interface EventCheckin {
   id: string;
   event_id: string;
-  user_id: string;
+  user_id?: string;
+  participant_id?: string; // New field to link with event_participants
   checkin_time: string;
   status: CheckinStatus;
   face_confidence?: number;
@@ -98,13 +102,7 @@ export interface EventCheckin {
   photo_url?: string;
   device_info?: string;
   ip_address?: string;
-  participants?: {
-    full_name: string;
-    avatar_url?: string;
-    student_code?: string;
-    organization?: string;
-    birth_date?: string;
-  };
+  participants?: EventParticipant; // For join queries
 }
 
 export interface EventParticipant {
@@ -117,6 +115,7 @@ export interface EventParticipant {
   address?: string;
   created_at?: string;
   user_id?: string; // Link to system user
+  student_code?: string; // Added field
   face_descriptor?: string; // Cache field for faster check-in
 }
 

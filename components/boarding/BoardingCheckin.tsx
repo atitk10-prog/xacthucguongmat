@@ -634,7 +634,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     }, []);
 
     return (
-        <div className="min-h-screen bg-slate-900 flex flex-col pt-16 px-4 pb-4 gap-4 lg:flex-row font-sans">
+        <div className="min-h-screen bg-slate-900 flex flex-col pt-14 md:pt-16 px-2 md:px-4 pb-2 md:pb-4 gap-2 md:gap-4 lg:flex-row font-sans">
             {/* ========== LOADING OVERLAY ========== */}
             {(!modelsReady || !studentsLoaded) && (
                 <div className="fixed inset-0 z-[200] bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col items-center justify-center">
@@ -737,7 +737,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             </div>
 
             {/* Left: Camera / QR Scanner */}
-            <div className="flex-1 relative bg-black rounded-3xl overflow-hidden shadow-2xl border border-white/10 group">
+            <div className="flex-1 lg:flex-[2] relative bg-black rounded-2xl md:rounded-3xl overflow-hidden shadow-2xl border border-white/10 group min-h-[300px] md:min-h-[400px]">
                 {/* Status Indicator - Góc trên trái */}
                 <div className="absolute top-4 left-4 z-30">
                     <div className={`px-3 py-1.5 rounded-full text-sm font-bold flex items-center gap-2 backdrop-blur-md shadow-lg ${checkinMode === 'face'

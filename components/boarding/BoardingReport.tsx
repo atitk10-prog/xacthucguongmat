@@ -614,7 +614,7 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
                     </div>
                 ) : (
                     <div className="overflow-x-auto">
-                        <table className="w-full text-sm">
+                        <table className="w-full min-w-[1000px] text-sm">
                             <thead className="bg-slate-50 text-slate-600 text-xs uppercase tracking-wider">
                                 <tr>
                                     <th className="px-4 py-3 text-center font-bold w-12">STT</th>

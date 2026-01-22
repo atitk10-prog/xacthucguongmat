@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
 import { Event, EventStatus, EventType, User } from '../../types';
+import QRCode from 'qrcode';
 
 interface EventListProps {
     onSelectEvent: (event: Event) => void;
@@ -91,6 +92,22 @@ const Icons = {
             <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 01-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 011.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 00-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 01-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 00-3.375-3.375h-1.5a1.125 1.125 0 01-1.125-1.125v-1.5a3.375 3.375 0 00-3.375-3.375H9.75" />
         </svg>
     ),
+    qr: (
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM6.75 6.75h.75v.75h-.75v-.75zM6.75 16.5h.75v.75h-.75v-.75zM16.5 6.75h.75v.75h-.75v-.75zM13.5 13.5h.75v.75h-.75v-.75zM13.5 19.5h.75v.75h-.75v-.75zM19.5 13.5h.75v.75h-.75v-.75zM19.5 19.5h.75v.75h-.75v-.75zM16.5 16.5h.75v.75h-.75v-.75z" />
+        </svg>
+    ),
+};
+
+// Calculate event status based on current time
+const getEventStatus = (event: Event): EventStatus => {
+    const now = new Date();
+    const start = new Date(event.start_time);
+    const end = new Date(event.end_time);
+
+    if (now < start) return 'draft'; // Upcoming - shown as "Sắp diễn ra"
+    if (now >= start && now <= end) return 'active'; // Happening now
+    return 'completed'; // Past
 };
 
 const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onEditEvent }) => {
@@ -107,61 +124,61 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
     const [deletingId, setDeletingId] = useState<string | null>(null);
     const [notification, setNotification] = useState<{ type: 'success' | 'error', message: string } | null>(null);
     const [participantCounts, setParticipantCounts] = useState<Record<string, number>>({});
+    const [checkedInCounts, setCheckedInCounts] = useState<Record<string, number>>({});
+    const [showQRModal, setShowQRModal] = useState<Event | null>(null);
 
     useEffect(() => {
         loadEvents();
         loadUsers();
+
+        // Tự động đóng hướng dẫn sau 10 giây (yêu cầu của nhà trường)
+        const timer = setTimeout(() => {
+            setShowTips(false);
+        }, 10000);
+
+        return () => clearTimeout(timer);
     }, []);
 
-    // Calculate event status based on current time
-    const getEventStatus = (event: Event): EventStatus => {
-        const now = new Date();
-        const start = new Date(event.start_time);
-        const end = new Date(event.end_time);
-
-        if (now < start) return 'draft'; // Upcoming - shown as "Sắp diễn ra"
-        if (now >= start && now <= end) return 'active'; // Happening now
-        return 'completed'; // Past
+    // Calculate stats
+    const stats = {
+        total: events.length,
+        today: events.filter(e => new Date(e.start_time).toDateString() === new Date().toDateString()).length,
+        active: events.filter(e => getEventStatus(e) === 'active').length,
+        avgAttendance: events.filter(e => getEventStatus(e) === 'completed').length > 0
+            ? Math.round(events.filter(e => getEventStatus(e) === 'completed').reduce((acc, e) => {
+                const total = participantCounts[e.id] || 0;
+                const attended = checkedInCounts[e.id] || 0;
+                return acc + (total > 0 ? (attended / total) * 100 : 0);
+            }, 0) / events.filter(e => getEventStatus(e) === 'completed').length)
+            : 0
     };
 
     const loadEvents = async () => {
         setIsLoading(true);
         try {
-            const result = await dataService.getEvents();
+            // Sử dụng API gộp đã được tối ưu hóa để giảm số lượng request
+            const result = await dataService.getEventsWithCounts();
             if (result.success && result.data) {
-                // Update event status based on time
-                const updatedEvents = result.data.map(event => ({
+                const { events: rawEvents, participantCounts: pCounts, checkedInCounts: cCounts } = result.data;
+
+                // Cập nhật trạng thái sự kiện dựa trên thời gian
+                const updatedEvents = rawEvents.map(event => ({
                     ...event,
                     status: getEventStatus(event)
                 }));
+
                 setEvents(updatedEvents);
-
-                // Load participant counts for each event
-                loadParticipantCounts(updatedEvents);
+                setParticipantCounts(pCounts);
+                setCheckedInCounts(cCounts);
             }
-        } catch (error) { console.error('Failed to load events:', error); }
-        finally { setIsLoading(false); }
+        } catch (error) {
+            console.error('Failed to load events with counts:', error);
+        } finally {
+            setIsLoading(false);
+        }
     };
 
-    const loadParticipantCounts = async (eventList: Event[]) => {
-        try {
-            // Load participant counts in PARALLEL (much faster!)
-            const countPromises = eventList.map(async (event) => {
-                const result = await dataService.getEventParticipantCount(event.id);
-                return {
-                    eventId: event.id,
-                    count: result.success && result.data !== undefined ? result.data : 0
-                };
-            });
 
-            const results = await Promise.all(countPromises);
-            const counts: Record<string, number> = {};
-            results.forEach(r => {
-                counts[r.eventId] = r.count;
-            });
-            setParticipantCounts(counts);
-        } catch (error) { console.error('Failed to load participant counts:', error); }
-    };
 
     const loadUsers = async () => {
         try {
@@ -221,7 +238,8 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
         try {
             const result = await dataService.getEventParticipants(event.id);
             if (result.success && result.data) {
-                setSelectedParticipants(result.data.map(p => p.id));
+                // Store user_ids for selection comparison
+                setSelectedParticipants(result.data.map(p => p.user_id).filter(Boolean) as string[]);
             } else {
                 setSelectedParticipants([]);
             }
@@ -243,8 +261,9 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                 full_name: user.full_name,
                 avatar_url: user.avatar_url,
                 organization: user.class_id || user.organization || user.role,
-                birth_date: '', // Placeholder
-                id: `new_${user.id}`
+                birth_date: user.birth_date || '',
+                user_id: user.id,
+                face_descriptor: user.face_descriptor
             }));
 
             if (participantsToSave.length === 0) {
@@ -365,7 +384,7 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                 <div className="flex gap-2">
                     <button
                         onClick={() => setShowTips(!showTips)}
-                        className={`p-3 rounded-xl flex items-center gap-2 transition-all ${showTips ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+                        className={`p-3 rounded-xl flex items-center gap-2 transition-all ${showTips ? 'bg-amber-500 text-white shadow-lg shadow-amber-200 animate-pulse-soft' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
                         title="Hiển thị gợi ý"
                     >
                         {Icons.lightbulb}
@@ -373,6 +392,45 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                     <button onClick={onCreateEvent} className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black text-sm flex items-center gap-2 shadow-lg hover:bg-indigo-700">
                         {Icons.plus} TẠO SỰ KIỆN MỚI
                     </button>
+                </div>
+            </div>
+
+            {/* Stats Dashboard */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
+                    <p className="text-slate-400 text-xs font-black uppercase tracking-wider mb-2">Tổng sự kiện</p>
+                    <div className="flex items-end gap-2">
+                        <span className="text-3xl font-black text-slate-900 leading-none">{stats.total}</span>
+                        <span className="text-slate-400 text-xs font-bold mb-1">hoạt động</span>
+                    </div>
+                </div>
+                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
+                    <p className="text-slate-400 text-xs font-black uppercase tracking-wider mb-2">Hôm nay</p>
+                    <div className="flex items-end gap-2">
+                        <span className="text-3xl font-black text-indigo-600 leading-none">{stats.today}</span>
+                        <span className="text-slate-400 text-xs font-bold mb-1">sắp diễn ra</span>
+                    </div>
+                </div>
+                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm relative overflow-hidden">
+                    <p className="text-slate-400 text-xs font-black uppercase tracking-wider mb-2">Đang diễn ra</p>
+                    <div className="flex items-end gap-2">
+                        <span className="text-3xl font-black text-emerald-600 leading-none">{stats.active}</span>
+                        {stats.active > 0 && (
+                            <span className="flex h-3 w-3 mb-2">
+                                <span className="animate-ping absolute inline-flex h-3 w-3 rounded-full bg-emerald-400 opacity-75"></span>
+                                <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
+                            </span>
+                        )}
+                    </div>
+                </div>
+                <div className="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm">
+                    <p className="text-slate-400 text-xs font-black uppercase tracking-wider mb-2">Tỉ lệ chuyên cần</p>
+                    <div className="flex items-end gap-2">
+                        <span className="text-3xl font-black text-slate-900 leading-none">{stats.avgAttendance}%</span>
+                        <div className="flex-1 h-1.5 bg-slate-100 rounded-full mb-1 ml-2">
+                            <div className="h-full bg-indigo-500 rounded-full" style={{ width: `${stats.avgAttendance}%` }}></div>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -474,249 +532,400 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                 </div>
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {filteredEvents.map(event => (
-                        <div key={event.id} className="bg-white rounded-3xl p-6 border border-slate-100 shadow-sm hover:shadow-xl transition-all group">
-                            {/* Event Header */}
-                            <div className="flex justify-between items-start mb-4">
-                                <div className="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center text-indigo-600">{getTypeIcon(event.type)}</div>
-                                <div className="flex items-center gap-2">
-                                    {getStatusBadge(event.status)}
-                                </div>
-                            </div>
+                    {filteredEvents
+                        .sort((a, b) => {
+                            const statusOrder = { 'active': 0, 'draft': 1, 'completed': 2 };
+                            return statusOrder[a.status] - statusOrder[b.status];
+                        })
+                        .map(event => {
+                            const status = event.status;
+                            const total = participantCounts[event.id] || 0;
+                            const attended = checkedInCounts[event.id] || 0;
+                            const attendanceRate = total > 0 ? Math.round((attended / total) * 100) : 0;
 
-                            {/* Event Name - Clickable */}
-                            <h3
-                                onClick={() => onSelectEvent(event)}
-                                className="text-lg font-black text-slate-900 mb-2 line-clamp-2 group-hover:text-indigo-600 cursor-pointer"
-                            >
-                                {event.name}
-                            </h3>
+                            const startTime = new Date(event.start_time).getTime();
+                            const endTime = new Date(event.end_time).getTime();
+                            const now = new Date().getTime();
+                            const progress = status === 'active'
+                                ? Math.min(100, Math.max(0, ((now - startTime) / (endTime - startTime)) * 100))
+                                : status === 'completed' ? 100 : 0;
 
-                            {/* Event Info */}
-                            <div className="space-y-2 text-sm">
-                                <div className="flex items-center gap-2 text-slate-500">
-                                    <span className="text-indigo-400">{Icons.location}</span>
-                                    <span className="font-medium">{event.location || 'Chưa xác định'}</span>
-                                </div>
-                                <div className="flex items-center gap-2 text-slate-500">
-                                    <span className="text-indigo-400">{Icons.clock}</span>
-                                    <span className="font-medium">{new Date(event.start_time).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric', hour12: true }).replace('am', 'AM').replace('pm', 'PM')}</span>
-                                </div>
-                                <div className="flex items-center gap-2 text-slate-500">
-                                    <span className="text-indigo-400">{Icons.users}</span>
-                                    <span className="font-medium">{participantCounts[event.id] || 0} người tham gia</span>
-                                </div>
-                            </div>
+                            return (
+                                <div key={event.id} className={`bg-white rounded-3xl p-6 border transition-all group relative overflow-hidden flex flex-col ${status === 'active' ? 'border-emerald-200 shadow-lg ring-1 ring-emerald-50' : 'border-slate-100 shadow-sm hover:shadow-xl'
+                                    }`}>
 
-                            {/* Event Actions */}
-                            <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
-                                {/* Left: Face requirement */}
-                                <div className="flex items-center gap-2">
-                                    <span className={`w-2 h-2 rounded-full ${event.require_face ? 'bg-indigo-500' : 'bg-slate-300'}`}></span>
-                                    <span className="text-xs font-medium text-slate-400">{event.require_face ? 'Face ID' : 'QR'}</span>
-                                </div>
+                                    {/* Progress Background for Active */}
+                                    {status === 'active' && (
+                                        <div className="absolute top-0 left-0 h-1 bg-emerald-500 transition-all duration-1000" style={{ width: `${progress}%` }}></div>
+                                    )}
 
-                                {/* Right: Action Buttons */}
-                                <div className="flex items-center gap-1">
-                                    <button
-                                        onClick={() => openParticipantModal(event)}
-                                        className="p-2 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-200 transition-colors"
-                                        title="Quản lý người tham gia"
+                                    {/* Event Header */}
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-colors ${status === 'active' ? 'bg-emerald-100 text-emerald-600' : 'bg-indigo-50 text-indigo-600'
+                                            }`}>
+                                            {getTypeIcon(event.type)}
+                                        </div>
+                                        <div className="flex items-center gap-2">
+                                            {getStatusBadge(status)}
+                                        </div>
+                                    </div>
+
+                                    {/* Event Name - Clickable */}
+                                    <h3
+                                        onClick={() => onSelectEvent(event)}
+                                        className="text-lg font-black text-slate-900 mb-2 line-clamp-2 group-hover:text-indigo-600 cursor-pointer"
                                     >
-                                        {Icons.users}
-                                    </button>
+                                        {event.name}
+                                    </h3>
+
+                                    {/* Event Info */}
+                                    <div className="space-y-2 text-sm mb-4 flex-1">
+                                        <div className="flex items-center gap-2 text-slate-500">
+                                            <span className="text-indigo-400">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
+                                            </span>
+                                            <span className="font-medium">{event.location || 'Chưa xác định'}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 text-slate-500">
+                                            <span className="text-indigo-400">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                            </span>
+                                            <span className="font-medium whitespace-nowrap overflow-hidden text-ellipsis">
+                                                {new Date(event.start_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' })}
+                                                <span className="mx-1">→</span>
+                                                {new Date(event.end_time).toLocaleString('vi-VN', { hour: '2-digit', minute: '2-digit' })}
+                                            </span>
+                                        </div>
+
+                                        {/* Attendance Stats Overlay */}
+                                        <div className="mt-4 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                                            <div className="flex justify-between items-center mb-1.5">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-slate-400 italic">Hiện diện:</span>
+                                                    <span className="font-black text-slate-900">{attended}/{total}</span>
+                                                </div>
+                                                <span className={`text-xs font-black ${attendanceRate >= 80 ? 'text-emerald-600' : attendanceRate >= 50 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                                    {attendanceRate}%
+                                                </span>
+                                            </div>
+                                            <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                                                <div
+                                                    className={`h-full transition-all duration-500 ${status === 'active' ? 'bg-emerald-500' : 'bg-indigo-500'}`}
+                                                    style={{ width: `${attendanceRate}%` }}
+                                                ></div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    {/* Event Actions */}
+                                    <div className="mt-auto pt-4 border-t border-slate-100 flex items-center justify-between gap-2">
+                                        {/* Left: QR Quick Button */}
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                setShowQRModal(event);
+                                            }}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 text-slate-600 rounded-lg hover:bg-indigo-100 hover:text-indigo-600 transition-all font-bold text-xs"
+                                        >
+                                            {Icons.qr}
+                                            Mã QR
+                                        </button>
+
+                                        {/* Right: Action Buttons */}
+                                        <div className="flex items-center gap-1 group-hover:opacity-100 transition-opacity">
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); openParticipantModal(event); }}
+                                                className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-50 rounded-lg transition-colors"
+                                                title="Người tham gia"
+                                            >
+                                                {Icons.users}
+                                            </button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); handleDuplicateEvent(event); }}
+                                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                title="Nhân bản"
+                                            >
+                                                {Icons.copy}
+                                            </button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); onEditEvent?.(event); }}
+                                                className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                                title="Sửa"
+                                            >
+                                                {Icons.edit}
+                                            </button>
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); setConfirmDelete(event); }}
+                                                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                title="Xóa"
+                                            >
+                                                {Icons.trash}
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    {/* Check-in Button (Full Width) */}
                                     <button
-                                        onClick={() => handleDuplicateEvent(event)}
-                                        className="p-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors"
-                                        title="Sao chép sự kiện"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            const checkinUrl = `${window.location.origin}/checkin/${event.id}`;
+                                            window.open(checkinUrl, '_blank', 'noopener,noreferrer');
+                                        }}
+                                        className={`w-full mt-3 py-3 rounded-xl font-bold text-sm transition-all flex items-center justify-center gap-2 ${status === 'active'
+                                            ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-lg shadow-emerald-200 hover:from-emerald-700 hover:to-teal-700'
+                                            : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                                            }`}
                                     >
-                                        {Icons.copy}
-                                    </button>
-                                    <button
-                                        onClick={() => onEditEvent?.(event)}
-                                        className="p-2 bg-indigo-100 text-indigo-600 rounded-lg hover:bg-indigo-200 transition-colors"
-                                        title="Chỉnh sửa"
-                                    >
-                                        {Icons.edit}
-                                    </button>
-                                    <button
-                                        onClick={() => setConfirmDelete(event)}
-                                        className="p-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors"
-                                        title="Xóa"
-                                    >
-                                        {Icons.trash}
+                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 015.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 002.25 2.25h15A2.25 2.25 0 0021.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 00-1.134-.175 2.31 2.31 0 01-1.64-1.055l-.822-1.316a2.192 2.192 0 00-1.736-1.039 48.774 48.774 0 00-5.232 0 2.192 2.192 0 00-1.736 1.039l-.821 1.316z" /><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 11-9 0 4.5 4.5 0 019 0zM18.75 10.5h.008v.008h-.008V10.5z" /></svg>
+                                        Mở máy điểm danh
                                     </button>
                                 </div>
-                            </div>
-
-                            {/* Check-in Button */}
-                            <button
-                                onClick={() => {
-                                    const checkinUrl = `${window.location.origin}/checkin/${event.id}`;
-                                    window.open(checkinUrl, '_blank', 'noopener,noreferrer');
-                                }}
-                                className="w-full mt-3 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl font-bold text-sm hover:from-indigo-700 hover:to-purple-700 transition-all flex items-center justify-center gap-2"
-                            >
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                </svg>
-                                Mở Check-in
-                            </button>
-                        </div>
-                    ))}
+                            );
+                        })}
                 </div>
             )}
 
             {/* Delete Confirmation Modal */}
-            {confirmDelete && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-3xl p-6 max-w-md w-full text-center">
-                        <div className={`w-16 h-16 ${deletingId ? 'bg-slate-100' : 'bg-red-100'} rounded-full flex items-center justify-center mx-auto mb-4`}>
-                            {deletingId ? (
-                                <div className="w-8 h-8 border-3 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
-                            ) : (
-                                <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
-                                </svg>
-                            )}
+            {
+                confirmDelete && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                        <div className="bg-white rounded-3xl p-6 max-w-md w-full text-center">
+                            <div className={`w-16 h-16 ${deletingId ? 'bg-slate-100' : 'bg-red-100'} rounded-full flex items-center justify-center mx-auto mb-4`}>
+                                {deletingId ? (
+                                    <div className="w-8 h-8 border-3 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+                                ) : (
+                                    <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
+                                    </svg>
+                                )}
+                            </div>
+                            <h3 className="text-xl font-black text-slate-900 mb-2">
+                                {deletingId ? 'Đang xóa...' : 'Xác nhận xóa'}
+                            </h3>
+                            <p className="text-slate-500 mb-6">
+                                {deletingId
+                                    ? `Đang xóa sự kiện "${confirmDelete.name}", vui lòng chờ...`
+                                    : <>Bạn có chắc muốn xóa sự kiện "<strong>{confirmDelete.name}</strong>"? Hành động này không thể hoàn tác.</>
+                                }
+                            </p>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={() => setConfirmDelete(null)}
+                                    disabled={!!deletingId}
+                                    className={`flex-1 py-3 rounded-xl font-bold ${deletingId ? 'bg-slate-50 text-slate-400 cursor-not-allowed' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                                >
+                                    Hủy
+                                </button>
+                                <button
+                                    onClick={() => handleDeleteEvent(confirmDelete)}
+                                    disabled={!!deletingId}
+                                    className={`flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2 ${deletingId ? 'bg-red-300 text-red-100 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}
+                                >
+                                    {deletingId && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
+                                    {deletingId ? 'Đang xóa' : 'Xóa'}
+                                </button>
+                            </div>
                         </div>
-                        <h3 className="text-xl font-black text-slate-900 mb-2">
-                            {deletingId ? 'Đang xóa...' : 'Xác nhận xóa'}
-                        </h3>
-                        <p className="text-slate-500 mb-6">
-                            {deletingId
-                                ? `Đang xóa sự kiện "${confirmDelete.name}", vui lòng chờ...`
-                                : <>Bạn có chắc muốn xóa sự kiện "<strong>{confirmDelete.name}</strong>"? Hành động này không thể hoàn tác.</>
-                            }
-                        </p>
-                        <div className="flex gap-3">
+                    </div>
+                )
+            }
+
+            {/* Participant Management Modal */}
+            {
+                showParticipantModal && selectedEventForParticipants && (
+                    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                        <div className="bg-white rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                            <div className="flex justify-between items-center mb-4">
+                                <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
+                                    <span className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center text-emerald-600">{Icons.users}</span>
+                                    Quản lý người tham gia
+                                </h3>
+                                <button onClick={() => setShowParticipantModal(false)} className="text-slate-400 hover:text-slate-600">
+                                    {Icons.close}
+                                </button>
+                            </div>
+
+                            {/* Event Info */}
+                            <div className="bg-slate-50 rounded-xl p-4 mb-4">
+                                <p className="font-bold text-slate-900">{selectedEventForParticipants.name}</p>
+                                <p className="text-sm text-slate-500">{new Date(selectedEventForParticipants.start_time).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric', hour12: true }).replace('am', 'AM').replace('pm', 'PM')}</p>
+                            </div>
+
+                            {/* Quick Selection */}
+                            <div className="flex flex-wrap gap-2 mb-4">
+                                <span className="text-sm font-bold text-slate-600">Chọn nhanh:</span>
+                                <button
+                                    onClick={() => selectAllByRole('student')}
+                                    className="px-3 py-1 bg-blue-100 text-blue-600 rounded-full text-xs font-bold hover:bg-blue-200"
+                                >
+                                    Tất cả học sinh
+                                </button>
+                                <button
+                                    onClick={() => selectAllByRole('teacher')}
+                                    className="px-3 py-1 bg-purple-100 text-purple-600 rounded-full text-xs font-bold hover:bg-purple-200"
+                                >
+                                    Tất cả giáo viên
+                                </button>
+                                {uniqueClasses.slice(0, 5).map(classId => (
+                                    <button
+                                        key={String(classId)}
+                                        onClick={() => selectAllByClass(String(classId))}
+                                        className="px-3 py-1 bg-emerald-100 text-emerald-600 rounded-full text-xs font-bold hover:bg-emerald-200"
+                                    >
+                                        Lớp {classId}
+                                    </button>
+                                ))}
+                                <button
+                                    onClick={() => setSelectedParticipants([])}
+                                    className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold hover:bg-slate-200"
+                                >
+                                    Bỏ chọn tất cả
+                                </button>
+                            </div>
+
+                            {/* Search */}
+                            <input
+                                type="text"
+                                placeholder="Tìm kiếm theo tên hoặc lớp..."
+                                value={searchQuery}
+                                onChange={e => setSearchQuery(e.target.value)}
+                                className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl mb-4"
+                            />
+
+                            {/* Selected count */}
+                            <div className="mb-3 text-sm text-slate-600">
+                                Đã chọn: <strong className="text-indigo-600">{selectedParticipants.length}</strong> người
+                            </div>
+
+                            {/* User List */}
+                            <div className="flex-1 overflow-y-auto space-y-2 max-h-[300px]">
+                                {filteredUsers.map(user => (
+                                    <div
+                                        key={user.id}
+                                        onClick={() => toggleParticipant(user.id)}
+                                        className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${selectedParticipants.includes(user.id)
+                                            ? 'bg-indigo-50 border-2 border-indigo-300'
+                                            : 'bg-slate-50 hover:bg-slate-100 border-2 border-transparent'
+                                            }`}
+                                    >
+                                        <div className={`w-6 h-6 rounded-full flex items-center justify-center ${selectedParticipants.includes(user.id) ? 'bg-indigo-600 text-white' : 'bg-white border-2 border-slate-300'
+                                            }`}>
+                                            {selectedParticipants.includes(user.id) && Icons.check}
+                                        </div>
+                                        <div className="flex-1">
+                                            <p className="font-bold text-slate-900">{user.full_name}</p>
+                                            <p className="text-xs text-slate-500">{user.class_id || user.role}</p>
+                                        </div>
+                                        <span className={`px-2 py-1 rounded-full text-xs font-bold ${user.role === 'student' ? 'bg-blue-100 text-blue-600' :
+                                            user.role === 'teacher' ? 'bg-purple-100 text-purple-600' :
+                                                'bg-slate-100 text-slate-600'
+                                            }`}>
+                                            {user.role === 'student' ? 'Học sinh' : user.role === 'teacher' ? 'Giáo viên' : user.role}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Save Button */}
                             <button
-                                onClick={() => setConfirmDelete(null)}
-                                disabled={!!deletingId}
-                                className={`flex-1 py-3 rounded-xl font-bold ${deletingId ? 'bg-slate-50 text-slate-400 cursor-not-allowed' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}
+                                onClick={saveParticipants}
+                                className="w-full mt-4 py-4 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 flex items-center justify-center gap-2"
                             >
-                                Hủy
-                            </button>
-                            <button
-                                onClick={() => handleDeleteEvent(confirmDelete)}
-                                disabled={!!deletingId}
-                                className={`flex-1 py-3 rounded-xl font-bold flex items-center justify-center gap-2 ${deletingId ? 'bg-red-300 text-red-100 cursor-not-allowed' : 'bg-red-600 text-white hover:bg-red-700'}`}
-                            >
-                                {deletingId && <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>}
-                                {deletingId ? 'Đang xóa' : 'Xóa'}
+                                {Icons.check} LƯU DANH SÁCH ({selectedParticipants.length} người)
                             </button>
                         </div>
                     </div>
-                </div>
-            )}
+                )
+            }
 
-            {/* Participant Management Modal */}
-            {showParticipantModal && selectedEventForParticipants && (
-                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-3xl p-6 max-w-2xl w-full max-h-[90vh] overflow-hidden flex flex-col">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-xl font-black text-slate-900 flex items-center gap-2">
-                                <span className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center text-emerald-600">{Icons.users}</span>
-                                Quản lý người tham gia
-                            </h3>
-                            <button onClick={() => setShowParticipantModal(false)} className="text-slate-400 hover:text-slate-600">
+            {/* QR Quick Modal */}
+            {showQRModal && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-fade-in">
+                    <div className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full text-center relative overflow-hidden">
+                        {/* Background Decoration */}
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full -mr-16 -mt-16 -z-10"></div>
+                        <div className="absolute bottom-0 left-0 w-32 h-32 bg-emerald-50 rounded-full -ml-16 -mb-16 -z-10"></div>
+
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-xl font-black text-slate-900">Mã QR Điểm danh</h3>
+                            <button onClick={() => setShowQRModal(null)} className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100">
                                 {Icons.close}
                             </button>
                         </div>
 
-                        {/* Event Info */}
-                        <div className="bg-slate-50 rounded-xl p-4 mb-4">
-                            <p className="font-bold text-slate-900">{selectedEventForParticipants.name}</p>
-                            <p className="text-sm text-slate-500">{new Date(selectedEventForParticipants.start_time).toLocaleString('en-GB', { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit', year: 'numeric', hour12: true }).replace('am', 'AM').replace('pm', 'PM')}</p>
+                        <div className="bg-white p-4 rounded-3xl border-2 border-slate-100 shadow-xl inline-block mb-6 relative group">
+                            <QRImage url={`${window.location.origin}/self-checkin/${showQRModal.id}`} />
+                            <div className="absolute inset-0 bg-white/10 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-2xl">
+                                <span className="px-3 py-1 bg-slate-900 text-white text-[10px] font-bold rounded-lg">Mã tự điểm danh</span>
+                            </div>
                         </div>
 
-                        {/* Quick Selection */}
-                        <div className="flex flex-wrap gap-2 mb-4">
-                            <span className="text-sm font-bold text-slate-600">Chọn nhanh:</span>
-                            <button
-                                onClick={() => selectAllByRole('student')}
-                                className="px-3 py-1 bg-blue-100 text-blue-600 rounded-full text-xs font-bold hover:bg-blue-200"
-                            >
-                                Tất cả học sinh
-                            </button>
-                            <button
-                                onClick={() => selectAllByRole('teacher')}
-                                className="px-3 py-1 bg-purple-100 text-purple-600 rounded-full text-xs font-bold hover:bg-purple-200"
-                            >
-                                Tất cả giáo viên
-                            </button>
-                            {uniqueClasses.slice(0, 5).map(classId => (
+                        <div className="space-y-4">
+                            <div>
+                                <h4 className="font-bold text-slate-900 line-clamp-1">{showQRModal.name}</h4>
+                                <p className="text-xs text-slate-500 font-medium">{showQRModal.location || 'Tại trường'}</p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
                                 <button
-                                    key={String(classId)}
-                                    onClick={() => selectAllByClass(String(classId))}
-                                    className="px-3 py-1 bg-emerald-100 text-emerald-600 rounded-full text-xs font-bold hover:bg-emerald-200"
+                                    onClick={() => {
+                                        const url = `${window.location.origin}/self-checkin/${showQRModal.id}`;
+                                        navigator.clipboard.writeText(url);
+                                        setNotification({ type: 'success', message: 'Đã sao chép liên kết tự điểm danh!' });
+                                        setTimeout(() => setNotification(null), 3000);
+                                    }}
+                                    className="px-4 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all flex items-center justify-center gap-2"
                                 >
-                                    Lớp {classId}
+                                    {Icons.copy} Link SV
                                 </button>
-                            ))}
-                            <button
-                                onClick={() => setSelectedParticipants([])}
-                                className="px-3 py-1 bg-slate-100 text-slate-600 rounded-full text-xs font-bold hover:bg-slate-200"
-                            >
-                                Bỏ chọn tất cả
-                            </button>
-                        </div>
-
-                        {/* Search */}
-                        <input
-                            type="text"
-                            placeholder="Tìm kiếm theo tên hoặc lớp..."
-                            value={searchQuery}
-                            onChange={e => setSearchQuery(e.target.value)}
-                            className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl mb-4"
-                        />
-
-                        {/* Selected count */}
-                        <div className="mb-3 text-sm text-slate-600">
-                            Đã chọn: <strong className="text-indigo-600">{selectedParticipants.length}</strong> người
-                        </div>
-
-                        {/* User List */}
-                        <div className="flex-1 overflow-y-auto space-y-2 max-h-[300px]">
-                            {filteredUsers.map(user => (
-                                <div
-                                    key={user.id}
-                                    onClick={() => toggleParticipant(user.id)}
-                                    className={`flex items-center gap-3 p-3 rounded-xl cursor-pointer transition-all ${selectedParticipants.includes(user.id)
-                                        ? 'bg-indigo-50 border-2 border-indigo-300'
-                                        : 'bg-slate-50 hover:bg-slate-100 border-2 border-transparent'
-                                        }`}
+                                <button
+                                    onClick={() => {
+                                        const checkinUrl = `${window.location.origin}/checkin/${showQRModal.id}`;
+                                        window.open(checkinUrl, '_blank');
+                                    }}
+                                    className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-100"
                                 >
-                                    <div className={`w-6 h-6 rounded-full flex items-center justify-center ${selectedParticipants.includes(user.id) ? 'bg-indigo-600 text-white' : 'bg-white border-2 border-slate-300'
-                                        }`}>
-                                        {selectedParticipants.includes(user.id) && Icons.check}
-                                    </div>
-                                    <div className="flex-1">
-                                        <p className="font-bold text-slate-900">{user.full_name}</p>
-                                        <p className="text-xs text-slate-500">{user.class_id || user.role}</p>
-                                    </div>
-                                    <span className={`px-2 py-1 rounded-full text-xs font-bold ${user.role === 'student' ? 'bg-blue-100 text-blue-600' :
-                                        user.role === 'teacher' ? 'bg-purple-100 text-purple-600' :
-                                            'bg-slate-100 text-slate-600'
-                                        }`}>
-                                        {user.role === 'student' ? 'Học sinh' : user.role === 'teacher' ? 'Giáo viên' : user.role}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+                                    {Icons.calendar} Máy chính
+                                </button>
+                            </div>
 
-                        {/* Save Button */}
-                        <button
-                            onClick={saveParticipants}
-                            className="w-full mt-4 py-4 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 flex items-center justify-center gap-2"
-                        >
-                            {Icons.check} LƯU DANH SÁCH ({selectedParticipants.length} người)
-                        </button>
+                            <p className="text-[10px] text-slate-400 font-medium">Học sinh quét mã để tự điểm danh bằng điện thoại</p>
+                        </div>
                     </div>
                 </div>
             )}
-        </div>
+            <style>{`
+                .animate-pulse-soft {
+                    animation: pulse-soft 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+                }
+                @keyframes pulse-soft {
+                    0%, 100% { opacity: 1; transform: scale(1); }
+                    50% { opacity: .8; transform: scale(1.05); }
+                }
+                .animate-fade-in {
+                    animation: fadeIn 0.3s ease-out;
+                }
+                @keyframes fadeIn {
+                    from { opacity: 0; transform: translateY(-10px); }
+                    to { opacity: 1; transform: translateY(0); }
+                }
+            `}</style>
+        </div >
     );
+};
+
+// Helper component for QR image generation
+const QRImage = ({ url }: { url: string }) => {
+    const [qrData, setQrData] = useState('');
+
+    useEffect(() => {
+        QRCode.toDataURL(url, { margin: 1, width: 250 }, (err, data) => {
+            if (!err) setQrData(data);
+        });
+    }, [url]);
+
+    if (!qrData) return <div className="w-[200px] h-[200px] bg-slate-100 animate-pulse rounded-lg"></div>;
+    return <img src={qrData} alt="QR Code" className="w-[200px] h-[200px] object-contain" />;
 };
 
 export default EventList;
