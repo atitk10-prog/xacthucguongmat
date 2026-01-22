@@ -156,6 +156,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                             ...prev,
                             points_on_time: parseInt(configs.points_on_time) || 10,
                             points_late: parseInt(configs.points_late) || -5,
+                            points_absent: parseInt(configs.points_absent_event) || -10,
                             late_threshold_mins: parseInt(configs.late_threshold_mins) || 15,
                             face_threshold: parseInt(configs.face_threshold) || 40,
                         }));
@@ -895,6 +896,23 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                                             setFormData({ ...formData, points_late: val as any });
                                                         } else {
                                                             setFormData({ ...formData, points_late: parseInt(val) });
+                                                        }
+                                                    }}
+                                                    className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-black text-slate-400 uppercase mb-2">Điểm vắng mặt</label>
+                                                <input
+                                                    type="number"
+                                                    value={formData.points_absent}
+                                                    onChange={(e) => {
+                                                        const val = e.target.value;
+                                                        // Allow empty string or just "-" for negative numbers typing
+                                                        if (val === '' || val === '-') {
+                                                            setFormData({ ...formData, points_absent: val as any });
+                                                        } else {
+                                                            setFormData({ ...formData, points_absent: parseInt(val) });
                                                         }
                                                     }}
                                                     className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"

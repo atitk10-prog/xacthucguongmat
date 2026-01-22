@@ -84,7 +84,7 @@ export interface Event {
   enable_popup?: boolean;
 }
 
-export type CheckinStatus = 'on_time' | 'late' | 'absent';
+export type CheckinStatus = 'on_time' | 'late' | 'absent' | 'excused';
 
 export interface EventCheckin {
   id: string;
@@ -139,21 +139,28 @@ export interface BoardingTimeSlot {
   updated_at?: string;
 }
 
+export type CheckinType = 'morning_in' | 'morning_out' | 'noon_in' | 'noon_out' | 'afternoon_in' | 'afternoon_out' | 'evening_in' | 'evening_out';
+
 export interface BoardingCheckin {
   id: string;
   user_id: string;
   date: string;
   morning_in?: string;
-  morning_in_status?: 'on_time' | 'late'; // New
+  morning_in_status?: 'on_time' | 'late';
   morning_out?: string;
   noon_in?: string;
-  noon_in_status?: 'on_time' | 'late'; // New
+  noon_in_status?: 'on_time' | 'late';
   noon_out?: string;
+  afternoon_in?: string;
+  afternoon_in_status?: 'on_time' | 'late';
+  afternoon_out?: string;
   evening_in?: string;
-  evening_in_status?: 'on_time' | 'late'; // New
+  evening_in_status?: 'on_time' | 'late';
   evening_out?: string;
-  exit_permission: boolean;
+  exit_permission?: boolean;
   notes?: string;
+  created_at?: string;
+  updated_at?: string;
 }
 
 export type AttendanceRank = 'Tốt' | 'Khá' | 'Trung bình' | 'Yếu';

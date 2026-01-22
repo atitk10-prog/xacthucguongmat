@@ -66,9 +66,10 @@ export const generateCertificateImage = async (options: ExportOptions) => {
     const style = document.createElement('style');
     style.setAttribute('data-export-style', 'true');
     style.innerHTML = `
-        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Arimo:wght@400;700&display=swap');
         .font-loader-check { font-family: 'Playfair Display'; }
         .font-loader-check-2 { font-family: 'Dancing Script'; }
+        .font-loader-check-3 { font-family: 'Arimo'; }
     `;
     document.head.appendChild(style);
 
@@ -81,6 +82,8 @@ export const generateCertificateImage = async (options: ExportOptions) => {
         <span style="font-family: 'Playfair Display', serif; font-weight: 700;">PlayfairBold</span>
         <span style="font-family: 'Dancing Script', cursive; font-weight: 400;">DancingRegular</span>
         <span style="font-family: 'Dancing Script', cursive; font-weight: 700;">DancingBold</span>
+        <span style="font-family: 'Arimo', sans-serif; font-weight: 400;">ArimoRegular</span>
+        <span style="font-family: 'Arimo', sans-serif; font-weight: 700;">ArimoBold</span>
     `;
     document.body.appendChild(fontLoader);
 
@@ -90,7 +93,9 @@ export const generateCertificateImage = async (options: ExportOptions) => {
             document.fonts.load("400 1em 'Playfair Display'"),
             document.fonts.load("700 1em 'Playfair Display'"),
             document.fonts.load("400 1em 'Dancing Script'"),
-            document.fonts.load("700 1em 'Dancing Script'")
+            document.fonts.load("700 1em 'Dancing Script'"),
+            document.fonts.load("400 1em 'Arimo'"),
+            document.fonts.load("700 1em 'Arimo'")
         ]);
     } catch (e) {
         console.warn("Font load warning:", e);

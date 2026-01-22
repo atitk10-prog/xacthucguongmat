@@ -90,13 +90,20 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [requests, setRequests] = useState<PermissionRequest[]>([]);
+    const [allRequests, setAllRequests] = useState<PermissionRequest[]>([]);
     const [allPendingRequests, setAllPendingRequests] = useState<PermissionRequest[]>([]);
 
     // Admin mode
     const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'teacher';
-    const [viewMode, setViewMode] = useState<'student' | 'admin'>('student');
+    const [viewMode, setViewMode] = useState<'student' | 'admin'>(isAdmin ? 'admin' : 'student');
+    const [adminTab, setAdminTab] = useState<'pending' | 'history'>('pending');
     const [showRejectModal, setShowRejectModal] = useState<string | null>(null);
     const [rejectionReason, setRejectionReason] = useState('');
+    const [showDeleteConfirm, setShowDeleteConfirm] = useState<string | null>(null);
+
+    // Edit state
+    const [isEditing, setIsEditing] = useState(false);
+    const [editingId, setEditingId] = useState<string | null>(null);
 
     // Form state
     const [formData, setFormData] = useState({
@@ -113,9 +120,35 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
     useEffect(() => {
         loadRequests();
         if (isAdmin) {
-            loadAllPendingRequests();
+            loadAdminData();
         }
-    }, [currentUser]);
+
+        // Subscribe to real-time changes
+        const channel = dataService.subscribeToExitPermissions((payload) => {
+            // Reload all relevant data when any change occurs
+            loadRequests();
+            if (isAdmin) loadAdminData();
+
+            // If student and their request status changed, toast them
+            if (!isAdmin && payload.eventType === 'UPDATE' && payload.new.user_id === currentUser?.id) {
+                const newStatus = payload.new.status;
+                if (newStatus === 'approved') toastSuccess('Đơn xin phép của bạn đã được DUYỆT! 🎉');
+                else if (newStatus === 'rejected') toastError('Đơn xin phép của bạn đã bị từ chối.');
+            }
+        });
+
+        return () => {
+            if (channel) channel.unsubscribe();
+        };
+    }, [currentUser, adminTab]);
+
+    const loadAdminData = async () => {
+        if (adminTab === 'pending') {
+            loadAllPendingRequests();
+        } else {
+            loadAllHistoryRequests();
+        }
+    };
 
     const loadRequests = async () => {
         setIsLoading(true);
@@ -143,6 +176,19 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
         }
     };
 
+    const loadAllHistoryRequests = async () => {
+        try {
+            // Fetch all non-pending
+            const res = await dataService.getExitPermissions();
+            if (res.success && res.data) {
+                const history = (res.data as PermissionRequest[]).filter(r => r.status !== 'pending');
+                setAllRequests(history);
+            }
+        } catch (err) {
+            console.error('Failed to load history requests:', err);
+        }
+    };
+
     const handleApprove = async (id: string) => {
         if (!currentUser) return;
         const res = await dataService.approveRejectExitPermission(id, 'approved', currentUser.id);
@@ -167,7 +213,7 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
             toastSuccess('Đã từ chối đơn!');
             setShowRejectModal(null);
             setRejectionReason('');
-            loadAllPendingRequests();
+            loadAdminData();
             loadRequests();
         } else {
             toastError(res.error || 'Lỗi từ chối đơn');
@@ -175,6 +221,7 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
     };
 
     const formatDateTime = (dateString: string) => {
+        if (!dateString) return '---';
         const date = new Date(dateString);
         const time = date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
         const day = date.toLocaleDateString('vi-VN');
@@ -190,11 +237,9 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
 
         setIsSubmitting(true);
 
-        // Combine Date & Time
         const fullExitTime = `${formData.exit_date}T${formData.exit_time}:00`;
         const fullReturnTime = `${formData.return_date}T${formData.return_time}:00`;
 
-        // Validation
         if (new Date(fullExitTime) >= new Date(fullReturnTime)) {
             toastError('Thời gian về phải sau thời gian ra');
             setIsSubmitting(false);
@@ -202,34 +247,26 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
         }
 
         try {
-            const res = await dataService.createExitPermission({
+            const payload = {
                 user_id: currentUser.id,
                 reason: formData.reason,
                 destination: formData.destination,
                 parent_contact: formData.parent_contact,
                 exit_time: fullExitTime,
                 return_time: fullReturnTime
-            });
+            };
+
+            const res = isEditing && editingId
+                ? await dataService.updateExitPermission(editingId, payload)
+                : await dataService.createExitPermission(payload);
 
             if (res.success) {
-                toastSuccess('Đã gửi đơn xin phép thành công!');
-                // Reset form
-                setFormData({
-                    reason: '',
-                    destination: '',
-                    parent_contact: '',
-                    exit_date: new Date().toISOString().split('T')[0],
-                    exit_time: '07:00',
-                    return_date: new Date().toISOString().split('T')[0],
-                    return_time: '17:00'
-                });
-                // Reload requests
+                toastSuccess(isEditing ? 'Cập nhật đơn thành công!' : 'Đã gửi đơn xin phép thành công!');
+                handleCancelEdit();
                 loadRequests();
-                if (isAdmin) {
-                    loadAllPendingRequests();
-                }
+                if (isAdmin) loadAdminData();
             } else {
-                toastError(res.error || 'Lỗi gửi đơn');
+                toastError(res.error || 'Lỗi xử lý đơn');
             }
         } catch (error) {
             toastError('Có lỗi xảy ra');
@@ -238,13 +275,48 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
         }
     };
 
-    const handleDeleteRequest = async (id: string) => {
-        if (!confirm('Bạn có chắc muốn xóa đơn này?')) return;
+    const handleEditClick = (req: PermissionRequest) => {
+        const exitDateObj = new Date(req.exit_time);
+        const returnDateObj = new Date(req.return_time);
 
+        setFormData({
+            reason: req.reason,
+            destination: req.destination,
+            parent_contact: req.parent_contact || '',
+            exit_date: exitDateObj.toISOString().split('T')[0],
+            exit_time: exitDateObj.toTimeString().split(' ')[0].substring(0, 5),
+            return_date: returnDateObj.toISOString().split('T')[0],
+            return_time: returnDateObj.toTimeString().split(' ')[0].substring(0, 5)
+        });
+        setEditingId(req.id);
+        setIsEditing(true);
+        // Scroll to top or form
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const handleCancelEdit = () => {
+        setFormData({
+            reason: '',
+            destination: '',
+            parent_contact: '',
+            exit_date: new Date().toISOString().split('T')[0],
+            exit_time: '07:00',
+            return_date: new Date().toISOString().split('T')[0],
+            return_time: '17:00'
+        });
+        setIsEditing(false);
+        setEditingId(null);
+    };
+
+    const handleDeleteRequest = async (id: string) => {
+        if (!id) return;
         const res = await dataService.deleteExitPermission(id);
         if (res.success) {
             toastSuccess('Đã xóa đơn');
             setRequests(prev => prev.filter(r => r.id !== id));
+            setAllPendingRequests(prev => prev.filter(r => r.id !== id));
+            setAllRequests(prev => prev.filter(r => r.id !== id));
+            setShowDeleteConfirm(null);
         } else {
             toastError(res.error || 'Lỗi xóa đơn');
         }
@@ -311,7 +383,7 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
                             </button>
                             {isAdmin && viewMode === 'admin' && (
                                 <button
-                                    onClick={() => { loadAllPendingRequests(); toastSuccess('Đã làm mới dữ liệu'); }}
+                                    onClick={() => { loadAdminData(); toastSuccess('Đã làm mới dữ liệu'); }}
                                     className="ml-2 p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-white transition-all"
                                     title="Làm mới"
                                 >
@@ -332,65 +404,150 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
 
             {viewMode === 'admin' ? (
                 // Admin View
-                <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6">
-                    <h3 className="text-lg font-black text-slate-900 mb-6 flex items-center gap-2">
-                        <CheckCircle className="w-5 h-5 text-indigo-600" />
-                        Danh sách chờ duyệt
-                    </h3>
+                <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div className="flex border-b border-slate-100">
+                        <button
+                            onClick={() => setAdminTab('pending')}
+                            className={`flex-1 py-4 text-sm font-black flex items-center justify-center gap-2 border-b-2 transition-all ${adminTab === 'pending' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/30' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                        >
+                            <Icons.Clock className="w-4 h-4" />
+                            CHỜ DUYỆT ({allPendingRequests.length})
+                        </button>
+                        <button
+                            onClick={() => setAdminTab('history')}
+                            className={`flex-1 py-4 text-sm font-black flex items-center justify-center gap-2 border-b-2 transition-all ${adminTab === 'history' ? 'border-indigo-600 text-indigo-600 bg-indigo-50/30' : 'border-transparent text-slate-400 hover:text-slate-600'}`}
+                        >
+                            <Icons.Calendar className="w-4 h-4" />
+                            LỊCH SỬ DUYỆT
+                        </button>
+                    </div>
 
-                    {allPendingRequests.length === 0 ? (
-                        <div className="text-center py-12 text-slate-400">
-                            <CheckCircle className="w-16 h-16 mx-auto mb-4 opacity-20" />
-                            <p className="font-medium">Không có đơn nào đang chờ duyệt</p>
-                        </div>
-                    ) : (
-                        <div className="space-y-4">
-                            {allPendingRequests.map(req => (
-                                <div key={req.id} className="bg-slate-50 rounded-2xl p-4 border border-slate-100">
-                                    <div className="flex justify-between items-start mb-3">
-                                        <div>
-                                            <p className="font-bold text-slate-900 text-lg">{req.user?.full_name}</p>
-                                            <p className="text-sm text-indigo-600 font-medium">{req.user?.organization} - {req.user?.student_code}</p>
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <button
-                                                onClick={() => setShowRejectModal(req.id)}
-                                                className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 font-bold text-sm hover:bg-red-200"
-                                            >
-                                                Từ chối
-                                            </button>
-                                            <button
-                                                onClick={() => handleApprove(req.id)}
-                                                className="px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-sm hover:bg-emerald-200"
-                                            >
-                                                Duyệt
-                                            </button>
-                                        </div>
+                    <div className="p-6">
+                        {adminTab === 'pending' ? (
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-black text-slate-900 mb-2 flex items-center gap-2">
+                                    <CheckCircle className="w-5 h-5 text-indigo-600" />
+                                    Đang chờ xử lý
+                                </h3>
+                                {allPendingRequests.length === 0 ? (
+                                    <div className="text-center py-12 text-slate-400">
+                                        <CheckCircle className="w-16 h-16 mx-auto mb-4 opacity-20" />
+                                        <p className="font-medium">Sạch sẽ! Không có đơn nào chờ duyệt.</p>
                                     </div>
-
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                                        <div className="space-y-2">
-                                            <p><span className="text-slate-500 font-bold">Lý do:</span> {getReasonLabel(req.reason)}</p>
-                                            <p><span className="text-slate-500 font-bold">Nơi đến:</span> {req.destination}</p>
-                                            <p><span className="text-slate-500 font-bold">Liên hệ:</span> {req.parent_contact}</p>
+                                ) : (
+                                    allPendingRequests.map(req => (
+                                        <div key={req.id} className="bg-slate-50 rounded-2xl p-4 border border-slate-100 relative group">
+                                            <button
+                                                onClick={() => setShowDeleteConfirm(req.id)}
+                                                className="absolute top-2 right-2 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                                                title="Xóa đơn"
+                                            >
+                                                <Icons.Trash className="w-4 h-4" />
+                                            </button>
+                                            <div className="flex justify-between items-start mb-3">
+                                                <div>
+                                                    <p className="font-bold text-slate-900 text-lg">{req.user?.full_name}</p>
+                                                    <p className="text-sm text-indigo-600 font-medium">{req.user?.organization} - {req.user?.student_code}</p>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => setShowRejectModal(req.id)}
+                                                        className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 font-bold text-sm hover:bg-red-200"
+                                                    >
+                                                        Từ chối
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleApprove(req.id)}
+                                                        className="px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-sm hover:bg-emerald-200"
+                                                    >
+                                                        Duyệt
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mt-4 border-t border-slate-200 pt-4">
+                                                <div className="space-y-2">
+                                                    <p><span className="text-slate-500 font-bold">Lý do:</span> {getReasonLabel(req.reason)}</p>
+                                                    <p><span className="text-slate-500 font-bold">Nơi đến:</span> {req.destination}</p>
+                                                    <p><span className="text-slate-500 font-bold">Liên hệ:</span> {req.parent_contact}</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <p className="flex items-center gap-2"><Icons.Exit className="w-3.5 h-3.5 text-slate-400" /> <span className="text-slate-500 font-bold">Giờ đi:</span> {formatDateTime(req.exit_time)}</p>
+                                                    <p className="flex items-center gap-2"><Icons.Home className="w-3.5 h-3.5 text-slate-400" /> <span className="text-slate-500 font-bold">Giờ về:</span> {formatDateTime(req.return_time)}</p>
+                                                </div>
+                                            </div>
                                         </div>
-                                        <div className="space-y-2">
-                                            <p><span className="text-slate-500 font-bold">Giờ đi:</span> {formatDateTime(req.exit_time)}</p>
-                                            <p><span className="text-slate-500 font-bold">Giờ về:</span> {formatDateTime(req.return_time)}</p>
-                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <h3 className="text-lg font-black text-slate-900 mb-2 flex items-center gap-2">
+                                    <Icons.Calendar className="w-5 h-5 text-indigo-600" />
+                                    Lịch sử đã duyệt/từ chối
+                                </h3>
+                                {allRequests.length === 0 ? (
+                                    <div className="text-center py-12 text-slate-400">
+                                        <Icons.Calendar className="w-16 h-16 mx-auto mb-4 opacity-20" />
+                                        <p className="font-medium">Chưa có lịch sử</p>
                                     </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                                ) : (
+                                    allRequests.map(req => {
+                                        const badge = getStatusBadge(req.status);
+                                        return (
+                                            <div key={req.id} className="bg-slate-50 rounded-2xl p-4 border border-slate-100 relative group">
+                                                <button
+                                                    onClick={() => setShowDeleteConfirm(req.id)}
+                                                    className="absolute top-2 right-2 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                                                    title="Xóa đơn"
+                                                >
+                                                    <Icons.Trash className="w-4 h-4" />
+                                                </button>
+                                                <div className="flex justify-between items-start mb-3">
+                                                    <div>
+                                                        <p className="font-bold text-slate-800">{req.user?.full_name}</p>
+                                                        <p className="text-xs text-slate-500">{req.user?.organization} - {req.user?.student_code}</p>
+                                                    </div>
+                                                    <span className={`px-2 py-1 rounded-lg text-[10px] font-black uppercase flex items-center gap-1 ${badge.class}`}>
+                                                        {badge.icon}
+                                                        {badge.text}
+                                                    </span>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-4 text-[11px] mt-2 text-slate-600">
+                                                    <p><span className="font-bold">Lý do:</span> {getReasonLabel(req.reason)}</p>
+                                                    <p><span className="font-bold">Ra:</span> {formatDateTime(req.exit_time)}</p>
+                                                    <p><span className="font-bold">Đến:</span> {req.destination}</p>
+                                                    <p><span className="font-bold">Về:</span> {formatDateTime(req.return_time)}</p>
+                                                </div>
+                                                {req.rejection_reason && (
+                                                    <div className="mt-2 text-[11px] text-red-600 bg-red-50 p-2 rounded-lg border border-red-100 font-medium">
+                                                        Lý do từ chối: {req.rejection_reason}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })
+                                )}
+                            </div>
+                        )}
+                    </div>
                 </div>
             ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* Form */}
                     <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6">
-                        <h3 className="text-lg font-black text-slate-900 mb-6 flex items-center gap-2">
-                            <Icons.Plus className="w-5 h-5 text-indigo-600" />
-                            Tạo đơn mới
+                        <h3 className="text-lg font-black text-slate-900 mb-6 flex items-center justify-between">
+                            <span className="flex items-center gap-2">
+                                <Icons.Plus className="w-5 h-5 text-indigo-600" />
+                                {isEditing ? 'Cập nhật đơn' : 'Tạo đơn mới'}
+                            </span>
+                            {isEditing && (
+                                <button
+                                    onClick={handleCancelEdit}
+                                    className="text-xs text-red-500 hover:underline font-bold"
+                                >
+                                    HỦY CHỈNH SỬA
+                                </button>
+                            )}
                         </h3>
 
                         <form onSubmit={handleSubmit} className="space-y-5">
@@ -502,18 +659,18 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
                             <button
                                 type="submit"
                                 disabled={isSubmitting}
-                                className={`w-full py-4 rounded-2xl font-black text-lg transition-all ${isSubmitting
+                                className={`w-full py-4 rounded-2xl font-black text-lg shadow-lg shadow-indigo-200 transition-all ${isSubmitting
                                     ? 'bg-slate-300 text-slate-500 cursor-not-allowed'
-                                    : 'bg-indigo-600 text-white hover:bg-indigo-700'
+                                    : 'bg-indigo-600 text-white hover:bg-indigo-700 hover:-translate-y-1'
                                     }`}
                             >
                                 {isSubmitting ? (
                                     <span className="flex items-center justify-center gap-2">
                                         <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                        ĐANG GỬI...
+                                        ĐANG XỬ LÝ...
                                     </span>
                                 ) : (
-                                    'GỬI ĐƠN XIN PHÉP'
+                                    isEditing ? 'CẬP NHẬT ĐƠN XIN PHÉP' : 'GỬI ĐƠN XIN PHÉP'
                                 )}
                             </button>
                         </form>
@@ -545,16 +702,25 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
                                 {requests.map(req => {
                                     const badge = getStatusBadge(req.status);
                                     return (
-                                        <div key={req.id} className="bg-slate-50 rounded-2xl p-4 border border-slate-100 relative group">
-                                            {/* Delete button for pending requests */}
+                                        <div key={req.id} className="bg-slate-50 rounded-2xl p-4 border border-slate-100 relative group hover:border-indigo-200 transition-all">
+                                            {/* Action buttons for pending requests */}
                                             {req.status === 'pending' && (
-                                                <button
-                                                    onClick={() => handleDeleteRequest(req.id)}
-                                                    className="absolute top-2 right-2 p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                                                    title="Xóa đơn"
-                                                >
-                                                    <Icons.Trash className="w-4 h-4" />
-                                                </button>
+                                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-all">
+                                                    <button
+                                                        onClick={() => handleEditClick(req)}
+                                                        className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50"
+                                                        title="Sửa đơn"
+                                                    >
+                                                        <Icons.Edit className="w-4 h-4" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => setShowDeleteConfirm(req.id)}
+                                                        className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50"
+                                                        title="Xóa đơn"
+                                                    >
+                                                        <Icons.Trash className="w-4 h-4" />
+                                                    </button>
+                                                </div>
                                             )}
 
                                             <div className="flex justify-between items-start mb-3">
@@ -598,28 +764,62 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
 
             {/* Rejection Modal */}
             {showRejectModal && (
-                <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                    <div className="bg-white rounded-2xl w-full max-w-md p-6">
-                        <h3 className="text-lg font-black text-slate-900 mb-4">Lý do từ chối</h3>
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl w-full max-w-md p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                            <XCircle className="w-10 h-10" />
+                        </div>
+                        <h3 className="text-2xl font-black text-center text-slate-900 mb-2">Từ chối đơn</h3>
+                        <p className="text-slate-500 text-center mb-6">Vui lòng cung cấp lý do để học sinh được biết.</p>
+
                         <textarea
                             value={rejectionReason}
                             onChange={(e) => setRejectionReason(e.target.value)}
-                            className="w-full p-3 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-red-500 min-h-[100px]"
-                            placeholder="Nhập lý do từ chối..."
+                            className="w-full p-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-red-500 min-h-[120px] mb-6 font-medium"
+                            placeholder="VD: Thông tin chưa chính xác..."
                             autoFocus
                         />
-                        <div className="flex justify-end gap-3 mt-4">
+
+                        <div className="flex gap-3">
                             <button
                                 onClick={() => { setShowRejectModal(null); setRejectionReason(''); }}
-                                className="px-4 py-2 text-slate-600 font-bold hover:bg-slate-100 rounded-xl"
+                                className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition-all"
                             >
-                                Hủy
+                                HỦY BỎ
                             </button>
                             <button
                                 onClick={() => handleReject(showRejectModal)}
-                                className="px-4 py-2 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700"
+                                className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-200"
                             >
-                                Xác nhận từ chối
+                                XÁC NHẬN
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Delete Confirmation Modal */}
+            {showDeleteConfirm && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl w-full max-w-sm p-8 shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className="w-16 h-16 bg-amber-100 text-amber-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                            <Icons.Trash className="w-10 h-10" />
+                        </div>
+                        <h3 className="text-2xl font-black text-center text-slate-900 mb-2">Bạn chắc chắn?</h3>
+                        <p className="text-slate-500 text-center mb-8 font-medium">Hành động này không thể hoàn tác. Đơn xin phép sẽ bị xóa vĩnh viễn.</p>
+
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setShowDeleteConfirm(null)}
+                                className="flex-1 py-3 text-slate-500 font-bold hover:bg-slate-100 rounded-xl transition-all"
+                            >
+                                HỦY
+                            </button>
+                            <button
+                                onClick={() => handleDeleteRequest(showDeleteConfirm)}
+                                className="flex-1 py-3 bg-red-600 text-white font-bold rounded-xl hover:bg-red-700 transition-all shadow-lg shadow-red-200"
+                            >
+                                XÓA NGAY
                             </button>
                         </div>
                     </div>

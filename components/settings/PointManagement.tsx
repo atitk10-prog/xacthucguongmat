@@ -121,8 +121,12 @@ const PointManagement: React.FC<PointManagementProps> = ({ onBack }) => {
         const types: Record<string, { text: string; color: string }> = {
             checkin: { text: 'Check-in', color: 'bg-blue-100 text-blue-600' },
             boarding: { text: 'Nội trú', color: 'bg-purple-100 text-purple-600' },
+            boarding_late: { text: 'Trễ nội trú (Tự động)', color: 'bg-orange-100 text-orange-600 font-bold' },
+            boarding_absent: { text: 'Vắng nội trú (Tự động)', color: 'bg-red-100 text-red-600 font-bold' },
             manual_add: { text: 'Cộng thủ công', color: 'bg-emerald-100 text-emerald-600' },
-            manual_deduct: { text: 'Trừ thủ công', color: 'bg-red-100 text-red-600' }
+            manual_deduct: { text: 'Trừ thủ công', color: 'bg-red-100 text-red-600' },
+            event_absence: { text: 'Vắng sự kiện (Tự động)', color: 'bg-amber-100 text-amber-600' },
+            event_attendance: { text: 'Tham gia sự kiện', color: 'bg-green-100 text-green-600' }
         };
         return types[type] || { text: type, color: 'bg-slate-100 text-slate-600' };
     };

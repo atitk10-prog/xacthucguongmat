@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../../services/dataService';
 import { utils, writeFile } from 'xlsx';
-import { Award, Download, Loader2, FileDown } from 'lucide-react';
+import { Award, Download, Loader2, FileDown, Plus, ChevronRight, Settings2, CheckCircle2, X, ArrowLeft } from 'lucide-react';
 import { generateSingleExportPDF, generateBatchPDF } from '../../services/certificateExportService';
 import { useToast } from '../ui/Toast';
 
@@ -17,6 +17,9 @@ interface RankingUser {
     late_count?: number;
     absent_count?: number;
     rank?: string;
+    // Class stats
+    student_count?: number;
+    average_points?: number;
 }
 
 interface RankingBoardProps {
@@ -28,10 +31,27 @@ interface RankingBoardProps {
 const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, roomId }) => {
     const [rankings, setRankings] = useState<RankingUser[]>([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isMoreLoading, setIsMoreLoading] = useState(false);
     const [viewType, setViewType] = useState<'student' | 'class'>(type);
+    const [page, setPage] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
     const [isGenerating, setIsGenerating] = useState(false);
     const [currentUserRole, setCurrentUserRole] = useState<string>('student');
+    const [filterClass, setFilterClass] = useState<string | null>(null);
     const { success, error: toastError } = useToast();
+
+    // Certificate Content Editor State
+    const [showCertEditor, setShowCertEditor] = useState(false);
+    const [selectedUserForCert, setSelectedUserForCert] = useState<RankingUser | null>(null);
+    const [certConfig, setCertConfig] = useState({
+        title: 'Chứng nhận Xuất Sắc',
+        presentedTo: 'Trao tặng cho',
+        eventPrefix: 'Đã đạt thành tích xuất sắc trong phong trào nề nếp',
+        datePrefix: 'Ngày cấp:',
+        signature: 'Ban Tổ Chức',
+        font: 'serif',
+        issuedDate: new Date().toLocaleDateString('vi-VN')
+    });
 
     useEffect(() => {
         const user = dataService.getStoredUser();
@@ -39,53 +59,77 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
     }, []);
 
     useEffect(() => {
-        loadRankings();
-    }, [viewType, classId, roomId]);
+        setPage(0);
+        setRankings([]);
+        loadRankings(0, true);
+    }, [viewType, classId, roomId, filterClass]);
 
-    const loadRankings = async () => {
-        setIsLoading(true);
+    const loadRankings = async (pageNum: number, isNew: boolean = false) => {
+        if (isNew) setIsLoading(true);
+        else setIsMoreLoading(true);
+
         try {
+            // If filterClass is active, force type to 'student' to show students of that class
+            const typeToFetch = filterClass ? 'student' : viewType;
+
             const result = await dataService.getRanking({
+                type: typeToFetch,
                 role: 'student',
-                limit: 50
+                limit: 20,
+                page: pageNum,
+                organization: filterClass || undefined
             });
 
             if (result.success && result.data) {
                 const rawData = result.data as any[];
+                setHasMore(rawData.length === 20);
 
-                // Calculate Rank with Tie-breaking logic (Standard Competition Ranking: 1, 1, 3, 4)
-                let currentRank = 1;
                 const mappedData = rawData.map((item, index) => {
-                    // Check if tied with previous
-                    if (index > 0 && item.total_points < rawData[index - 1].total_points) {
-                        currentRank = index + 1;
-                    }
-
                     // Determine classification
                     let classification = 'Chưa xếp loại';
-                    if (item.total_points >= 90) classification = 'Tốt';
-                    else if (item.total_points >= 70) classification = 'Khá';
-                    else if (item.total_points >= 50) classification = 'Trung bình';
-                    else if (item.total_points > 0) classification = 'Yếu';
+                    const pointsToUse = typeToFetch === 'student' ? item.total_points : item.average_points;
+
+                    if (pointsToUse >= 90) classification = 'Tốt';
+                    else if (pointsToUse >= 70) classification = 'Khá';
+                    else if (pointsToUse >= 50) classification = 'Trung bình';
+                    else if (pointsToUse > 0) classification = 'Yếu';
 
                     return {
-                        position: currentRank,
+                        position: item.rank,
                         user_id: item.id,
                         user_name: item.full_name,
                         avatar_url: item.avatar_url,
                         class_id: item.class_id,
                         organization: item.organization,
                         total_points: item.total_points,
+                        on_time_count: item.on_time_count,
+                        late_count: item.late_count,
+                        absent_count: item.absent_count,
+                        student_count: item.student_count,
+                        average_points: item.average_points,
                         rank: classification
                     };
                 });
-                setRankings(mappedData);
+
+                if (isNew) setRankings(mappedData);
+                else setRankings(prev => [...prev, ...mappedData]);
             }
         } catch (error) {
             console.error('Failed to load rankings:', error);
         } finally {
             setIsLoading(false);
+            setIsMoreLoading(false);
         }
+    };
+
+    const handleClassClick = (className: string) => {
+        setFilterClass(className);
+        // viewType remains 'class' conceptually, but we render lists
+        // Actually, we rely on filterClass to toggle render logic logic in loadRankings
+    };
+
+    const handleBackToClasses = () => {
+        setFilterClass(null);
     };
 
     const handleExport = () => {
@@ -143,22 +187,30 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
         }
     };
 
-    const handleCertificateExport = async (user: RankingUser) => {
+    const initiateCertificateExport = (user: RankingUser) => {
+        setSelectedUserForCert(user);
+        setShowCertEditor(true);
+    };
+
+    const handleConfirmExport = async () => {
+        if (!selectedUserForCert) return;
         setIsGenerating(true);
+        setShowCertEditor(false);
+
         try {
+            const user = selectedUserForCert;
             const fileName = `ChungNhan_${user.user_name.replace(/\s+/g, '_')}_${new Date().getTime()}.pdf`;
 
-            // Construct Certificate Object on the fly
             const certData = {
                 cert: {
                     id: `RANK-${user.user_id}-${Date.now()}`,
                     user_id: user.user_id,
                     event_id: 'ranking',
                     type: 'excellent',
-                    title: 'Chứng nhận Xuất Sắc',
-                    issued_date: new Date().toISOString(),
-                    template_id: 'auto_rank' // Will fallback to custom
-                } as any, // Cast to any to bypass strict checks for temp obj
+                    title: certConfig.title,
+                    issued_date: certConfig.issuedDate,
+                    template_id: 'auto_rank'
+                } as any,
                 user: {
                     id: user.user_id,
                     full_name: user.user_name,
@@ -166,34 +218,33 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                 } as any,
                 config: {
                     paperSize: 'A4',
-                    fontStyle: 'serif',
+                    fontStyle: certConfig.font,
                     textColor: '#1e293b',
                     logoAlignment: 'center',
                     logoScale: 1,
                     visibility: { qr: false, title: true, recipient: true, eventName: true, date: true, signature: true, logo: true },
                     labels: {
-                        title: 'Chứng Nhận',
-                        presentedTo: 'Trao tặng cho',
-                        eventPrefix: 'Đã đạt thành tích',
-                        datePrefix: 'Ngày cấp:',
-                        signature: 'Ban Tổ Chức'
+                        title: certConfig.title,
+                        presentedTo: certConfig.presentedTo,
+                        eventPrefix: certConfig.eventPrefix,
+                        datePrefix: certConfig.datePrefix,
+                        signature: certConfig.signature
                     },
                     manualEventName: `Top ${user.position} - Bảng Xếp Hạng Thi Đua`,
-                    logos: [] // Can add default logo here
+                    logos: []
                 },
                 overrideName: user.user_name
             };
 
             const count = await generateSingleExportPDF([certData], fileName);
-
             if (count > 0) success(`Đã tạo chứng nhận cho ${user.user_name}`);
             else toastError('Không thể tạo chứng nhận');
-
         } catch (err) {
             console.error(err);
             toastError('Lỗi tạo chứng nhận');
         } finally {
             setIsGenerating(false);
+            setSelectedUserForCert(null);
         }
     };
 
@@ -276,23 +327,35 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
 
                 <div className="flex gap-2 items-center">
                     {/* View Type Toggle */}
-                    <div className="flex gap-2 bg-white rounded-2xl p-1 shadow-sm border border-slate-100">
-                        <button
-                            onClick={() => setViewType('student')}
-                            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'student' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
-                                }`}
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
-                            Cá nhân
-                        </button>
-                        <button
-                            onClick={() => setViewType('class')}
-                            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'class' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
-                                }`}
-                        >
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
-                            Theo lớp
-                        </button>
+                    <div className="flex gap-2 bg-white rounded-2xl p-1 shadow-sm border border-slate-100 overflow-hidden">
+                        {filterClass ? (
+                            <button
+                                onClick={handleBackToClasses}
+                                className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 flex items-center gap-2 w-full justify-center md:w-auto shadow-sm transition-all"
+                            >
+                                <ArrowLeft className="w-4 h-4" />
+                                Quay lại DS Lớp
+                            </button>
+                        ) : (
+                            <>
+                                <button
+                                    onClick={() => setViewType('student')}
+                                    className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'student' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
+                                        }`}
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
+                                    Cá nhân
+                                </button>
+                                <button
+                                    onClick={() => setViewType('class')}
+                                    className={`px-4 py-2 rounded-xl text-sm font-bold transition-all flex items-center gap-2 ${viewType === 'class' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
+                                        }`}
+                                >
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
+                                    Theo lớp
+                                </button>
+                            </>
+                        )}
                     </div>
 
                     <button
@@ -363,7 +426,7 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                     {/* Instant Cert Button for Top 1 */}
                     <div className="absolute top-4 right-4 animate-bounce">
                         <button
-                            onClick={() => handleCertificateExport(rankings[0])}
+                            onClick={() => initiateCertificateExport(rankings[0])}
                             disabled={isGenerating}
                             className="bg-white/20 hover:bg-white/30 backdrop-blur text-white p-2 rounded-full transition-all"
                             title="Tải chứng nhận Top 1"
@@ -381,16 +444,26 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                         <thead>
                             <tr className="bg-slate-50 text-left">
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Hạng</th>
-                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Tên</th>
-                                {viewType === 'student' && (
+                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">{viewType === 'student' || filterClass ? 'Tên học sinh' : 'Lớp'}</th>
+                                {(viewType === 'student' || filterClass) && (
                                     <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">Lớp</th>
                                 )}
-                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center">Đúng giờ</th>
-                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center">Muộn</th>
-                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center">Vắng</th>
-                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right">Điểm</th>
+                                {viewType === 'student' || filterClass ? (
+                                    <>
+                                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center">Đúng giờ</th>
+                                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center">Muộn</th>
+                                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center">Vắng</th>
+                                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right">Điểm</th>
+                                    </>
+                                ) : (
+                                    <>
+                                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center">Sĩ số</th>
+                                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right">TB Cộng</th>
+                                        <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right">Tổng điểm</th>
+                                    </>
+                                )}
                                 <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-right">Xếp loại</th>
-                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center w-10">CN</th>
+                                {(viewType === 'student' || filterClass) && <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase text-center w-10">CN</th>}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
@@ -405,7 +478,15 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                                 </tr>
                             ) : (
                                 rankings.map((user, index) => (
-                                    <tr key={index} className="hover:bg-slate-50 transition-colors">
+                                    <tr
+                                        key={index}
+                                        className={`transition-colors ${viewType === 'class' && !filterClass ? 'cursor-pointer hover:bg-slate-100' : 'hover:bg-slate-50'}`}
+                                        onClick={() => {
+                                            if (viewType === 'class' && !filterClass) {
+                                                handleClassClick(user.organization || user.user_name);
+                                            }
+                                        }}
+                                    >
                                         <td className="px-6 py-4">
                                             <span className={`text-xl ${user.position <= 3 ? '' : 'text-slate-400 text-sm'}`}>
                                                 {getMedalEmoji(user.position)}
@@ -413,40 +494,67 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                                         </td>
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-3">
-                                                {user.avatar_url ? (
-                                                    <img src={user.avatar_url} className="w-10 h-10 rounded-full object-cover border border-indigo-100" alt="" />
+                                                {viewType === 'student' || filterClass ? (
+                                                    <>
+                                                        {user.avatar_url ? (
+                                                            <img src={user.avatar_url} className="w-10 h-10 rounded-full object-cover border border-indigo-100" alt="" />
+                                                        ) : (
+                                                            <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600 font-bold">
+                                                                {user.user_name.charAt(0)}
+                                                            </div>
+                                                        )}
+                                                        <span className="font-bold text-slate-900">{user.user_name}</span>
+                                                    </>
                                                 ) : (
-                                                    <div className="w-10 h-10 bg-indigo-100 rounded-full flex items-center justify-center text-indigo-600">
-                                                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
-                                                    </div>
+                                                    <>
+                                                        <div className="w-10 h-10 bg-purple-100 rounded-xl flex items-center justify-center text-purple-600 font-black">
+                                                            {user.user_name}
+                                                        </div>
+                                                        <span className="font-bold text-slate-900">Lớp {user.user_name}</span>
+                                                        <span className="text-xs text-indigo-500 font-medium bg-indigo-50 px-2 py-0.5 rounded ml-2">Click để xem HS</span>
+                                                    </>
                                                 )}
-                                                <span className="font-bold text-slate-900">{user.user_name}</span>
                                             </div>
                                         </td>
-                                        {viewType === 'student' && (
+                                        {(viewType === 'student' || filterClass) && (
                                             <td className="px-6 py-4 text-slate-500 font-medium">{user.organization || user.class_id || '—'}</td>
                                         )}
-                                        <td className="px-6 py-4 text-center">
-                                            <span className="text-emerald-600 font-bold">{user.on_time_count || 0}</span>
-                                        </td>
-                                        <td className="px-6 py-4 text-center">
-                                            <span className="text-amber-600 font-bold">{user.late_count || 0}</span>
-                                        </td>
-                                        <td className="px-6 py-4 text-center">
-                                            <span className="text-red-600 font-bold">{user.absent_count || 0}</span>
-                                        </td>
-                                        <td className="px-6 py-4 text-right">
-                                            <span className="text-xl font-black text-slate-900">{user.total_points}</span>
-                                        </td>
+                                        {viewType === 'student' || filterClass ? (
+                                            <>
+                                                <td className="px-6 py-4 text-center">
+                                                    <span className="text-emerald-600 font-bold">{user.on_time_count || 0}</span>
+                                                </td>
+                                                <td className="px-6 py-4 text-center">
+                                                    <span className="text-amber-600 font-bold">{user.late_count || 0}</span>
+                                                </td>
+                                                <td className="px-6 py-4 text-center">
+                                                    <span className="text-red-600 font-bold">{user.absent_count || 0}</span>
+                                                </td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <span className="text-xl font-black text-slate-900">{user.total_points}</span>
+                                                </td>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <td className="px-6 py-4 text-center font-bold text-slate-600">{user.student_count} HS</td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <span className="text-lg font-black text-indigo-600">{user.average_points}</span>
+                                                </td>
+                                                <td className="px-6 py-4 text-right font-bold text-slate-400">{user.total_points}</td>
+                                            </>
+                                        )}
                                         <td className="px-6 py-4 text-right">
                                             <span className={`px-3 py-1 rounded-full text-xs font-bold ${getRankColor(user.rank)}`}>
                                                 {user.rank || '—'}
                                             </span>
                                         </td>
                                         <td className="px-6 py-4 text-center">
-                                            {user.position <= 5 && (
+                                            {(viewType === 'student' || filterClass) && user.position <= 5 && (
                                                 <button
-                                                    onClick={() => handleCertificateExport(user)}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        initiateCertificateExport(user);
+                                                    }}
                                                     disabled={isGenerating}
                                                     className="text-amber-500 hover:text-amber-600 hover:bg-amber-50 p-1.5 rounded-lg transition-colors"
                                                     title="Tải chứng nhận"
@@ -461,7 +569,117 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
                         </tbody>
                     </table>
                 </div>
+
+                {hasMore && (
+                    <div className="p-6 text-center border-t border-slate-50 bg-slate-50/30">
+                        <button
+                            onClick={() => {
+                                const nextNext = page + 1;
+                                setPage(nextNext);
+                                loadRankings(nextNext);
+                            }}
+                            disabled={isMoreLoading}
+                            className="px-8 py-3 bg-white border border-slate-200 text-indigo-600 font-bold rounded-2xl hover:bg-indigo-50 transition-all shadow-sm flex items-center gap-2 mx-auto disabled:opacity-50"
+                        >
+                            {isMoreLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+                            Xem thêm kết quả
+                        </button>
+                    </div>
+                )}
             </div>
+
+            {/* Certificate Editor Modal */}
+            {showCertEditor && selectedUserForCert && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden animate-slide-up">
+                        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-indigo-50/30">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center text-white">
+                                    <Settings2 className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="font-black text-slate-800">Tùy chỉnh chứng nhận</h3>
+                                    <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Học sinh: {selectedUserForCert.user_name}</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setShowCertEditor(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                                <X className="w-5 h-5 text-slate-400" />
+                            </button>
+                        </div>
+
+                        <div className="p-8 space-y-6">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <label className="text-xs font-black text-slate-400 uppercase ml-1">Tiêu đề bằng</label>
+                                    <input
+                                        type="text"
+                                        value={certConfig.title}
+                                        onChange={e => setCertConfig({ ...certConfig, title: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-700"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-black text-slate-400 uppercase ml-1">Ngày cấp</label>
+                                    <input
+                                        type="text"
+                                        value={certConfig.issuedDate}
+                                        onChange={e => setCertConfig({ ...certConfig, issuedDate: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-700"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <label className="text-xs font-black text-slate-400 uppercase ml-1">Nội dung vinh danh</label>
+                                <textarea
+                                    value={certConfig.eventPrefix}
+                                    onChange={e => setCertConfig({ ...certConfig, eventPrefix: e.target.value })}
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-medium text-slate-700 h-20 resize-none"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <label className="text-xs font-black text-slate-400 uppercase ml-1">Người ký</label>
+                                    <input
+                                        type="text"
+                                        value={certConfig.signature}
+                                        onChange={e => setCertConfig({ ...certConfig, signature: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-700"
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-xs font-black text-slate-400 uppercase ml-1">Font chữ (Khắc phục lỗi font)</label>
+                                    <select
+                                        value={certConfig.font}
+                                        onChange={e => setCertConfig({ ...certConfig, font: e.target.value })}
+                                        className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none font-bold text-slate-700"
+                                    >
+                                        <option value="serif">Playfair Display (Sang trọng)</option>
+                                        <option value="sans">Arimo / Sans (Rõ nét)</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
+                            <button
+                                onClick={() => setShowCertEditor(false)}
+                                className="flex-1 px-6 py-3 bg-white border border-slate-200 text-slate-600 rounded-2xl font-bold hover:bg-slate-100 transition-all"
+                            >
+                                Hủy bỏ
+                            </button>
+                            <button
+                                onClick={handleConfirmExport}
+                                className="flex-[2] px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 flex items-center justify-center gap-2"
+                            >
+                                <CheckCircle2 className="w-5 h-5" />
+                                Xác nhận và Tải PDF
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

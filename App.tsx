@@ -14,15 +14,17 @@ import CardGenerator from './components/certificates/CardGenerator';
 import UserManagement from './components/users/UserManagement';
 import SystemConfig from './components/settings/SystemConfig';
 import PointManagement from './components/settings/PointManagement';
+import PointStatistics from './components/reports/PointStatistics';
+import StudentLayout from './components/student/StudentLayout'; // Import StudentLayout
 import { Icons } from './components/ui';
 import { dataService } from './services/dataService';
-import { ToastProvider } from './components/ui/Toast';
+import { useToast } from './components/ui/Toast';
 import { User, Event } from './types';
 
 type AppView =
   | 'login' | 'dashboard' | 'events' | 'event-form' | 'checkin'
   | 'boarding' | 'rooms' | 'exit-permission' | 'boarding-config' | 'boarding-run'
-  | 'reports' | 'event-report' | 'ranking'
+  | 'reports' | 'event-report' | 'ranking' | 'points-stats'
   | 'users' | 'certificates' | 'cards'
   | 'settings' | 'points';
 
@@ -40,6 +42,9 @@ const App: React.FC = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [boardingTab, setBoardingTab] = useState<'dashboard' | 'config' | 'rooms' | 'exit' | 'report'>('dashboard');
+  const toast = useToast();
 
   useEffect(() => {
     const initApp = async () => {
@@ -98,6 +103,45 @@ const App: React.FC = () => {
 
     initApp();
   }, []);
+
+  useEffect(() => {
+    if (!currentUser || (currentUser.role !== 'admin' && currentUser.role !== 'teacher')) return;
+
+    const loadPending = async () => {
+      const res = await dataService.getPendingExitPermissionsCount();
+      if (res.success && res.data !== undefined) setPendingCount(res.data);
+    };
+
+    loadPending();
+
+    // Subscribe to all exit permission changes
+    const channel = dataService.subscribeToExitPermissions((payload) => {
+      // console.log('Exit permission event:', payload);
+
+      if (payload.eventType === 'INSERT') {
+        setPendingCount(prev => prev + 1);
+        toast.info(`Có đơn xin phép mới từ: ${payload.new?.reason || 'Học sinh'}`);
+      } else if (payload.eventType === 'DELETE') {
+        const oldRecord = payload.old;
+        if (oldRecord && oldRecord.status === 'pending') {
+          setPendingCount(prev => Math.max(0, prev - 1));
+        }
+      } else if (payload.eventType === 'UPDATE') {
+        const oldStatus = payload.old?.status;
+        const newStatus = payload.new?.status;
+
+        if (oldStatus === 'pending' && newStatus !== 'pending') {
+          setPendingCount(prev => Math.max(0, prev - 1));
+        } else if (oldStatus !== 'pending' && newStatus === 'pending') {
+          setPendingCount(prev => prev + 1);
+        }
+      }
+    });
+
+    return () => {
+      if (channel) channel.unsubscribe();
+    };
+  }, [currentUser]);
 
   const loadUsers = async () => {
     const result = await dataService.getUsers({ status: 'active' });
@@ -169,6 +213,13 @@ const App: React.FC = () => {
     );
   }
 
+  // Student Portal Logic
+  if (currentUser.role === 'student') {
+    return (
+      <StudentLayout currentUser={currentUser} onLogout={handleLogout} />
+    );
+  }
+
   const getMenuItems = (): MenuItem[] => {
     const baseItems: MenuItem[] = [
       { id: 'dashboard', icon: <Icons.Dashboard className="w-5 h-5" />, label: 'Dashboard' },
@@ -184,6 +235,7 @@ const App: React.FC = () => {
       { id: 'divider2', icon: null, label: 'THỐNG KÊ', type: 'divider' },
       { id: 'ranking', icon: <Icons.Ranking className="w-5 h-5" />, label: 'Bảng xếp hạng' },
       { id: 'event-report', icon: <Icons.Reports className="w-5 h-5" />, label: 'Báo cáo sự kiện' },
+      { id: 'points-stats', icon: <Icons.Dashboard className="w-5 h-5" />, label: 'Thống kê điểm' },
     ];
 
     const adminItems: MenuItem[] = [
@@ -207,110 +259,123 @@ const App: React.FC = () => {
   const menuItems = getMenuItems();
 
   return (
-    <ToastProvider>
-      <div className="min-h-screen flex bg-slate-100">
-        {/* Sidebar */}
-        <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} bg-slate-900 text-white min-h-screen flex flex-col transition-all duration-300 relative shadow-2xl`}>
-          {/* Logo */}
-          <div className="p-4 border-b border-slate-800/50">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg text-white">
-                <Icons.Shield className="w-6 h-6" />
-              </div>
-              {sidebarOpen && (
-                <div>
-                  <h1 className="text-lg font-black tracking-tight">EduCheck</h1>
-                  <p className="text-xs text-slate-400 font-medium">v2.0 • AI Check-in</p>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Toggle */}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="absolute -right-3 top-16 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center hover:bg-indigo-500 z-10 shadow-lg transition-colors text-white"
-          >
-            {sidebarOpen ? <Icons.ChevronLeft className="w-4 h-4" /> : <Icons.ChevronRight className="w-4 h-4" />}
-          </button>
-
-          {/* Navigation */}
-          <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-            {menuItems.map(item => {
-              if (item.type === 'divider') {
-                return sidebarOpen ? (
-                  <div key={item.id} className="pt-5 pb-2">
-                    <p className="text-xs text-slate-500 font-bold px-3 tracking-wider">{item.label}</p>
-                  </div>
-                ) : (
-                  <div key={item.id} className="my-3 border-t border-slate-800"></div>
-                );
-              }
-
-              return (
-                <button
-                  key={item.id}
-                  onClick={() => setView(item.id as AppView)}
-                  className={`w-full px-3 py-2.5 rounded-xl text-left flex items-center gap-3 transition-all group ${view === item.id
-                    ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
-                    : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
-                    }`}
-                >
-                  <span className="flex-shrink-0">{item.icon}</span>
-                  {sidebarOpen && <span className="font-medium text-sm">{item.label}</span>}
-                </button>
-              );
-            })}
-          </nav>
-
-          {/* User */}
-          <div className="p-3 border-t border-slate-800/50">
-            <div className={`flex items-center gap-3 ${sidebarOpen ? 'mb-3' : ''}`}>
-              <div className="w-10 h-10 bg-gradient-to-br from-emerald-400 to-cyan-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
-                <span className="text-white font-black text-sm">{currentUser.full_name.charAt(0)}</span>
-              </div>
-              {sidebarOpen && (
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-sm truncate text-white">{currentUser.full_name}</p>
-                  <p className="text-xs text-slate-400 capitalize">{currentUser.role}</p>
-                </div>
-              )}
+    <div className="min-h-screen flex bg-slate-100">
+      {/* Sidebar */}
+      <aside className={`${sidebarOpen ? 'w-64' : 'w-20'} bg-slate-900 text-white min-h-screen flex flex-col transition-all duration-300 relative shadow-2xl`}>
+        {/* Logo */}
+        <div className="p-4 border-b border-slate-800/50">
+          <div className="flex items-center gap-3">
+            <div className="w-11 h-11 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg text-white">
+              <Icons.Shield className="w-6 h-6" />
             </div>
             {sidebarOpen && (
-              <button
-                onClick={handleLogout}
-                className="w-full px-4 py-2.5 bg-slate-800/50 hover:bg-red-600/80 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors"
-              >
-                <Icons.Logout className="w-5 h-5" />
-                <span>Đăng xuất</span>
-              </button>
+              <div>
+                <h1 className="text-lg font-black tracking-tight">EduCheck</h1>
+                <p className="text-xs text-slate-400 font-medium">v2.0 • AI Check-in</p>
+              </div>
             )}
           </div>
-        </aside>
+        </div>
 
-        {/* Main */}
-        <main className="flex-1 p-6 overflow-auto">
-          <div className="max-w-7xl mx-auto">
-            {view === 'dashboard' && <DashboardView setView={setView} currentUser={currentUser} />}
-            {view === 'events' && <EventList onSelectEvent={handleSelectEvent} onCreateEvent={handleCreateEvent} onEditEvent={handleEditEvent} />}
-            {view === 'ranking' && <RankingBoard />}
-            {view === 'boarding-config' && <BoardingConfigPage currentUser={currentUser} />}
-            {view === 'event-report' && <EventReport />}
-            {view === 'users' && <UserManagement />}
-            {view === 'points' && <PointManagement />}
-            {view === 'certificates' && <CertificateGenerator />}
-            {view === 'cards' && <CardGenerator users={allUsers} />}
-            {view === 'settings' && <SystemConfig />}
-            {view === 'reports' && <EventReport />}
+        {/* Toggle */}
+        <button
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          className="absolute -right-3 top-16 w-6 h-6 bg-indigo-600 rounded-full flex items-center justify-center hover:bg-indigo-500 z-10 shadow-lg transition-colors text-white"
+        >
+          {sidebarOpen ? <Icons.ChevronLeft className="w-4 h-4" /> : <Icons.ChevronRight className="w-4 h-4" />}
+        </button>
+
+        {/* Navigation */}
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          {menuItems.map(item => {
+            if (item.type === 'divider') {
+              return sidebarOpen ? (
+                <div key={item.id} className="pt-5 pb-2">
+                  <p className="text-xs text-slate-500 font-bold px-3 tracking-wider">{item.label}</p>
+                </div>
+              ) : (
+                <div key={item.id} className="my-3 border-t border-slate-800"></div>
+              );
+            }
+
+            return (
+              <button
+                key={item.id}
+                onClick={() => setView(item.id as AppView)}
+                className={`w-full px-3 py-2.5 rounded-xl text-left flex items-center gap-3 transition-all group ${view === item.id
+                  ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-lg'
+                  : 'text-slate-400 hover:bg-slate-800/50 hover:text-white'
+                  }`}
+              >
+                <span className="flex-shrink-0">{item.icon}</span>
+                {sidebarOpen && <span className="font-medium text-sm">{item.label}</span>}
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* User */}
+        <div className="p-3 border-t border-slate-800/50">
+          <div className={`flex items-center gap-3 ${sidebarOpen ? 'mb-3' : ''}`}>
+            <div className="w-10 h-10 bg-gradient-to-br from-emerald-400 to-cyan-500 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg">
+              <span className="text-white font-black text-sm">{currentUser.full_name.charAt(0)}</span>
+            </div>
+            {sidebarOpen && (
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm truncate text-white">{currentUser.full_name}</p>
+                <p className="text-xs text-slate-400 capitalize">{currentUser.role}</p>
+              </div>
+            )}
           </div>
-        </main>
-      </div>
-    </ToastProvider>
+          {sidebarOpen && (
+            <button
+              onClick={handleLogout}
+              className="w-full px-4 py-2.5 bg-slate-800/50 hover:bg-red-600/80 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors"
+            >
+              <Icons.Logout className="w-5 h-5" />
+              <span>Đăng xuất</span>
+            </button>
+          )}
+        </div>
+      </aside>
+
+      {/* Main */}
+      <main className="flex-1 p-6 overflow-auto">
+        <div className="max-w-7xl mx-auto">
+          {view === 'dashboard' && (
+            <DashboardView
+              setView={setView}
+              currentUser={currentUser}
+              pendingCount={pendingCount}
+              setPendingCount={setPendingCount}
+              setBoardingTab={setBoardingTab}
+            />
+          )}
+          {view === 'events' && <EventList onSelectEvent={handleSelectEvent} onCreateEvent={handleCreateEvent} onEditEvent={handleEditEvent} />}
+          {view === 'ranking' && <RankingBoard />}
+          {view === 'boarding-config' && <BoardingConfigPage currentUser={currentUser} initialTab={boardingTab} />}
+          {view === 'event-report' && <EventReport />}
+          {view === 'users' && <UserManagement />}
+          {view === 'points' && <PointManagement />}
+          {view === 'certificates' && <CertificateGenerator />}
+          {view === 'cards' && <CardGenerator users={allUsers} />}
+          {view === 'settings' && <SystemConfig />}
+          {view === 'reports' && <EventReport />}
+          {view === 'points-stats' && <PointStatistics />}
+        </div>
+      </main>
+    </div>
   );
 };
 
 // Dashboard
-const DashboardView: React.FC<{ setView: (view: AppView) => void; currentUser: User }> = ({ setView, currentUser }) => {
+const DashboardView: React.FC<{
+  setView: (view: AppView) => void;
+  currentUser: User;
+  pendingCount: number;
+  setPendingCount: (count: number) => void;
+  setBoardingTab: (tab: any) => void;
+}> = ({ setView, currentUser, pendingCount, setPendingCount, setBoardingTab }) => {
   const [stats, setStats] = useState<{
     totalUsers: number;
     totalEvents: number;
@@ -329,7 +394,7 @@ const DashboardView: React.FC<{ setView: (view: AppView) => void; currentUser: U
   return (
     <div className="space-y-6">
       {/* Welcome */}
-      <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 rounded-3xl p-8 text-white relative overflow-hidden">
+      <div className="bg-gradient-to-br from-indigo-600 via-purple-600 to-pink-500 rounded-3xl p-8 text-white relative overflow-hidden flex justify-between items-center">
         <div className="relative z-10">
           <p className="text-white/70 font-medium">Chào mừng trở lại,</p>
           <h2 className="text-3xl font-black mt-1">{currentUser.full_name}!</h2>
@@ -337,6 +402,24 @@ const DashboardView: React.FC<{ setView: (view: AppView) => void; currentUser: U
             {new Date().toLocaleDateString('vi-VN', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
           </p>
         </div>
+
+        {/* Admin Dashboard Bell */}
+        <button
+          onClick={() => {
+            setPendingCount(0);
+            setBoardingTab('exit');
+            setView('boarding-config');
+          }}
+          className="relative z-10 p-4 bg-white/20 backdrop-blur-md rounded-2xl hover:bg-white/30 transition-all border border-white/30 group shadow-xl"
+        >
+          <Icons.Bell className="w-8 h-8 text-white group-hover:animate-bounce" />
+          {pendingCount > 0 && (
+            <span className="absolute -top-2 -right-2 min-w-[24px] h-[24px] px-1.5 bg-red-500 text-white text-xs font-black rounded-full flex items-center justify-center border-4 border-white animate-pulse">
+              {pendingCount}
+            </span>
+          )}
+          <p className="text-[10px] font-bold mt-1 uppercase opacity-80">Đơn xin phép</p>
+        </button>
       </div>
 
       {/* Stats */}

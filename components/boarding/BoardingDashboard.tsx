@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
-import { User } from '../../types';
+import { BoardingTimeSlot, User } from '../../types';
 import {
     Users, CheckCircle, AlertTriangle, Clock, TrendingUp,
-    UserCheck, XCircle, Calendar, ArrowUp, ArrowDown, Home
+    UserCheck, XCircle, Calendar, ArrowUp, ArrowDown, Home, RefreshCw
 } from 'lucide-react';
 
 // ... existing code ...
@@ -60,6 +60,7 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
     const [selectedRoom, setSelectedRoom] = useState<RoomStat | null>(null);
     const [allStudents, setAllStudents] = useState<User[]>([]);
     const [checkedInSet, setCheckedInSet] = useState<Set<string>>(new Set());
+    const [timeSlots, setTimeSlots] = useState<BoardingTimeSlot[]>([]);
 
     // Update clock every minute
     useEffect(() => {
@@ -86,6 +87,11 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
             const checkinsRes = await dataService.getBoardingCheckins({ date: today });
             const todayCheckins = checkinsRes.data || [];
 
+            // Load Time Slots
+            const slotsRes = await dataService.getTimeSlots();
+            const slots = slotsRes.data || [];
+            setTimeSlots(slots);
+
             // Load Rooms
             const roomsRes = await dataService.getRooms();
             const rooms = roomsRes.success && roomsRes.data ? roomsRes.data : [];
@@ -98,21 +104,26 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
             setAllStudents(allStudentsData);
             setCheckedInSet(checkedInIds);
 
-            // Count late checkins
-            const lateCount = todayCheckins.filter(c =>
-                c.morning_in_status === 'late' ||
-                c.noon_in_status === 'late' ||
-                c.evening_in_status === 'late'
-            ).length;
+            // Count total log entries instead of student rows for detailed stats
+            let totalSlotCheckins = 0;
+            let lateCount = 0;
 
-            const onTimeCount = todayCheckins.length - lateCount;
-            const onTimeRate = todayCheckins.length > 0
-                ? Math.round((onTimeCount / todayCheckins.length) * 100)
+            todayCheckins.forEach(c => {
+                if (c.slots) {
+                    Object.values(c.slots).forEach(s => {
+                        totalSlotCheckins++;
+                        if (s.status === 'late') lateCount++;
+                    });
+                }
+            });
+
+            const onTimeRate = totalSlotCheckins > 0
+                ? Math.round(((totalSlotCheckins - lateCount) / totalSlotCheckins) * 100)
                 : 100;
 
             setStats({
-                totalStudents: allStudents.length,
-                checkedInToday: todayCheckins.length,
+                totalStudents: allStudentsData.length,
+                checkedInToday: checkedInIds.size, // Unique students
                 lateToday: lateCount,
                 notCheckedIn: notCheckedIn.length,
                 onTimeRate
@@ -120,61 +131,47 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
 
             setNotCheckedInStudents(notCheckedIn.slice(0, 10)); // Show first 10
 
-            // Recent checkins (last 5)
-            const recent: RecentCheckin[] = todayCheckins
-                .sort((a, b) => {
-                    const getLatestTime = (c: any) => {
-                        const times = [c.morning_in, c.noon_in, c.evening_in, c.morning_out, c.noon_out, c.evening_out].filter(Boolean);
-                        return times.length > 0 ? new Date(times[times.length - 1]).getTime() : 0;
-                    };
-                    return getLatestTime(b) - getLatestTime(a);
-                })
-                .slice(0, 5)
-                .map(c => {
-                    let type = '';
-                    let status: 'on_time' | 'late' = 'on_time';
-                    let time = '';
+            // Recent checkins (last 5 log entries)
+            interface FlatSlotCheckin extends RecentCheckin {
+                timestamp: number;
+            }
 
-                    if (c.evening_in) {
-                        type = 'Tối vào';
-                        status = c.evening_in_status === 'late' ? 'late' : 'on_time';
-                        time = new Date(c.evening_in).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-                    } else if (c.noon_in) {
-                        type = 'Trưa vào';
-                        status = c.noon_in_status === 'late' ? 'late' : 'on_time';
-                        time = new Date(c.noon_in).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-                    } else if (c.morning_in) {
-                        type = 'Sáng vào';
-                        status = c.morning_in_status === 'late' ? 'late' : 'on_time';
-                        time = new Date(c.morning_in).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-                    }
+            const flatRecent: FlatSlotCheckin[] = [];
+            todayCheckins.forEach(c => {
+                if (c.slots) {
+                    Object.entries(c.slots).forEach(([slotId, s]) => {
+                        if (s.time) {
+                            flatRecent.push({
+                                name: c.user?.full_name || 'Học sinh',
+                                organization: c.user?.organization,
+                                time: new Date(s.time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                                type: s.name,
+                                status: s.status === 'late' ? 'late' : 'on_time',
+                                timestamp: new Date(s.time).getTime()
+                            });
+                        }
+                    });
+                }
+            });
 
-                    return {
-                        name: c.user?.full_name || 'N/A',
-                        time,
-                        type,
-                        status,
-                        organization: c.user?.organization
-                    };
-                });
+            const recent = flatRecent
+                .sort((a, b) => b.timestamp - a.timestamp)
+                .slice(0, 5);
 
             setRecentCheckins(recent);
 
             // Calculate Room Stats
             if (rooms.length > 0) {
-                const checkedInUserIds = new Set(todayCheckins.map(c => c.user_id));
                 const uniqueZones = new Set<string>();
 
                 const calculatedRoomStats: RoomStat[] = rooms.map(room => {
                     if (room.zone) uniqueZones.add(room.zone);
 
-                    if (room.zone) uniqueZones.add(room.zone);
-
                     const roomStudents = allStudentsData.filter(s => s.room_id === room.id);
                     const current = roomStudents.length;
 
-                    // Count how many of these students have checked in today
-                    const checkedInCount = roomStudents.filter(s => checkedInUserIds.has(s.id)).length;
+                    // Count how many of these students have checked in today (at least one slot)
+                    const checkedInCount = roomStudents.filter(s => checkedInIds.has(s.id)).length;
 
                     return {
                         id: room.id,
@@ -199,9 +196,10 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
 
     const getTimeOfDay = () => {
         const hour = currentTime.getHours();
-        if (hour >= 5 && hour < 12) return { label: 'Buổi sáng', icon: '🌅' };
-        if (hour >= 12 && hour < 17) return { label: 'Buổi trưa', icon: '☀️' };
-        if (hour >= 17 && hour < 21) return { label: 'Buổi tối', icon: '🌆' };
+        if (hour >= 5 && hour < 11) return { label: 'Buổi sáng', icon: '🌅' };
+        if (hour >= 11 && hour < 14) return { label: 'Buổi trưa', icon: '☀️' };
+        if (hour >= 14 && hour < 18) return { label: 'Buổi chiều', icon: '🌇' };
+        if (hour >= 18 && hour < 22) return { label: 'Buổi tối', icon: '🌆' };
         return { label: 'Đêm khuya', icon: '🌙' };
     };
 

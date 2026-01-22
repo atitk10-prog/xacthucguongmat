@@ -72,10 +72,19 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         const name = slot.name.toLowerCase();
         const startH = parseInt(slot.start_time.split(':')[0]);
 
-        if (name.includes('sáng') || (startH >= 4 && startH < 11)) return 'morning_in';
-        if (name.includes('trưa') || (startH >= 11 && startH < 14)) return 'noon_in';
-        if (name.includes('chiều') || name.includes('tối') || startH >= 14) return 'evening_in';
-        return 'morning_in'; // Fallback
+        // Prioritize by Name
+        if (name.includes('sáng')) return 'morning_in';
+        if (name.includes('trưa')) return 'noon_in';
+        if (name.includes('chiều')) return 'afternoon_in';
+        if (name.includes('tối')) return 'evening_in';
+
+        // Fallback by Time Range
+        if (startH >= 4 && startH < 11) return 'morning_in';
+        if (startH >= 11 && startH < 14) return 'noon_in';
+        if (startH >= 14 && startH < 17) return 'afternoon_in';
+        if (startH >= 17 || startH < 4) return 'evening_in';
+
+        return 'morning_in'; // Absolute fallback
     };
 
     const getTypeLabel = (type: string) => {
@@ -84,6 +93,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             case 'morning_out': return 'Sáng - Ra Về';
             case 'noon_in': return 'Trưa - Vào';
             case 'noon_out': return 'Trưa - Ra';
+            case 'afternoon_in': return 'Chiều - Vào';
+            case 'afternoon_out': return 'Chiều - Ra';
             case 'evening_in': return 'Tối - Điểm danh';
             case 'evening_out': return 'Tối - Ra';
             default: return type;
@@ -93,6 +104,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     const renderTypeIcon = (type: string) => {
         if (type.includes('morning')) return <Sunrise className="w-5 h-5" />;
         if (type.includes('noon')) return <Sun className="w-5 h-5" />;
+        if (type.includes('afternoon')) return <Sunset className="w-5 h-5" />;
         return <Moon className="w-5 h-5" />;
     };
 
@@ -113,7 +125,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
         try {
             // Call API
-            const response = await dataService.boardingCheckin(userId, selectedType, status);
+            const response = await dataService.boardingCheckin(userId, selectedSlot.id, status as 'on_time' | 'late');
 
             if (response.success && response.data) {
                 // Determine ID
@@ -121,10 +133,9 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
                 // Update UI List
                 setRecentCheckins(prev => [{
-                    id: recordId,
                     name: name,
                     time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true }),
-                    type: getTypeLabel(selectedType),
+                    type: selectedSlot.name,
                     status: status === 'late' ? 'warning' : 'success'
                 }, ...prev.slice(0, 9)]);
 

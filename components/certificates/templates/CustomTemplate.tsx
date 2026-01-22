@@ -30,7 +30,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
     const getFontFamily = (style?: string) => {
         switch (style) {
             case 'handwriting': return "'Dancing Script', cursive";
-            case 'sans': return "'Outfit', sans-serif";
+            case 'sans': return "'Arimo', sans-serif";
             case 'times': return "'Times New Roman', serif";
             case 'serif': default: return "'Playfair Display', serif";
         }
@@ -132,7 +132,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                 <div className="flex-grow flex flex-col justify-center w-full">
                     {isVisible('recipient') && (
                         <div style={{ marginBottom: `${32 * s}px` }}>
-                            <p className="text-2xl italic font-light opacity-90 font-serif" style={{ marginBottom: `${16 * s}px` }}>
+                            <p className="text-2xl italic font-light opacity-90" style={{ marginBottom: `${16 * s}px` }}>
                                 <Editable val={labels.presentedTo} k="presentedTo" />
                             </p>
                             <h2 className="text-6xl font-bold py-2 px-8 inline-block"
@@ -149,7 +149,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
 
                     {isVisible('eventName') && (
                         <div style={{ marginBottom: `${32 * s}px` }}>
-                            {isVisible('eventStr') && <p className="text-xl opacity-80 font-serif max-w-3xl mx-auto leading-relaxed" style={{ marginBottom: `${12 * s}px` }}>
+                            {isVisible('eventStr') && <p className="text-xl opacity-80 max-w-3xl mx-auto leading-relaxed" style={{ marginBottom: `${12 * s}px` }}>
                                 <Editable val={labels.eventPrefix} k="eventPrefix" />
                             </p>}
                             <h3 className="text-4xl font-bold max-w-4xl mx-auto leading-tight" style={{ color: textColor, fontFamily: titleFont }}>{data.eventName}</h3>
@@ -160,7 +160,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                 {/* Footer Section: Signatures & QR */}
                 <div className="flex-none w-full grid grid-cols-3 items-end mt-8">
                     {/* Left: Entry No & Date */}
-                    <div className="text-left pl-12 pb-2 font-serif">
+                    <div className="text-left pl-12 pb-2">
                         <p className="text-lg italic opacity-80 mb-1">
                             <Editable val={labels.entryNo} k="entryNo" />
                         </p>
@@ -186,7 +186,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                     <div className="text-center pb-2 flex flex-col items-center pr-12">
                         {isVisible('signature') && (
                             <>
-                                <p className="text-xl font-bold font-serif uppercase tracking-wide mb-8">
+                                <p className="text-xl font-bold uppercase tracking-wide mb-8">
                                     <Editable val={labels.signature} k="signature" />
                                 </p>
                                 <div className="h-24 w-full flex items-end justify-center font-['Dancing_Script'] text-3xl opacity-80">

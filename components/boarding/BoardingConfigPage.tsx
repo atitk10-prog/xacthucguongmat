@@ -340,15 +340,15 @@ const BoardingConfigTab: React.FC = () => {
                                 <Icons.Settings className="w-5 h-5 text-indigo-600" />
                                 Khung giờ Check-in
                             </h3>
-                            {/* <button
+                            <button
                                 onClick={() => {
-                                    setEditingSlot({ id: '', name: '', start_time: '06:00', end_time: '07:00', is_active: true, order_index: timeSlots.length + 1 });
+                                    setEditingSlot({ name: '', start_time: '06:00', end_time: '07:00', is_active: true, order_index: timeSlots.length + 1 });
                                     setShowSlotModal(true);
                                 }}
                                 className="text-sm text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1"
                             >
                                 <Icons.Plus className="w-4 h-4" /> Thêm mới
-                            </button> */}
+                            </button>
                         </div>
 
                         <div className="space-y-3">
@@ -769,8 +769,14 @@ const BoardingConfigTab: React.FC = () => {
 };
 
 // --- Main Manager Component with Tabs ---
-const BoardingManager: React.FC<{ currentUser: User }> = ({ currentUser }) => {
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'config' | 'rooms' | 'exit' | 'report'>('dashboard');
+const BoardingManager: React.FC<{ currentUser: User, initialTab?: 'dashboard' | 'config' | 'rooms' | 'exit' | 'report' }> = ({ currentUser, initialTab }) => {
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'config' | 'rooms' | 'exit' | 'report'>(initialTab || 'dashboard');
+
+    useEffect(() => {
+        if (initialTab) {
+            setActiveTab(initialTab);
+        }
+    }, [initialTab]);
 
     const tabs = [
         { id: 'dashboard', label: 'Tổng quan', icon: <Icons.Dashboard className="w-4 h-4" /> },

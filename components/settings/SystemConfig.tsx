@@ -93,6 +93,9 @@ const SystemConfig: React.FC<SystemConfigProps> = ({ onBack }) => {
     };
 
     const getConfigIcon = (key: string): React.ReactNode => {
+        if (key.includes('on_time')) return <svg className="w-5 h-5 text-emerald-500" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+        if (key.includes('late')) return <svg className="w-5 h-5 text-amber-500" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
+        if (key.includes('absent')) return <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9.75 9.75l4.5 4.5m0-4.5l-4.5 4.5M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>;
         if (key.includes('threshold')) return ConfigIcons.threshold;
         if (key.includes('face')) return ConfigIcons.face;
         if (key.includes('start')) return ConfigIcons.start;
@@ -104,7 +107,9 @@ const SystemConfig: React.FC<SystemConfigProps> = ({ onBack }) => {
         const labels: Record<string, string> = {
             'points_late': 'Điểm sự kiện: Đi muộn',
             'points_on_time': 'Điểm sự kiện: Đúng giờ',
+            'points_absent_event': 'Điểm sự kiện: Vắng mặt',
             'points_late_boarding': 'Điểm nội trú: Đi muộn',
+            'points_absent_boarding': 'Điểm nội trú: Vắng mặt',
             'start_points': 'Điểm Khởi Đầu (Tất cả HS)',
             'late_threshold_mins': 'Sự kiện: Ngưỡng đi muộn (phút)',
             'school_name': 'Thông tin: Tên trường',
