@@ -1,6 +1,5 @@
 import React from 'react';
 import { CertificateTemplateProps } from './types';
-import { Award } from 'lucide-react';
 
 const ClassicTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig, isEditable = false, onLabelChange }) => {
     const Editable = ({ val, k, className, style }: { val: string, k: string, className?: string, style?: React.CSSProperties }) => {
@@ -20,7 +19,8 @@ const ClassicTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfi
         presentedTo: customConfig?.labels?.presentedTo || 'Trân trọng trao tặng cho',
         eventPrefix: customConfig?.labels?.eventPrefix || 'Đã hoàn thành xuất sắc các yêu cầu của sự kiện',
         datePrefix: customConfig?.labels?.datePrefix || 'Ngày cấp',
-        signature: customConfig?.labels?.signature || 'Ban Tổ Chức'
+        signature: customConfig?.labels?.signature || 'Ban Tổ Chức',
+        entryNo: customConfig?.labels?.entryNo || 'Vào sổ số: ______'
     };
 
     return (
@@ -57,7 +57,7 @@ const ClassicTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfi
                     </div>
 
                     <div className="mb-6">
-                        <Award className="w-16 h-16 text-[#8b4513]" />
+                        <img src="/educheck_logo.png" className="h-24 w-auto mx-auto object-contain drop-shadow-sm" alt="EduCheck Logo" />
                     </div>
 
                     <h1 className="text-6xl font-bold mb-4 text-[#8b4513] uppercase" style={{ fontFamily: 'Dancing Script, cursive' }}>
@@ -80,10 +80,17 @@ const ClassicTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfi
                     )}
 
                     <div className="w-full flex justify-between items-end mt-auto px-12">
-                        <div className="text-center">
-                            <p className="font-bold">
-                                <Editable val={labels.datePrefix} k="datePrefix" />
-                            </p>
+                        <div className="text-left font-serif">
+                            {customConfig?.visibility?.entryNo !== false && (
+                                <p className="text-sm font-medium mb-1 opacity-80">
+                                    <Editable val={labels.entryNo} k="entryNo" />
+                                </p>
+                            )}
+                            {customConfig?.visibility?.date !== false && (
+                                <p className="text-sm font-medium opacity-80">
+                                    <Editable val={labels.datePrefix} k="datePrefix" />
+                                </p>
+                            )}
                         </div>
 
                         {customConfig?.visibility?.qr !== false && (

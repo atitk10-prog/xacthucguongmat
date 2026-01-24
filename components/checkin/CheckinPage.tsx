@@ -1079,11 +1079,13 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     userName: checkInUserName
                 });
 
-                // Show notification for visibility
-                setNotification({
-                    type: 'error',
-                    message: isAlreadyCheckedIn ? 'Người này đã check-in rồi' : errorMsg
-                });
+                // Show notification for visibility - SKIP TOAST if already checked in to avoid clutter
+                if (!isAlreadyCheckedIn) {
+                    setNotification({
+                        type: 'error',
+                        message: errorMsg
+                    });
+                }
 
                 // If already checked in, add to cooldown to prevent retries
                 if (isAlreadyCheckedIn) {
@@ -1326,22 +1328,23 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     </div>
 
                     <div className="flex items-center gap-2">
-                        {/* Hybrid Mode Toggle - PREMIUM STYLE */}
+                        {/* Hybrid Mode Toggle - PREMIUM STYLE - RESPONSIVE */}
                         {event && (event.checkin_method === 'both' || !event.checkin_method) && (
-                            <div className="bg-black/60 backdrop-blur-2xl p-1.5 rounded-[22px] flex border border-white/10 shadow-2xl">
+                            <div className="bg-black/60 backdrop-blur-2xl p-1 md:p-1.5 rounded-full md:rounded-[22px] flex border border-white/10 shadow-2xl">
                                 <button
                                     onClick={() => switchCheckinMode('face')}
-                                    className={`px-5 py-2.5 rounded-[18px] text-[11px] font-black flex items-center gap-2.5 transition-all duration-500 ${checkinMode === 'face' ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30' : 'text-white/40 hover:text-white/70'}`}
+                                    className={`px-3 md:px-5 py-2 md:py-2.5 rounded-full md:rounded-[18px] text-[10px] md:text-[11px] font-black flex items-center gap-2 transition-all duration-500 ${checkinMode === 'face' ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30' : 'text-white/40 hover:text-white/70'}`}
                                 >
                                     <UserIcon className={`w-4 h-4 ${checkinMode === 'face' ? 'animate-pulse' : ''}`} />
-                                    <span>Face ID</span>
+                                    <span className="hidden sm:inline">Face ID</span>
                                 </button>
                                 <button
                                     onClick={() => switchCheckinMode('qr')}
-                                    className={`px-5 py-2.5 rounded-[18px] text-[11px] font-black flex items-center gap-2.5 transition-all duration-500 ${checkinMode === 'qr' ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/30' : 'text-white/40 hover:text-white/70'}`}
+                                    className={`px-3 md:px-5 py-2 md:py-2.5 rounded-full md:rounded-[18px] text-[10px] md:text-[11px] font-black flex items-center gap-2 transition-all duration-500 ${checkinMode === 'qr' ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/30' : 'text-white/40 hover:text-white/70'}`}
                                 >
                                     <QrCode className={`w-4 h-4 ${checkinMode === 'qr' ? 'animate-bounce' : ''}`} />
-                                    <span>Quét QR</span>
+                                    <span className="hidden sm:inline">Quét QR</span>
+                                    <span className="sm:hidden text-[9px]">QR</span>
                                 </button>
                             </div>
                         )}
@@ -1413,8 +1416,21 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 autoPlay
                                 playsInline
                                 muted
-                                className="w-full h-full object-contain transform -scale-x-100 transition-opacity duration-700"
+                                className="w-full h-full object-cover transform -scale-x-100 transition-opacity duration-700"
                             />
+
+                            {/* Centered Scan Frame for Mobile */}
+                            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-center p-8 pointer-events-none md:hidden">
+                                <div className="w-full aspect-square max-w-[280px] border-2 border-white/10 rounded-[40px] relative">
+                                    <div className="absolute -top-1 -left-1 w-12 h-12 border-t-4 border-l-4 border-indigo-500 rounded-tl-[32px]"></div>
+                                    <div className="absolute -top-1 -right-1 w-12 h-12 border-t-4 border-r-4 border-indigo-500 rounded-tr-[32px]"></div>
+                                    <div className="absolute -bottom-1 -left-1 w-12 h-12 border-b-4 border-l-4 border-indigo-500 rounded-bl-[32px]"></div>
+                                    <div className="absolute -bottom-1 -right-1 w-12 h-12 border-b-4 border-r-4 border-indigo-500 rounded-br-[32px]"></div>
+
+                                    {/* Animated scan line */}
+                                    <div className="absolute inset-x-4 top-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-scan opacity-40"></div>
+                                </div>
+                            </div>
                             <canvas ref={canvasRef} className="hidden" />
                         </>
                     ) : (
@@ -1501,12 +1517,12 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 )}
 
                 {/* Status badges - LEFT CORNER */}
-                <div className="absolute top-24 left-6 flex flex-col items-start gap-4 z-10 pointer-events-none">
+                <div className="absolute top-20 md:top-24 left-4 md:left-6 flex flex-col items-start gap-2.5 md:gap-4 z-[90] pointer-events-none">
                     {/* Status Badge */}
-                    <div className={`px-5 py-2 rounded-2xl backdrop-blur-2xl text-white text-[11px] font-black shadow-2xl border border-white/10 transition-all duration-500 ${checkinMode === 'face' ? 'bg-indigo-600/40 text-indigo-100' : 'bg-emerald-600/40 text-emerald-100'}`}>
-                        <div className="flex items-center gap-2.5">
-                            {checkinMode === 'face' ? <UserIcon className="w-4 h-4" /> : <QrCode className="w-4 h-4" />}
-                            <span className="uppercase tracking-widest">{checkinMode === 'face' ? 'Face Identity Active' : 'QR Scanner Active'}</span>
+                    <div className={`px-4 md:px-5 py-1.5 md:py-2 rounded-2xl backdrop-blur-2xl text-white text-[9px] md:text-[11px] font-black shadow-2xl border border-white/10 transition-all duration-500 ${checkinMode === 'face' ? 'bg-indigo-600/40 text-indigo-100' : 'bg-emerald-600/40 text-emerald-100'}`}>
+                        <div className="flex items-center gap-2 md:gap-2.5">
+                            {checkinMode === 'face' ? <UserIcon className="w-3.5 h-3.5" /> : <QrCode className="w-3.5 h-3.5" />}
+                            <span className="uppercase tracking-widest">{checkinMode === 'face' ? 'Identity Active' : 'QR Scanner'}</span>
                         </div>
                     </div>
 
@@ -1552,8 +1568,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 </div>
 
                 {/* ALERTS & RESULTS - CENTER SCREEN */}
-                {/* ALERTS & RESULTS - TOP CENTER */}
-                <div className="absolute top-32 left-1/2 -translate-x-1/2 flex flex-col items-center gap-4 z-20 w-full max-w-md px-4 pointer-events-none">
+                {/* ALERTS & RESULTS - TOP CENTER - LOWERED ON MOBILE */}
+                <div className="absolute top-36 md:top-32 left-1/2 -translate-x-1/2 flex flex-col items-center gap-4 z-20 w-full max-w-sm px-6 pointer-events-none">
 
                     {/* Recognized Person Badge */}
                     {recognizedPerson && faceDetected && !isProcessing && !showSuccessOverlay && (

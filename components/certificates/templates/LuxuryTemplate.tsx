@@ -1,6 +1,5 @@
 import React from 'react';
 import { CertificateTemplateProps } from './types';
-import { Crown } from 'lucide-react';
 
 const LuxuryTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig, isEditable = false, onLabelChange }) => {
 
@@ -70,8 +69,8 @@ const LuxuryTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
             <div className="relative z-10 h-full flex flex-col items-center pt-12 pb-8 px-12 text-center text-[#1e293b]">
 
                 {/* Icon/Logo */}
-                <div className="mb-4 text-[#b49148]">
-                    <Crown className="w-12 h-12 mx-auto" strokeWidth={1.5} />
+                <div className="mb-4">
+                    <img src="/educheck_logo.png" className="h-20 w-auto mx-auto object-contain drop-shadow-md" alt="EduCheck Logo" />
                 </div>
 
                 {/* Title */}
@@ -105,12 +104,16 @@ const LuxuryTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                 <div className="w-full grid grid-cols-3 items-end mt-auto px-4 pb-8"> {/* Added pb-8 for lift */}
                     {/* Left: Entry No & Date */}
                     <div className="text-left font-serif text-slate-700">
-                        <p className="text-sm italic mb-1">
-                            <Editable val={labels.entryNo} k="entryNo" />
-                        </p>
-                        <p className="text-sm font-bold">
-                            <Editable val={labels.datePrefix} k="datePrefix" />
-                        </p>
+                        {customConfig?.visibility?.entryNo !== false && (
+                            <p className="text-sm font-medium mb-1 opacity-80">
+                                <Editable val={labels.entryNo} k="entryNo" />
+                            </p>
+                        )}
+                        {customConfig?.visibility?.date !== false && (
+                            <p className="text-sm font-medium opacity-80">
+                                <Editable val={labels.datePrefix} k="datePrefix" />
+                            </p>
+                        )}
                     </div>
 
                     {/* Center: QR */}

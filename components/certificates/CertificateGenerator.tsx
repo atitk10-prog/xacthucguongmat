@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { TEMPLATE_OPTIONS, CertificateTemplateId, CertificateTemplateProps } from './templates/types';
 import { dataService } from '../../services/dataService';
+import { compressImage } from '../../services/imageService';
 import { User, Event, Certificate } from '../../types';
 import { generateSingleExportPDF, generateBatchPDF, getTemplateComponent } from '../../services/certificateExportService';
 import {
@@ -30,7 +31,10 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
     const [isLoading, setIsLoading] = useState(true);
     const [isGenerating, setIsGenerating] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
+    const [showSaveNaming, setShowSaveNaming] = useState(false);
+    const [saveName, setSaveName] = useState('');
     const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
+    const [saveProgress, setSaveProgress] = useState<{ current: number, total: number } | null>(null);
 
     // Form States
     const [formData, setFormData] = useState({
@@ -47,6 +51,7 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
     const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
     const [activeTab, setActiveTab] = useState<'design' | 'content' | 'recipients'>('design'); // UI Tab State
     const [savedPresets, setSavedPresets] = useState<any[]>([]); // Presets
+    const [presetToDelete, setPresetToDelete] = useState<{ id: string, idx: number, name: string } | null>(null);
 
     // Pagination/Search States
     const [recipientSearch, setRecipientSearch] = useState('');
@@ -54,41 +59,111 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
     const recipientsPerPage = 20;
 
     const [recentCertsPage, setRecentCertsPage] = useState(1);
+    const [historySearch, setHistorySearch] = useState('');
     const recentCertsPerPage = 6;
 
-    // Load presets on mount
+    // Monthly Filter States
+    const [monthFilter, setMonthFilter] = useState<number>(new Date().getMonth() + 1);
+    const [yearFilter, setYearFilter] = useState<number>(new Date().getFullYear());
+    const [topLimit, setTopLimit] = useState<number>(10);
+    const [isFetchingTop, setIsFetchingTop] = useState(false);
+    const [topStudents, setTopStudents] = useState<any[]>([]);
+
+    // Load presets and last config on mount
     useEffect(() => {
-        const saved = localStorage.getItem('cert_presets');
-        if (saved) {
+        // Load last session config from localStorage (as temporary backup)
+        const lastSession = localStorage.getItem('last_cert_config');
+        if (lastSession) {
             try {
-                setSavedPresets(JSON.parse(saved));
-            } catch (e) {
-                console.error("Error parsing presets", e);
-            }
+                const { config } = JSON.parse(lastSession);
+                if (config) setCustomConfig(config);
+                // Force template_id to 'custom' on fresh load as requested, 
+                // but keep config if session exists.
+                setFormData(prev => ({ ...prev, template_id: 'custom' }));
+            } catch (e) { }
         }
     }, []);
 
-    const handleSavePreset = () => {
-        const name = prompt("Nhập tên cấu hình để lưu:");
-        if (!name) return;
-        const newPreset = { name, config: customConfig, templateId: formData.template_id };
-        const newPresets = [...savedPresets, newPreset];
-        setSavedPresets(newPresets);
-        localStorage.setItem('cert_presets', JSON.stringify(newPresets));
-        toastSuccess("Đã lưu cấu hình!");
+    const handleSavePreset = async () => {
+        if (!saveName.trim()) {
+            toastError("Vui lòng nhập tên mẫu");
+            return;
+        }
+
+        setIsLoading(true);
+
+        // OPTIMIZATION: Compress images before saving to reduce database storage
+        // Skip compression for signature/seal/logo under 0.5MB to preserve quality
+        const optimizedConfig = { ...customConfig };
+        const SIZE_THRESHOLD = 0.5 * 1024 * 1024; // 0.5MB in bytes
+        const getBase64Size = (base64: string) => (base64.length * 3) / 4; // Approximate size
+
+        try {
+            // Background: Always compress with JPEG (no transparency needed)
+            if (optimizedConfig.bgImage && optimizedConfig.bgImage.startsWith('data:')) {
+                optimizedConfig.bgImage = await compressImage(optimizedConfig.bgImage, 800, 800, 0.4, false);
+            }
+            // Signature: Only compress if > 0.5MB, use PNG to preserve transparency
+            if (optimizedConfig.signatureImage && optimizedConfig.signatureImage.startsWith('data:')) {
+                if (getBase64Size(optimizedConfig.signatureImage) > SIZE_THRESHOLD) {
+                    optimizedConfig.signatureImage = await compressImage(optimizedConfig.signatureImage, 400, 400, 0.8, true);
+                }
+            }
+            // Seal: Only compress if > 0.5MB
+            if (optimizedConfig.sealImage && optimizedConfig.sealImage.startsWith('data:')) {
+                if (getBase64Size(optimizedConfig.sealImage) > SIZE_THRESHOLD) {
+                    optimizedConfig.sealImage = await compressImage(optimizedConfig.sealImage, 300, 300, 0.8, true);
+                }
+            }
+            // Logo: Only compress if > 0.5MB
+            if (optimizedConfig.logoImage && optimizedConfig.logoImage.startsWith('data:')) {
+                if (getBase64Size(optimizedConfig.logoImage) > SIZE_THRESHOLD) {
+                    optimizedConfig.logoImage = await compressImage(optimizedConfig.logoImage, 300, 300, 0.8, true);
+                }
+            }
+        } catch (compressionError) {
+            console.warn('Image compression failed, saving without compression:', compressionError);
+        }
+
+        const res = await dataService.saveCertificateConfig({
+            name: saveName.trim(),
+            template_id: formData.template_id,
+            config: optimizedConfig
+        });
+
+        if (res.success) {
+            setSavedPresets(prev => [res.data, ...prev]);
+            setShowSaveNaming(false);
+            setSaveName('');
+            toastSuccess("Đã lưu mẫu thiết kế mới!");
+        } else {
+            toastError(res.error || "Lỗi lưu cấu hình");
+        }
+        setIsLoading(false);
     };
 
     const handleLoadPreset = (preset: any) => {
         if (preset.config) setCustomConfig(preset.config);
-        if (preset.templateId) setFormData(prev => ({ ...prev, template_id: preset.templateId }));
+        if (preset.template_id) setFormData(prev => ({ ...prev, template_id: preset.template_id }));
         toastSuccess(`Đã tải cấu hình: ${preset.name}`);
     };
 
-    const handleDeletePreset = (idx: number) => {
-        if (!confirm("Xóa cấu hình này?")) return;
-        const newPresets = savedPresets.filter((_, i) => i !== idx);
-        setSavedPresets(newPresets);
-        localStorage.setItem('cert_presets', JSON.stringify(newPresets));
+    const handleDeletePreset = async (id: string, idx: number, name: string) => {
+        setPresetToDelete({ id, idx, name });
+    };
+
+    const confirmDeletePreset = async () => {
+        if (!presetToDelete) return;
+
+        const { id, idx } = presetToDelete;
+        const res = await dataService.deleteCertificateConfig(id);
+        if (res.success) {
+            setSavedPresets(prev => prev.filter((_, i) => i !== idx));
+            toastSuccess("Đã xóa mẫu");
+        } else {
+            toastError(res.error || "Lỗi xóa");
+        }
+        setPresetToDelete(null);
     };
 
     const [customConfig, setCustomConfig] = useState<{
@@ -104,6 +179,8 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         spacingScale?: number; // 0.5 to 2.0 default 1
         titleScale?: number; // 0.5 to 1.5 default 1
         showQR?: boolean;
+        signatureImage?: string;
+        sealImage?: string;
         visibility?: {
             title?: boolean;
             recipient?: boolean;
@@ -113,10 +190,13 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
             signature?: boolean;
             qr?: boolean;
             logo?: boolean;
+            entryNo?: boolean;
         };
         labels?: { title?: string; presentedTo?: string; eventPrefix?: string; datePrefix?: string; signature?: string; };
+        orientation: 'landscape' | 'portrait';
     }>({
         paperSize: 'A4',
+        orientation: 'landscape',
         fontStyle: 'serif',
         titleFont: undefined,
         recipientFont: undefined,
@@ -125,15 +205,49 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         logoScale: 1,
         spacingScale: 1,
         titleScale: 1,
+        logoImage: '/educheck_logo.png',
         logos: [],
-        visibility: { qr: false, title: true, recipient: true, eventName: true, eventStr: true, date: true, signature: true, logo: true },
+        bgImage: undefined,
+        signatureImage: undefined,
+        sealImage: undefined,
+        customTexts: [],
+        positions: {
+            title: { x: 50, y: 15 },
+            recipient: { x: 50, y: 35 },
+            eventName: { x: 50, y: 55 },
+            eventStr: { x: 50, y: 50 },
+            date: { x: 20, y: 85 },
+            signature: { x: 80, y: 85 },
+            qr: { x: 50, y: 85 },
+            logo: { x: 50, y: 5 },
+            seal: { x: 85, y: 15 },
+            entryNo: { x: 20, y: 80 }
+        },
+        elementStyles: {
+            title: { color: '#1e293b', scale: 1 },
+            recipient: { color: '#1e293b', scale: 1.5 },
+            eventName: { color: '#1e293b', scale: 1 },
+            eventStr: { color: '#64748b', scale: 1 },
+            signature: { color: '#1e293b', scale: 1 }
+        },
         labels: {
             title: 'Certificate',
             presentedTo: 'Trao tặng cho',
             eventPrefix: 'Đã tham gia sự kiện',
-            datePrefix: 'Ngày cấp',
+            datePrefix: 'Ngày cấp: . . .',
             signature: 'Ban Tổ Chức',
-            entryNo: 'Vào sổ số: ______'
+            entryNo: 'Vào sổ số: . . .'
+        },
+        visibility: {
+            title: true,
+            recipient: true,
+            eventStr: true,
+            eventName: true,
+            date: true,
+            signature: true,
+            qr: true,
+            logo: true,
+            entryNo: true
         }
     });
     useEffect(() => {
@@ -148,27 +262,82 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         }
     }, [formData.issuedDate]);
 
+    // Persist current config to localStorage on change (Session Backup) - PRUNED TO AVOID QUOTA ERROR
     useEffect(() => {
-        loadData();
-    }, []);
+        if (!isLoading) {
+            // Prune heavy images from localStorage to prevent QuotaExceededError
+            const prunedConfig = { ...customConfig };
+            delete (prunedConfig as any).bgImage;
+            delete (prunedConfig as any).signatureImage;
+            delete (prunedConfig as any).sealImage;
+            delete (prunedConfig as any).logos;
+
+            localStorage.setItem('last_cert_config', JSON.stringify({
+                config: prunedConfig,
+                template_id: formData.template_id
+            }));
+        }
+    }, [customConfig, formData.template_id, isLoading]);
+
+    const handleFetchTopStudents = async () => {
+        setIsFetchingTop(true);
+        try {
+            const res = await dataService.getTopStudentsByMonth(monthFilter, yearFilter, topLimit);
+            if (res.success && res.data) {
+                setTopStudents(res.data);
+                setRecipientSource('users'); // Reuse users view but with filtered data
+                toastSuccess(`Đã tìm thấy ${res.data.length} học sinh tiêu biểu!`);
+            } else {
+                toastError(res.error || "Không thể tải danh sách top");
+            }
+        } catch (e) {
+            toastError("Lỗi hệ thống");
+        } finally {
+            setIsFetchingTop(false);
+        }
+    };
+
+    const replaceVariables = (text: string, user: any, rank?: number) => {
+        if (!text) return text;
+        return text
+            .replace(/{full_name}/g, user?.full_name || 'Người nhận')
+            .replace(/{class}/g, user?.organization || user?.class_id || 'Lớp')
+            .replace(/{points}/g, (user?.monthly_points || user?.total_points || 0).toString())
+            .replace(/{rank}/g, (rank || user?.rank || '-').toString())
+            .replace(/{date}/g, formData.issuedDate || new Date().toLocaleDateString('vi-VN'));
+    };
+
     const loadData = async () => {
         setIsLoading(true);
         try {
-            const [usersResult, eventsResult, certsResult] = await Promise.all([
-                dataService.getUsers(), // Load all users regardless of status
+            const [usersResult, eventsResult, certsResult, presetsResult] = await Promise.all([
+                dataService.getUsers(),
                 dataService.getEvents({ status: 'completed' }),
-                dataService.getCertificates()
+                dataService.getCertificates(),
+                dataService.getCertificateConfigs()
             ]);
+            console.log('📜 History Fetch Result:', certsResult);
+            console.log('👥 Users Fetch Result:', usersResult);
 
             if (usersResult.success && usersResult.data) setUsers(usersResult.data);
             if (eventsResult.success && eventsResult.data) setEvents(eventsResult.data);
-            if (certsResult.success && certsResult.data) setCertificates(certsResult.data);
+            if (certsResult.success && certsResult.data) {
+                setCertificates(certsResult.data);
+            } else if (certsResult.error) {
+                toastError("Lỗi tải lịch sử: " + certsResult.error);
+            }
+            if (presetsResult.success && presetsResult.data) setSavedPresets(presetsResult.data);
         } catch (error) {
             console.error('Failed to load data:', error);
+            toastError("Lỗi tải dữ liệu: " + (error as Error).message || "Không thể tải dữ liệu");
         } finally {
             setIsLoading(false);
         }
     };
+
+    useEffect(() => {
+        loadData();
+    }, []);
 
     useEffect(() => {
         if (formData.event_id && recipientSource === 'event') {
@@ -182,12 +351,59 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         }
     }, [formData.event_id, recipientSource]);
 
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, field: 'bgImage' | 'logoImage') => {
+    const handleAddCustomText = () => {
+        const id = `text-${Date.now()}`;
+        setCustomConfig(prev => ({
+            ...prev,
+            customTexts: [
+                ...(prev.customTexts || []),
+                { id, content: 'Văn bản mới', x: 50, y: 50, fontSize: 18, color: prev.textColor || '#1e293b' }
+            ]
+        }));
+    };
+
+    const handleUpdateCustomText = (id: string, updates: any) => {
+        setCustomConfig(prev => ({
+            ...prev,
+            customTexts: (prev.customTexts || []).map(t => t.id === id ? { ...t, ...updates } : t)
+        }));
+    };
+
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>, field: 'bgImage' | 'logoImage' | 'signatureImage' | 'sealImage') => {
         const file = e.target.files?.[0];
         if (file) {
+            // Basic validation to prevent crashes
+            if (file.size > 5 * 1024 * 1024) { // 5MB limit
+                toastError("File quá lớn (Tối đa 5MB)");
+                return;
+            }
+
             const reader = new FileReader();
-            reader.onloadend = () => {
-                setCustomConfig(prev => ({ ...prev, [field]: reader.result as string }));
+            reader.onloadstart = () => setIsLoading(true);
+            reader.onloadend = async () => {
+                const result = reader.result as string;
+                if (result) {
+                    try {
+                        // Compress before saving to state/DB
+                        // Background: use JPEG (no transparency needed)
+                        // Logo/Signature/Seal: use PNG to preserve transparency
+                        const isBackground = field === 'bgImage';
+                        const targetWidth = isBackground ? 1600 : 800;
+                        const preserveTransparency = !isBackground; // true for logo, signature, seal
+                        const compressed = await compressImage(result, targetWidth, targetWidth, 0.7, preserveTransparency);
+                        setCustomConfig(prev => ({ ...prev, [field]: compressed }));
+                        toastSuccess("Đã tải và tối ưu ảnh!");
+                    } catch (e) {
+                        console.error("Compression failed", e);
+                        setCustomConfig(prev => ({ ...prev, [field]: result }));
+                        toastSuccess("Đã tải ảnh lên!");
+                    }
+                }
+                setIsLoading(false);
+            };
+            reader.onerror = () => {
+                toastError("Lỗi đọc file");
+                setIsLoading(false);
             };
             reader.readAsDataURL(file);
         }
@@ -206,13 +422,22 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                 user_id: uid,
                 event_id: formData.event_id,
                 type: formData.type,
-                title: formData.title || 'Certificate',
+                title: replaceVariables(formData.title || 'Certificate', user || participant, (user as any)?.rank || (participant as any)?.rank),
                 issued_date: formData.issuedDate || new Date().toISOString(),
                 template_id: formData.template_id,
                 metadata: {
                     ...customConfig,
                     manualEventName: formData.manualEventName,
-                    issuedDate: formData.issuedDate
+                    issuedDate: formData.issuedDate,
+                    // Ensure signature and seal are in metadata
+                    signatureImage: (customConfig as any).signatureImage,
+                    sealImage: (customConfig as any).sealImage,
+                    labels: {
+                        ...customConfig.labels,
+                        title: replaceVariables(customConfig.labels?.title || '', user || participant, (user as any)?.rank || (participant as any)?.rank),
+                        presentedTo: replaceVariables(customConfig.labels?.presentedTo || '', user || participant, (user as any)?.rank || (participant as any)?.rank),
+                        eventPrefix: replaceVariables(customConfig.labels?.eventPrefix || '', user || participant, (user as any)?.rank || (participant as any)?.rank),
+                    }
                 },
             } as any;
 
@@ -246,54 +471,117 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         setResult(null);
 
         try {
-            // Prepare all payloads
+            // STEP 1: AUTO-SAVE PRESET FOR LIGHTWEIGHT STORAGE
+            // Compress images and save as a reusable preset
+            // Skip compression for signature/seal/logo under 0.5MB to preserve quality
+            const optimizedConfig = { ...customConfig };
+            const SIZE_THRESHOLD = 0.5 * 1024 * 1024; // 0.5MB in bytes
+            const getBase64Size = (base64: string) => (base64.length * 3) / 4;
+
+            try {
+                // Background: Always compress with JPEG
+                if (optimizedConfig.bgImage && optimizedConfig.bgImage.startsWith('data:')) {
+                    optimizedConfig.bgImage = await compressImage(optimizedConfig.bgImage, 800, 800, 0.4, false);
+                }
+                // Signature: Only compress if > 0.5MB
+                if (optimizedConfig.signatureImage && optimizedConfig.signatureImage.startsWith('data:')) {
+                    if (getBase64Size(optimizedConfig.signatureImage) > SIZE_THRESHOLD) {
+                        optimizedConfig.signatureImage = await compressImage(optimizedConfig.signatureImage, 400, 400, 0.8, true);
+                    }
+                }
+                // Seal: Only compress if > 0.5MB
+                if (optimizedConfig.sealImage && optimizedConfig.sealImage.startsWith('data:')) {
+                    if (getBase64Size(optimizedConfig.sealImage) > SIZE_THRESHOLD) {
+                        optimizedConfig.sealImage = await compressImage(optimizedConfig.sealImage, 300, 300, 0.8, true);
+                    }
+                }
+                // Logo: Only compress if > 0.5MB
+                if (optimizedConfig.logoImage && optimizedConfig.logoImage.startsWith('data:')) {
+                    if (getBase64Size(optimizedConfig.logoImage) > SIZE_THRESHOLD) {
+                        optimizedConfig.logoImage = await compressImage(optimizedConfig.logoImage, 300, 300, 0.8, true);
+                    }
+                }
+            } catch (compressionError) {
+                console.warn('Image compression failed:', compressionError);
+            }
+
+            // Generate a unique name for the auto-saved preset
+            const presetName = `Auto: ${formData.title || 'Chứng nhận'} - ${new Date().toLocaleDateString('vi-VN')}`;
+
+            // Save the preset first
+            const presetRes = await dataService.saveCertificateConfig({
+                name: presetName,
+                template_id: formData.template_id,
+                config: {
+                    ...optimizedConfig,
+                    manualEventName: formData.manualEventName,
+                    issuedDate: formData.issuedDate
+                },
+                is_default: false
+            });
+
+            let configId: string | undefined;
+            if (presetRes.success && presetRes.data) {
+                configId = presetRes.data.id;
+                // Update local presets list
+                setSavedPresets(prev => [presetRes.data, ...prev]);
+                toastSuccess("Mẫu đã được lưu tự động. Vui lòng không xóa để đảm bảo các chứng nhận hiển thị đúng.");
+            } else {
+                console.warn('Failed to save preset, falling back to metadata storage:', presetRes.error);
+            }
+
+            // STEP 2: CREATE CERTIFICATES WITH FULL METADATA
+            // Always include metadata for backward compatibility (even if config_id exists)
+            // This ensures certificates display correctly whether or not SQL migration was run
             const certificatesPayload = targets.map(uid => ({
                 user_id: uid,
                 event_id: formData.event_id || undefined,
                 type: formData.type,
                 title: formData.title,
                 template_id: formData.template_id,
-                metadata: customConfig,
-                // Store manual inputs in metadata or separate fields?
-                // dataService.createCertificate takes Partial<Certificate>
-                // We will store manualEventName and issuedDate in metadata for now, or assume backend ignores extras?
-                // Better: Create custom columns or just use metadata.
-                // Re-using metadata for storage of event override
-                // Actually Certificate interface needs update if we want first-class support, but metadata is fine.
-            }));
-
-            // Inject manual data into metadata for storage
-            const enrichedPayloads = certificatesPayload.map(p => ({
-                ...p,
+                // Always save full metadata to ensure display works
                 metadata: {
-                    ...p.metadata,
+                    ...optimizedConfig,
                     manualEventName: formData.manualEventName,
-                    issuedDate: formData.issuedDate
+                    issuedDate: formData.issuedDate || new Date().toLocaleDateString('vi-VN')
                 },
-                issued_date: formData.issuedDate || new Date().toISOString() // Use manual date for DB sorting if provided
+                issued_date: formData.issuedDate || new Date().toISOString()
             }));
 
-            // ONE Single Call
-            const response = await dataService.createCertificatesBulk(enrichedPayloads);
+            // Chunking logic to prevent payload limits/timeouts
+            const CHUNK_SIZE = 5;
+            const createdCerts: Certificate[] = [];
+            setSaveProgress({ current: 0, total: targets.length });
 
-            if (response.success && response.data) {
-                const count = response.data.length;
-                toastSuccess(`Đã tạo ${count} chứng nhận thành công!`);
+            try {
+                for (let i = 0; i < certificatesPayload.length; i += CHUNK_SIZE) {
+                    const chunk = certificatesPayload.slice(i, i + CHUNK_SIZE);
+                    const response = await dataService.createCertificatesBulk(chunk);
+                    if (response.success && response.data) {
+                        const newCerts = response.data.map(d => ({ ...d, template_id: formData.template_id } as unknown as Certificate));
+                        createdCerts.push(...newCerts);
+                        setSaveProgress({ current: Math.min(i + CHUNK_SIZE, targets.length), total: targets.length });
+                    } else {
+                        toastError(`Lỗi ở lượt lưu thứ ${Math.floor(i / CHUNK_SIZE) + 1}: ${response.error || 'Thất bại'}`);
+                        break;
+                    }
+                }
 
-                // Add new certs to state
-                const newCerts = response.data.map(d => ({ ...d, template_id: formData.template_id } as unknown as Certificate));
-                setCertificates(prev => [...prev, ...newCerts]);
+                if (createdCerts.length > 0) {
+                    toastSuccess(`Đã tạo ${createdCerts.length}/${targets.length} chứng nhận thành công!`);
+                    setCertificates(prev => [...prev, ...createdCerts]);
 
-                // Reset form
-                setFormData(prev => ({ ...prev, user_id: '' }));
-                setSelectedUserIds([]);
-            } else {
-                toastError(response.error || 'Tạo hàng loạt thất bại');
+                    // Reset form
+                    setFormData(prev => ({ ...prev, user_id: '' }));
+                    setSelectedUserIds([]);
+                }
+            } finally {
+                setSaveProgress(null);
             }
 
         } catch (error) {
-            console.error(error);
-            toastError('Có lỗi xảy ra');
+            console.error("Create Error:", error);
+            toastError("Lỗi hệ thống khi tạo chứng nhận");
         } finally {
             setIsGenerating(false);
         }
@@ -383,14 +671,24 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
     const handleSinglePDFExport = async (cert: Certificate) => {
         setIsExporting(true);
         try {
-            const user = users.find(u => u.id === cert.user_id);
+            // Load full certificate with metadata from database
+            // (certificates in history list don't have metadata loaded for performance)
+            let fullCert = cert;
+            if (!cert.metadata || Object.keys(cert.metadata).length === 0) {
+                const res = await dataService.getCertificateById(cert.id);
+                if (res.success && res.data) {
+                    fullCert = res.data;
+                }
+            }
+
+            const user = users.find(u => u.id === fullCert.user_id);
             const items = [{
-                cert,
+                cert: fullCert,
                 user,
-                config: (cert.metadata as any) || customConfig,
+                config: (fullCert.metadata as any) || customConfig,
                 overrideName: user?.full_name
             }];
-            const fileName = `Certificate_${cert.title.replace(/\s+/g, '_')}_${new Date().getTime()}.pdf`;
+            const fileName = `Certificate_${fullCert.title.replace(/\s+/g, '_')}_${new Date().getTime()}.pdf`;
             const count = await generateSingleExportPDF(items, fileName);
 
             if (count > 0) toastSuccess("Đã tải xuống file PDF!");
@@ -466,36 +764,9 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                     {/* TAB: DESIGN */}
                                     {activeTab === 'design' && (
                                         <div className="space-y-5 animate-in fade-in slide-in-from-left-4 duration-300">
-                                            {/* Presets */}
-                                            {savedPresets.length > 0 && (
-                                                <div className="mb-4">
-                                                    <label className="text-xs font-bold text-slate-400 mb-2 block">Mẫu đã lưu</label>
-                                                    <div className="flex flex-wrap gap-2">
-                                                        {savedPresets.map((preset, idx) => (
-                                                            <div key={idx} className="flex items-center gap-1 bg-slate-100 rounded-lg px-2 py-1">
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleLoadPreset(preset)}
-                                                                    className="text-xs font-bold text-slate-600 hover:text-indigo-600"
-                                                                >
-                                                                    {preset.name}
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    onClick={() => handleDeletePreset(idx)}
-                                                                    className="text-slate-400 hover:text-red-500"
-                                                                >
-                                                                    ×
-                                                                </button>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* Template Selector */}
+                                            {/* Template Selector - Moved to top as priority */}
                                             <div>
-                                                <label className="block text-sm font-bold text-slate-700 mb-2">Chọn giao diện gốc</label>
+                                                <label className="block text-sm font-bold text-slate-700 mb-2 font-serif">Chọn giao diện</label>
                                                 <div className="grid grid-cols-4 gap-2">
                                                     {TEMPLATE_OPTIONS.map(opt => {
                                                         const Icon = {
@@ -518,19 +789,88 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                                 title={opt.name}
                                                             >
                                                                 <Icon className="w-5 h-5" strokeWidth={1.5} />
+                                                                <span className="text-[9px] font-bold uppercase tracking-tighter">{opt.name}</span>
                                                             </button>
                                                         );
                                                     })}
                                                 </div>
                                             </div>
 
+                                            {/* Presets - Moved below selector */}
+                                            {savedPresets.length > 0 && (
+                                                <div className="mt-4">
+                                                    <label className="text-[10px] font-black text-slate-400 mb-2 block uppercase tracking-widest">Mẫu của bạn đã lưu</label>
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {savedPresets.map((preset, idx) => (
+                                                            <div key={idx} className="flex items-center gap-1 bg-white border border-slate-100 rounded-lg px-2 py-1.5 shadow-sm hover:border-indigo-200 transition-all">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleLoadPreset(preset)}
+                                                                    className="text-[10px] font-bold text-slate-600 hover:text-indigo-600 truncate max-w-[120px]"
+                                                                >
+                                                                    {preset.name}
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => handleDeletePreset(preset.id, idx, preset.name)}
+                                                                    className="text-slate-300 hover:text-red-500 ml-1"
+                                                                >
+                                                                    <Archive className="w-3 h-3" />
+                                                                </button>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
                                             {/* Custom Template Config */}
                                             {formData.template_id === 'custom' && (
                                                 <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                                                     <h4 className="font-bold text-slate-900 flex items-center justify-between text-sm">
                                                         <span className="flex items-center gap-2"><LayoutTemplate className="w-4 h-4" /> Tùy chỉnh</span>
-                                                        <button type="button" onClick={handleSavePreset} className="text-xs text-indigo-600 hover:underline font-normal">Lưu mẫu này</button>
                                                     </h4>
+
+                                                    {/* Quick Actions Toolbar */}
+                                                    <div className="space-y-2">
+                                                        {showSaveNaming ? (
+                                                            <div className="p-3 bg-white border border-indigo-200 rounded-xl shadow-sm animate-in fade-in zoom-in-95 duration-200">
+                                                                <label className="block text-[10px] font-black text-indigo-600 uppercase mb-2">Đặt tên cho mẫu</label>
+                                                                <input
+                                                                    autoFocus
+                                                                    type="text"
+                                                                    value={saveName}
+                                                                    onChange={e => setSaveName(e.target.value)}
+                                                                    placeholder="VD: Mẫu tháng 1..."
+                                                                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs mb-2 focus:ring-2 focus:ring-indigo-500 outline-none"
+                                                                    onKeyDown={e => e.key === 'Enter' && handleSavePreset()}
+                                                                />
+                                                                <div className="flex gap-2">
+                                                                    <button onClick={() => setShowSaveNaming(false)} className="flex-1 py-1.5 text-[10px] font-bold text-slate-500 hover:bg-slate-100 rounded-lg">Hủy</button>
+                                                                    <button onClick={handleSavePreset} className="flex-1 py-1.5 text-[10px] font-bold bg-indigo-600 text-white rounded-lg shadow-sm shadow-indigo-100">Xác nhận Lưu</button>
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="flex gap-2">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={handleAddCustomText}
+                                                                    className="flex-1 py-2 bg-indigo-50 text-indigo-700 rounded-xl font-bold text-xs hover:bg-indigo-100 transition-all border border-indigo-100 flex items-center justify-center gap-2"
+                                                                >
+                                                                    <Type className="w-4 h-4" /> Thêm chữ mới
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => {
+                                                                        setShowSaveNaming(true);
+                                                                        setSaveName(formData.title || '');
+                                                                    }}
+                                                                    className="flex-1 py-2 bg-slate-50 text-slate-700 rounded-xl font-bold text-xs hover:bg-slate-100 transition-all border border-slate-100 flex items-center justify-center gap-2"
+                                                                >
+                                                                    <Settings2 className="w-4 h-4" /> Lưu mẫu
+                                                                </button>
+                                                            </div>
+                                                        )}
+                                                    </div>
 
                                                     {/* Appearance */}
                                                     <div className="grid grid-cols-2 gap-3">
@@ -541,11 +881,29 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                                 onChange={e => setCustomConfig(p => ({ ...p, paperSize: e.target.value as any }))}
                                                                 className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs"
                                                             >
-                                                                <option value="A4">A4 (Ngang)</option>
-                                                                <option value="A5">A5 (Ngang nhỏ)</option>
-                                                                <option value="A3">A3 (Khổ lớn)</option>
-                                                                <option value="B4">B4</option>
+                                                                <option value="A4">A4</option>
+                                                                <option value="A5">A5</option>
+                                                                <option value="A3">A3</option>
                                                             </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-slate-500 mb-1 block">Hướng giấy</label>
+                                                            <div className="flex bg-white border border-slate-200 rounded p-0.5">
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setCustomConfig(p => ({ ...p, orientation: 'landscape' }))}
+                                                                    className={`flex-1 py-1 rounded text-[10px] font-bold transition-all ${customConfig.orientation === 'landscape' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400'}`}
+                                                                >
+                                                                    Ngang
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => setCustomConfig(p => ({ ...p, orientation: 'portrait' }))}
+                                                                    className={`flex-1 py-1 rounded text-[10px] font-bold transition-all ${customConfig.orientation === 'portrait' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-400'}`}
+                                                                >
+                                                                    Dọc
+                                                                </button>
+                                                            </div>
                                                         </div>
                                                         <div className="col-span-2 grid grid-cols-2 gap-3">
                                                             <div>
@@ -578,33 +936,7 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                         </div>
                                                     </div>
 
-                                                    {/* Spacing & Title Size Settings */}
-                                                    <div className="grid grid-cols-2 gap-3">
-                                                        <div>
-                                                            <label className="text-[10px] font-bold text-slate-500 mb-1 block">Khoảng cách dòng ({Math.round((customConfig.spacingScale || 1) * 100)}%)</label>
-                                                            <input
-                                                                type="range"
-                                                                min="0.5"
-                                                                max="2.0"
-                                                                step="0.1"
-                                                                value={customConfig.spacingScale || 1}
-                                                                onChange={e => setCustomConfig(p => ({ ...p, spacingScale: parseFloat(e.target.value) }))}
-                                                                className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                                                            />
-                                                        </div>
-                                                        <div>
-                                                            <label className="text-[10px] font-bold text-slate-500 mb-1 block">Cỡ chữ tiêu đề ({Math.round((customConfig.titleScale || 1) * 100)}%)</label>
-                                                            <input
-                                                                type="range"
-                                                                min="0.5"
-                                                                max="2.0"
-                                                                step="0.1"
-                                                                value={customConfig.titleScale || 1}
-                                                                onChange={e => setCustomConfig(p => ({ ...p, titleScale: parseFloat(e.target.value) }))}
-                                                                className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
-                                                            />
-                                                        </div>
-                                                    </div>
+                                                    {/* Spacing & Title Size Settings Removed as they are now per-element */}
 
                                                     {/* Color */}
                                                     <div>
@@ -624,19 +956,57 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                             />
                                                         </div>
 
-                                                        {/* Event Name Visibility */}
-                                                        <label className="flex items-center gap-2 cursor-pointer mt-3 bg-white p-2 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors">
-                                                            <input
-                                                                type="checkbox"
-                                                                checked={customConfig.visibility?.eventName !== false}
-                                                                onChange={e => setCustomConfig(p => ({
-                                                                    ...p,
-                                                                    visibility: { ...p.visibility, eventName: e.target.checked }
-                                                                }))}
-                                                                className="w-4 h-4 rounded text-indigo-600 focus:ring-indigo-500 border-gray-300"
-                                                            />
-                                                            <span className="text-xs font-bold text-slate-700">Hiển thị Tên sự kiện</span>
-                                                        </label>
+                                                        {/* Visibility Toggles */}
+                                                        <div className="grid grid-cols-2 gap-2 mt-4 bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                                            <h4 className="col-span-2 text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Ẩn / Hiện thành phần</h4>
+                                                            {[
+                                                                { id: 'logo', label: 'Logo' },
+                                                                { id: 'title', label: 'Tiêu đề' },
+                                                                { id: 'recipient', label: 'Tên người nhận' },
+                                                                { id: 'eventName', label: 'Tên sự kiện' },
+                                                                { id: 'eventStr', label: 'Lây nội dung' },
+                                                                { id: 'date', label: 'Ngày cấp' },
+                                                                { id: 'entryNo', label: 'Vào sổ số' },
+                                                                { id: 'signature', label: 'Tên người ký' },
+                                                                { id: 'signatureImg', label: 'Ảnh chữ ký' },
+                                                                { id: 'seal', label: 'Con dấu' },
+                                                                { id: 'qr', label: 'Mã QR' }
+                                                            ].map(item => (
+                                                                <label key={item.id} className="flex items-center gap-2 cursor-pointer bg-white p-1.5 border border-slate-200 rounded-lg hover:border-indigo-300 transition-all">
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={customConfig.visibility?.[item.id as keyof typeof customConfig.visibility] !== false}
+                                                                        onChange={e => {
+                                                                            const val = e.target.checked;
+                                                                            setCustomConfig(p => ({
+                                                                                ...p,
+                                                                                visibility: { ...(p.visibility || {}), [item.id]: val }
+                                                                            }));
+                                                                        }}
+                                                                        className="w-3 h-3 rounded text-indigo-600 border-gray-300"
+                                                                    />
+                                                                    <span className="text-[10px] font-bold text-slate-700">{item.label}</span>
+
+                                                                    {/* Simple Individual Color/Size Trigger */}
+                                                                    {['title', 'recipient', 'eventName', 'signature', 'signatureImg', 'seal', 'date', 'entryNo'].includes(item.id) && (
+                                                                        <div className="ml-auto flex gap-1 items-center">
+                                                                            <input
+                                                                                type="color"
+                                                                                value={customConfig.elementStyles?.[item.id]?.color || customConfig.textColor || '#1e293b'}
+                                                                                onChange={e => setCustomConfig(p => ({
+                                                                                    ...p,
+                                                                                    elementStyles: {
+                                                                                        ...(p.elementStyles || {}),
+                                                                                        [item.id]: { ...(p.elementStyles?.[item.id] || {}), color: e.target.value }
+                                                                                    }
+                                                                                }))}
+                                                                                className="w-4 h-4 p-0 border-0 bg-transparent cursor-pointer"
+                                                                            />
+                                                                        </div>
+                                                                    )}
+                                                                </label>
+                                                            ))}
+                                                        </div>
                                                     </div>
 
 
@@ -671,14 +1041,42 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                         </div>
                                                     </div>
 
+                                                    {/* Background Settings */}
+                                                    <div className="grid grid-cols-2 gap-3 bg-slate-50 p-3 rounded-xl border border-slate-100 mb-2">
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-slate-500 mb-1 block">Chế độ nền</label>
+                                                            <select
+                                                                value={customConfig.bgMode || 'cover'}
+                                                                onChange={e => setCustomConfig(p => ({ ...p, bgMode: e.target.value as any }))}
+                                                                className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-[10px] font-bold"
+                                                            >
+                                                                <option value="cover">Phủ kín (Cover)</option>
+                                                                <option value="contain">Vừa vặn (Contain)</option>
+                                                                <option value="fill">Kéo giãn (Stretch)</option>
+                                                            </select>
+                                                        </div>
+                                                        <div>
+                                                            <label className="text-[10px] font-bold text-slate-500 mb-1 block">Độ mờ nền ({Math.round((customConfig.bgOpacity !== undefined ? customConfig.bgOpacity : 1) * 100)}%)</label>
+                                                            <input
+                                                                type="range"
+                                                                min="0"
+                                                                max="1"
+                                                                step="0.1"
+                                                                value={customConfig.bgOpacity !== undefined ? customConfig.bgOpacity : 1}
+                                                                onChange={e => setCustomConfig(p => ({ ...p, bgOpacity: parseFloat(e.target.value) }))}
+                                                                className="w-full accent-indigo-600 h-2 bg-slate-200 rounded-lg appearance-none cursor-pointer"
+                                                            />
+                                                        </div>
+                                                    </div>
+
                                                     {/* Uploads */}
                                                     <div className="grid grid-cols-2 gap-2">
-                                                        <label className="block p-2 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
+                                                        <label className="block p-2 border-x border-t border-slate-200 rounded-t-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
                                                             <input type="file" className="hidden" accept="image/*" onChange={e => handleFileUpload(e, 'bgImage')} />
                                                             <span className="text-[10px] font-bold text-slate-500 block">Ảnh nền</span>
                                                             {customConfig.bgImage ? <CheckCircle className="w-3 h-3 mx-auto text-emerald-500" /> : <Upload className="w-3 h-3 mx-auto text-slate-400" />}
                                                         </label>
-                                                        <label className="block p-2 border-2 border-dashed border-slate-300 rounded-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
+                                                        <label className="block p-2 border-x border-t border-slate-200 rounded-t-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
                                                             <input type="file" className="hidden" accept="image/*" onChange={e => {
                                                                 const file = e.target.files?.[0];
                                                                 if (file) {
@@ -693,6 +1091,16 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                             }} />
                                                             <span className="text-[10px] font-bold text-slate-500 block">+ Logo</span>
                                                             <span className="text-[9px] text-slate-400">{customConfig.logos?.length || 0} đã chọn</span>
+                                                        </label>
+                                                        <label className="block p-2 border border-slate-200 rounded-bl-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
+                                                            <input type="file" className="hidden" accept="image/*" onChange={e => handleFileUpload(e, 'signatureImage' as any)} />
+                                                            <span className="text-[10px] font-bold text-slate-500 block">Chữ ký</span>
+                                                            {(customConfig as any).signatureImage ? <CheckCircle className="w-3 h-3 mx-auto text-emerald-500" /> : <Edit3 className="w-3 h-3 mx-auto text-slate-400" />}
+                                                        </label>
+                                                        <label className="block p-2 border border-slate-200 rounded-br-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
+                                                            <input type="file" className="hidden" accept="image/*" onChange={e => handleFileUpload(e, 'sealImage' as any)} />
+                                                            <span className="text-[10px] font-bold text-slate-500 block">Con dấu</span>
+                                                            {(customConfig as any).sealImage ? <CheckCircle className="w-3 h-3 mx-auto text-emerald-500" /> : <Landmark className="w-3 h-3 mx-auto text-slate-400" />}
                                                         </label>
                                                     </div>
                                                 </div>
@@ -736,30 +1144,67 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                 ))}
                                             </div>
 
-                                            {/* Toggles */}
-                                            <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
-                                                {[
-                                                    { id: 'logo', label: 'Hiện Logo' },
-                                                    { id: 'signature', label: 'Hiện Chữ ký' },
-                                                    { id: 'date', label: 'Hiện Ngày cấp' },
-                                                ].map(opt => (
-                                                    <label key={opt.id} className="flex items-center gap-2 cursor-pointer">
-                                                        <input
-                                                            type="checkbox"
-                                                            checked={customConfig.visibility?.[opt.id as keyof typeof customConfig.visibility] !== false}
-                                                            onChange={() => setCustomConfig(p => ({ ...p, visibility: { ...p.visibility, [opt.id]: !p.visibility?.[opt.id as any] } }))}
-                                                            className="rounded text-indigo-600 focus:ring-indigo-500 w-4 h-4"
-                                                        />
-                                                        <span className="text-xs font-medium text-slate-700">{opt.label}</span>
-                                                    </label>
-                                                ))}
-                                            </div>
+                                            {/* Toggles removed as they are redundant with Design tab */}
                                         </div>
                                     )}
 
                                     {/* TAB: RECIPIENTS */}
                                     {activeTab === 'recipients' && (
                                         <div className="space-y-4 animate-in fade-in slide-in-from-left-4 duration-300">
+                                            {/* Monthly Filter Section */}
+                                            <div className="bg-indigo-50/50 p-4 rounded-2xl border border-indigo-100 mb-4">
+                                                <h4 className="text-xs font-black text-indigo-700 uppercase tracking-wider mb-3 flex items-center gap-2">
+                                                    <Award className="w-3.5 h-3.5" /> Lọc học sinh tiêu biểu
+                                                </h4>
+                                                <div className="grid grid-cols-2 gap-2 mb-3">
+                                                    <div>
+                                                        <label className="text-[10px] font-bold text-slate-500 mb-1 block">Tháng</label>
+                                                        <select
+                                                            value={monthFilter}
+                                                            onChange={e => setMonthFilter(parseInt(e.target.value))}
+                                                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold"
+                                                        >
+                                                            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+                                                                <option key={m} value={m}>Tháng {m}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                    <div>
+                                                        <label className="text-[10px] font-bold text-slate-500 mb-1 block">Năm</label>
+                                                        <select
+                                                            value={yearFilter}
+                                                            onChange={e => setYearFilter(parseInt(e.target.value))}
+                                                            className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold"
+                                                        >
+                                                            {[2024, 2025, 2026].map(y => (
+                                                                <option key={y} value={y}>Năm {y}</option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <div className="flex-1">
+                                                        <label className="text-[10px] font-bold text-slate-500 mb-1 block">Số lượng (Top N)</label>
+                                                        <input
+                                                            type="number"
+                                                            value={topLimit}
+                                                            onChange={e => setTopLimit(parseInt(e.target.value))}
+                                                            className="w-full px-3 py-1.5 bg-white border border-slate-200 rounded text-xs font-bold"
+                                                            min="1"
+                                                            max="100"
+                                                        />
+                                                    </div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={handleFetchTopStudents}
+                                                        disabled={isFetchingTop}
+                                                        className="self-end px-4 py-1.5 bg-indigo-600 text-white rounded font-bold text-xs hover:bg-indigo-700 disabled:opacity-50 transition-all shadow-md shadow-indigo-100"
+                                                    >
+                                                        {isFetchingTop ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Lọc ngay'}
+                                                    </button>
+                                                </div>
+                                            </div>
+
                                             <div>
                                                 <select
                                                     value={formData.event_id}
@@ -808,7 +1253,8 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
 
                                                     <div className="overflow-y-auto p-1 space-y-0.5 flex-1">
                                                         {(() => {
-                                                            const filtered = (recipientSource === 'users' ? users : eventParticipants).filter((u: any) =>
+                                                            const sourceData = topStudents.length > 0 ? topStudents : (recipientSource === 'users' ? users : eventParticipants);
+                                                            const filtered = sourceData.filter((u: any) =>
                                                                 u.full_name?.toLowerCase().includes(recipientSearch.toLowerCase()) ||
                                                                 u.student_code?.toLowerCase().includes(recipientSearch.toLowerCase())
                                                             );
@@ -908,33 +1354,90 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                             <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-slate-600 shadow-sm flex items-center gap-2">
                                 <Eye className="w-3 h-3" /> Xem trước (Live Preview)
                             </div>
-                            <div className="transform scale-[0.6] origin-center shadow-2xl transition-all duration-500">
+                            <div className={`shadow-2xl transition-all duration-500 origin-center ${customConfig.orientation === 'portrait' ? 'scale-[0.45]' : 'scale-[0.6]'}`}>
                                 <SelectedTemplate
                                     data={{
-                                        recipientName: users.find(u => u.id === formData.user_id)?.full_name || 'Nguyễn Văn A',
-                                        title: formData.title || 'Chứng Nhận Demo',
-                                        eventName: formData.manualEventName || '',
-                                        issuedDate: formData.issuedDate || '',
+                                        recipientName: replaceVariables('{full_name}', users.find(u => u.id === formData.user_id)),
+                                        title: replaceVariables(formData.title || 'Chứng Nhận Demo', users.find(u => u.id === formData.user_id)),
+                                        eventName: replaceVariables(formData.manualEventName || '', users.find(u => u.id === formData.user_id)),
+                                        issuedDate: formData.issuedDate || new Date().toLocaleDateString('vi-VN'),
                                         type: formData.type,
                                         verifyCode: 'DEMO-123',
                                         verifyQR: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=DEMO'
                                     }}
                                     customConfig={customConfig}
                                     isEditable={true}
-                                    onLabelChange={(key, val) => setCustomConfig(prev => ({ ...prev, labels: { ...prev.labels, [key]: val } }))}
+                                    onLabelChange={(key, val) => {
+                                        if (key.startsWith('pos_')) {
+                                            const elementId = key.replace('pos_', '');
+                                            const [x, y] = val.split(',').map(Number);
+                                            setCustomConfig(prev => ({
+                                                ...prev,
+                                                positions: { ...prev.positions, [elementId]: { x, y } }
+                                            }));
+                                        } else if (key.startsWith('style_')) {
+                                            const parts = key.split('_');
+                                            const elementId = parts[1];
+                                            const prop = parts[2] as 'scale' | 'color';
+                                            setCustomConfig(prev => ({
+                                                ...prev,
+                                                elementStyles: {
+                                                    ...(prev.elementStyles || {}),
+                                                    [elementId]: {
+                                                        ...(prev.elementStyles?.[elementId] || {}),
+                                                        [prop]: prop === 'scale' ? parseFloat(val) : val
+                                                    }
+                                                }
+                                            }));
+                                        } else if (key.startsWith('visibility_')) {
+                                            const elementId = key.replace('visibility_', '');
+                                            setCustomConfig(prev => ({
+                                                ...prev,
+                                                visibility: { ...(prev.visibility || {}), [elementId]: val === 'true' }
+                                            }));
+                                        } else {
+                                            setCustomConfig(prev => ({ ...prev, labels: { ...prev.labels, [key]: val } }));
+                                        }
+                                    }}
                                 />
                             </div>
                         </div>
 
                         {/* Recent Certificates */}
                         <div className="bg-white rounded-3xl shadow-sm border border-slate-100 p-6">
-                            <h3 className="text-lg font-black text-slate-900 mb-6 flex items-center gap-2">
-                                <Award className="w-5 h-5 text-indigo-500" />
-                                Đã cấp gần đây
-                            </h3>
+                            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
+                                <h3 className="text-lg font-black text-slate-900 flex items-center gap-2">
+                                    <Award className="w-5 h-5 text-indigo-500" />
+                                    Đã cấp gần đây
+                                </h3>
+                                <div className="relative flex-1 max-w-xs">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                    <input
+                                        type="text"
+                                        placeholder="Tìm tên hoặc nội dung..."
+                                        value={historySearch}
+                                        onChange={(e) => {
+                                            setHistorySearch(e.target.value);
+                                            setRecentCertsPage(1);
+                                        }}
+                                        className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-indigo-500 outline-none transition-all"
+                                    />
+                                </div>
+                            </div>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {(() => {
-                                    const sorted = [...certificates].reverse();
+                                    const filtered = certificates.filter(cert => {
+                                        const certTitle = (cert.title || '').toLowerCase();
+                                        const recipient = (users.find(u => u.id === cert.user_id)?.full_name || '').toLowerCase();
+                                        const search = historySearch.toLowerCase();
+                                        return certTitle.includes(search) || recipient.includes(search);
+                                    });
+                                    // Sort by issued_date: newest first
+                                    const sorted = [...filtered].sort((a, b) => {
+                                        const dateA = new Date(a.issued_date || 0).getTime();
+                                        const dateB = new Date(b.issued_date || 0).getTime();
+                                        return dateB - dateA; // Descending (newest first)
+                                    });
                                     const totalCertPages = Math.ceil(sorted.length / recentCertsPerPage);
                                     const displayCerts = sorted.slice((recentCertsPage - 1) * recentCertsPerPage, recentCertsPage * recentCertsPerPage);
 
@@ -942,9 +1445,12 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                         <>
                                             {displayCerts.map(cert => (
                                                 <div key={cert.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all group">
-                                                    <div className="min-w-0">
-                                                        <p className="font-bold text-slate-900 truncate">{cert.title}</p>
-                                                        <p className="text-xs text-slate-500 truncate">{users.find(u => u.id === cert.user_id)?.full_name}</p>
+                                                    <div className="min-w-0 flex-1">
+                                                        <p className="font-bold text-slate-900 truncate">{users.find(u => u.id === cert.user_id)?.full_name || 'Học sinh'}</p>
+                                                        <p className="text-xs text-indigo-600 font-semibold truncate">{cert.title}</p>
+                                                        <p className="text-[10px] text-slate-400 mt-1">
+                                                            📅 {cert.issued_date ? new Date(cert.issued_date).toLocaleDateString('vi-VN') : 'N/A'}
+                                                        </p>
                                                     </div>
                                                     <div className="flex gap-2">
                                                         <button
@@ -1002,7 +1508,75 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                     </div>
                 </div>
             </div>
-        </div>
+
+            {/* Modern Delete Confirmation Modal */}
+            {presetToDelete && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-sm w-full p-6 animate-in zoom-in-95 duration-200">
+                        <div className="bg-red-50 w-12 h-12 rounded-2xl flex items-center justify-center mb-4">
+                            <Archive className="w-6 h-6 text-red-600" />
+                        </div>
+                        <h3 className="text-lg font-black text-slate-900 mb-2">Xác nhận xóa mẫu?</h3>
+                        <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+                            Bạn có chắc chắn muốn xóa mẫu <span className="font-bold text-slate-700">"{presetToDelete.name}"</span>? Thao tác này không thể hoàn tác.
+                        </p>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setPresetToDelete(null)}
+                                className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all"
+                            >
+                                Quay lại
+                            </button>
+                            <button
+                                onClick={confirmDeletePreset}
+                                className="flex-1 py-3 bg-red-600 text-white rounded-2xl font-bold text-sm hover:bg-red-700 shadow-lg shadow-red-200 transition-all"
+                            >
+                                Xóa ngay
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Mass Creation Progress Overlay */}
+            {
+                saveProgress && (
+                    <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-indigo-900/40 backdrop-blur-md animate-in fade-in duration-300">
+                        <div className="bg-white rounded-[2rem] shadow-2xl border border-white/50 max-w-md w-full p-10 text-center animate-in zoom-in-95 duration-300">
+                            <div className="relative w-24 h-24 mx-auto mb-8">
+                                <div className="absolute inset-0 rounded-full border-4 border-slate-100"></div>
+                                <svg className="w-full h-full transform -rotate-90">
+                                    <circle
+                                        cx="48"
+                                        cy="48"
+                                        r="44"
+                                        stroke="currentColor"
+                                        strokeWidth="6"
+                                        fill="transparent"
+                                        className="text-indigo-600 transition-all duration-500 ease-out"
+                                        strokeDasharray={2 * Math.PI * 44}
+                                        strokeDashoffset={2 * Math.PI * 44 * (1 - saveProgress.current / saveProgress.total)}
+                                        strokeLinecap="round"
+                                    />
+                                </svg>
+                                <div className="absolute inset-0 flex items-center justify-center">
+                                    <span className="text-2xl font-black text-slate-900">{Math.round((saveProgress.current / saveProgress.total) * 100)}%</span>
+                                </div>
+                            </div>
+                            <h3 className="text-2xl font-black text-slate-900 mb-3">Đang tạo chứng nhận</h3>
+                            <p className="text-slate-500 font-bold mb-8">Đã hoàn thành {saveProgress.current}/{saveProgress.total} bản ghi...</p>
+
+                            <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden mb-2">
+                                <div
+                                    className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
+                                    style={{ width: `${(saveProgress.current / saveProgress.total) * 100}%` }}
+                                ></div>
+                            </div>
+                            <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Vui lòng không đóng trình duyệt</p>
+                        </div>
+                    </div>
+                )
+            }
+        </div >
     );
 };
 

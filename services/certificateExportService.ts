@@ -67,9 +67,9 @@ export const generateCertificateImage = async (options: ExportOptions) => {
     style.setAttribute('data-export-style', 'true');
     style.innerHTML = `
         @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Arimo:wght@400;700&display=swap');
-        .font-loader-check { font-family: 'Playfair Display'; }
-        .font-loader-check-2 { font-family: 'Dancing Script'; }
-        .font-loader-check-3 { font-family: 'Arimo'; }
+        .font-loader-check { font-family: 'Playfair Display' !important; }
+        .font-loader-check-2 { font-family: 'Dancing Script' !important; }
+        .font-loader-check-3 { font-family: 'Arimo' !important; }
     `;
     document.head.appendChild(style);
 
@@ -110,7 +110,7 @@ export const generateCertificateImage = async (options: ExportOptions) => {
         setTimeout(() => {
             root.render(React.createElement(Template, { data: certData, customConfig: config }));
             // Wait a bit longer for layout to settle with fonts
-            setTimeout(resolve, 1000);
+            setTimeout(resolve, 1200);
         }, 300);
     });
 
@@ -118,16 +118,48 @@ export const generateCertificateImage = async (options: ExportOptions) => {
         const element = container.querySelector('#certificate-node') as HTMLElement;
         if (!element) throw new Error("Template render failed");
 
+        // Inject CSS directly into the element for html2canvas
+        const styleInside = document.createElement('style');
+        styleInside.innerHTML = `
+            @import url('https://fonts.googleapis.com/css2?family=Dancing+Script:wght@400;700&family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=Arimo:wght@400;700&display=swap');
+            * { -webkit-font-smoothing: antialiased; }
+        `;
+        element.appendChild(styleInside);
+
+        // Wait for all images to be loaded
+        const images = Array.from(element.querySelectorAll('img'));
+        await Promise.all(images.map(img => {
+            if (img.complete) return Promise.resolve();
+            return new Promise((resolve) => {
+                img.onload = resolve;
+                img.onerror = resolve;
+            });
+        }));
+
+        // FINAL FONT SYNC
+        await document.fonts.ready;
+        await new Promise(r => setTimeout(r, 800)); // Final pause for layout stabilization
+
         const width = element.offsetWidth;
         const height = element.offsetHeight;
 
         const canvas = await html2canvas(element, {
-            scale: 2, // High res for print
+            scale: 2,
             useCORS: true,
+            allowTaint: true,
             backgroundColor: null,
             width: width,
             height: height,
-            logging: false
+            logging: true,
+            onclone: (clonedDoc) => {
+                const el = clonedDoc.querySelector('#certificate-node') as HTMLElement;
+                if (el) {
+                    el.style.position = 'relative';
+                    el.style.left = '0';
+                    el.style.top = '0';
+                    el.style.visibility = 'visible';
+                }
+            }
         });
 
         return {
@@ -140,15 +172,21 @@ export const generateCertificateImage = async (options: ExportOptions) => {
         console.error("Export Error:", err);
         return null;
     } finally {
-        if (document.body.contains(container)) document.body.removeChild(container);
-        const fontLoader = document.querySelector('div[style*="font-family"]'); // Poor man's selector or scope it better
-        // Actually better to just remove it if we had a ref, but for now relies on GC or specific cleanup if we assigned ID?
-        // Let's rely on document.body.removeChild if we appended it to body.
-        // Wait, I appended fontLoader to body separately.
-        // It's safer to remove it.
-        if (fontLoader && fontLoader.parentNode) fontLoader.parentNode.removeChild(fontLoader);
-        const addedStyle = document.querySelector('style[data-export-style]');
-        if (addedStyle && addedStyle.parentNode) addedStyle.parentNode.removeChild(addedStyle);
+        setTimeout(() => {
+            try {
+                root.unmount();
+                if (document.body.contains(container)) document.body.removeChild(container);
+                const addedStyle = document.querySelector('style[data-export-style]');
+                if (addedStyle && addedStyle.parentNode) addedStyle.parentNode.removeChild(addedStyle);
+                // Also remove the fontLoader if found
+                const fontLoaders = document.querySelectorAll('div[style*="font-family"]');
+                fontLoaders.forEach(fl => {
+                    if (fl.parentNode === document.body) document.body.removeChild(fl);
+                });
+            } catch (e) {
+                console.error("Cleanup error:", e);
+            }
+        }, 500); // Delayed cleanup to prevent flickers
     }
 };
 

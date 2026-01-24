@@ -15,6 +15,8 @@ export interface CertificateTemplateProps {
     customConfig?: {
         bgImage?: string;
         logoImage?: string;
+        signatureImage?: string;
+        sealImage?: string;
         logos?: string[];
         paperSize?: 'A4' | 'A5' | 'B4' | 'A3';
         orientation?: 'landscape' | 'portrait';
@@ -23,6 +25,32 @@ export interface CertificateTemplateProps {
         recipientFont?: 'serif' | 'sans' | 'handwriting' | 'times';
         textColor?: string;
         showQR?: boolean;
+        logoAlignment?: 'left' | 'center' | 'right';
+        logoScale?: number;
+        spacingScale?: number;
+        titleScale?: number;
+        positions?: {
+            [key: string]: { x: number; y: number };
+        };
+        customTexts?: {
+            id: string;
+            content: string;
+            x: number;
+            y: number;
+            fontSize?: number;
+            color?: string;
+            fontStyle?: 'serif' | 'sans' | 'handwriting' | 'times';
+        }[];
+        elementStyles?: {
+            [key: string]: {
+                color?: string;
+                scale?: number;
+                fontStyle?: 'serif' | 'sans' | 'handwriting' | 'times';
+                fontSize?: number;
+            };
+        };
+        bgMode?: 'cover' | 'contain' | 'fill';
+        bgOpacity?: number;
         visibility?: {
             title?: boolean;
             recipient?: boolean;

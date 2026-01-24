@@ -2666,10 +2666,13 @@ async function getEventReport(eventId: string): Promise<ApiResponse<EventReport>
 
 async function getCertificates(userId?: string): Promise<ApiResponse<Certificate[]>> {
     try {
+        // OPTIMIZATION: Exclude heavy 'metadata' column to prevent statement timeout
+        // Metadata contains base64 images which are too large for bulk fetching
         let query = supabase
             .from('certificates')
-            .select('*, user:users(id, full_name)')
-            .order('issued_date', { ascending: false });
+            .select('id, user_id, event_id, type, title, issued_date, qr_verify, pdf_url, status, template_id, user:users(id, full_name)')
+            .order('issued_date', { ascending: false })
+            .limit(200); // Limit results for performance
 
         if (userId) {
             query = query.eq('user_id', userId);
@@ -2678,12 +2681,61 @@ async function getCertificates(userId?: string): Promise<ApiResponse<Certificate
         const { data, error } = await query;
 
         if (error) {
-            // Return empty if table doesn't exist
-            return { success: true, data: [] };
+            console.error('getCertificates error:', error);
+            return { success: false, error: error.message };
         }
         return { success: true, data: data as Certificate[] };
     } catch (err) {
         return { success: false, error: 'Lỗi tải danh sách chứng nhận' };
+    }
+}
+
+// Fetch single certificate with full metadata (for PDF export)
+// If certificate has config_id, load design from certificate_configs table
+async function getCertificateById(id: string): Promise<ApiResponse<Certificate>> {
+    try {
+        const { data, error } = await supabase
+            .from('certificates')
+            .select('*, user:users(id, full_name)')
+            .eq('id', id)
+            .single();
+
+        if (error) {
+            console.error('getCertificateById error:', error);
+            return { success: false, error: error.message };
+        }
+
+        const cert = data as Certificate & { config_id?: string };
+
+        // If certificate references a config, load the design from certificate_configs
+        if (cert.config_id && (!cert.metadata || Object.keys(cert.metadata).length === 0)) {
+            try {
+                const { data: configData, error: configError } = await supabase
+                    .from('certificate_configs')
+                    .select('config, template_id')
+                    .eq('id', cert.config_id)
+                    .single();
+
+                if (!configError && configData) {
+                    // Merge config into metadata for display
+                    cert.metadata = {
+                        ...(cert.metadata || {}),
+                        ...configData.config
+                    };
+                    // Set template_id from config if not set
+                    if (!cert.template_id && configData.template_id) {
+                        cert.template_id = configData.template_id;
+                    }
+                }
+            } catch (configLoadErr) {
+                console.warn('Failed to load certificate config:', configLoadErr);
+                // Continue with basic cert data
+            }
+        }
+
+        return { success: true, data: cert as Certificate };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tải chứng nhận' };
     }
 }
 
@@ -2740,6 +2792,122 @@ async function deleteCertificate(id: string): Promise<ApiResponse<void>> {
         return { success: true, message: 'Đã xóa chứng nhận' };
     } catch (err) {
         return { success: false, error: 'Lỗi xóa chứng nhận' };
+    }
+}
+
+/**
+ * Láy danh sách các mẫu chứng nhận đã lưu (Certificate Presets/Configs)
+ */
+async function getCertificateConfigs(): Promise<ApiResponse<any[]>> {
+    try {
+        const { data, error } = await supabase
+            .from('certificate_configs')
+            .select('*')
+            .order('updated_at', { ascending: false });
+
+        if (error) throw error;
+        return { success: true, data: data || [] };
+    } catch (err: any) {
+        console.error('getCertificateConfigs error:', err);
+        return { success: false, error: err.message || 'Lỗi tải danh mục mẫu' };
+    }
+}
+
+/**
+ * Lưu mẫu chứng nhận mới hoặc cập nhật mẫu cũ
+ */
+async function saveCertificateConfig(data: {
+    id?: string;
+    name: string;
+    template_id: string;
+    config: any;
+    is_default?: boolean;
+}): Promise<ApiResponse<any>> {
+    try {
+        const user = getStoredUser();
+        const payload = {
+            ...data,
+            created_by: user?.id
+        };
+
+        const { data: result, error } = await supabase
+            .from('certificate_configs')
+            .upsert(payload)
+            .select()
+            .single();
+
+        if (error) throw error;
+        return { success: true, data: result };
+    } catch (err: any) {
+        console.error('saveCertificateConfig error:', err);
+        return { success: false, error: err.message || 'Lỗi lưu mẫu chứng nhận' };
+    }
+}
+
+/**
+ * Xóa mẫu chứng nhận
+ */
+async function deleteCertificateConfig(id: string): Promise<ApiResponse<{ usageCount?: number }>> {
+    try {
+        // First check if any certificates are using this config
+        const { count, error: countError } = await supabase
+            .from('certificates')
+            .select('*', { count: 'exact', head: true })
+            .eq('config_id', id);
+
+        if (countError) {
+            console.warn('Could not count certificates using config:', countError);
+        }
+
+        const usageCount = count || 0;
+
+        // Proceed to delete (ON DELETE SET NULL will handle references)
+        const { error } = await supabase
+            .from('certificate_configs')
+            .delete()
+            .eq('id', id);
+
+        if (error) throw error;
+        return { success: true, message: 'Đã xóa mẫu chứng nhận', data: { usageCount } };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi xóa mẫu' };
+    }
+}
+
+/**
+ * Count certificates using a specific config/preset
+ */
+async function countCertificatesByConfig(configId: string): Promise<ApiResponse<number>> {
+    try {
+        const { count, error } = await supabase
+            .from('certificates')
+            .select('*', { count: 'exact', head: true })
+            .eq('config_id', configId);
+
+        if (error) throw error;
+        return { success: true, data: count || 0 };
+    } catch (err: any) {
+        console.error('countCertificatesByConfig error:', err);
+        return { success: false, error: err.message, data: 0 };
+    }
+}
+
+/**
+ * Lấy top học sinh tiêu biểu theo tháng (Dựa trên điểm số tích lũy trong tháng)
+ */
+async function getTopStudentsByMonth(month: number, year: number, limit: number = 10): Promise<ApiResponse<any[]>> {
+    try {
+        const { data, error } = await supabase.rpc('get_top_students_by_month', {
+            p_month: month,
+            p_year: year,
+            p_limit: limit
+        });
+
+        if (error) throw error;
+        return { success: true, data: data || [] };
+    } catch (err: any) {
+        console.error('getTopStudentsByMonth error:', err);
+        return { success: false, error: err.message || 'Lỗi tải danh sách top học sinh' };
     }
 }
 
@@ -3137,9 +3305,15 @@ export const dataService = {
 
     // Certificates
     getCertificates,
+    getCertificateById,
+    getTopStudentsByMonth,
     createCertificate,
     createCertificatesBulk,
     deleteCertificate,
+    getCertificateConfigs,
+    saveCertificateConfig,
+    deleteCertificateConfig,
+    countCertificatesByConfig,
 
     // Exit Permissions - Đơn xin phép ra ngoài
     getExitPermissions,

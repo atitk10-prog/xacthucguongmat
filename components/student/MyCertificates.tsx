@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Award, Calendar, Download, Eye, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Award, Calendar, Download, Eye, X, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { dataService } from '../../services/dataService';
 import { User, Certificate } from '../../types';
 import { getTemplateComponent } from '../../services/certificateExportService';
@@ -12,6 +12,7 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
     const [certificates, setCertificates] = useState<Certificate[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedCert, setSelectedCert] = useState<Certificate | null>(null);
+    const [loadingCertDetail, setLoadingCertDetail] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
     const itemsPerPage = 6;
 
@@ -37,8 +38,27 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
     const totalPages = Math.ceil(certificates.length / itemsPerPage);
     const paginatedCerts = certificates.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-    const handlePreview = (cert: Certificate) => {
-        setSelectedCert(cert);
+    const handlePreview = async (cert: Certificate) => {
+        // Load full certificate with metadata if not already loaded
+        if (!cert.metadata) {
+            setLoadingCertDetail(true);
+            try {
+                const fullCert = await dataService.getCertificateById(cert.id);
+                if (fullCert.success && fullCert.data) {
+                    setSelectedCert(fullCert.data);
+                } else {
+                    // Fallback to basic cert if full load fails
+                    setSelectedCert(cert);
+                }
+            } catch (err) {
+                console.error('Failed to load certificate details:', err);
+                setSelectedCert(cert);
+            } finally {
+                setLoadingCertDetail(false);
+            }
+        } else {
+            setSelectedCert(cert);
+        }
     };
 
     return (
@@ -150,8 +170,18 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
                 </div>
             )}
 
+            {/* Loading Modal */}
+            {loadingCertDetail && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-300">
+                    <div className="bg-white rounded-3xl p-12 shadow-2xl flex flex-col items-center gap-4">
+                        <Loader2 className="w-12 h-12 text-indigo-600 animate-spin" />
+                        <p className="text-slate-600 font-bold">Đang tải chứng nhận...</p>
+                    </div>
+                </div>
+            )}
+
             {/* Preview Modal */}
-            {selectedCert && (
+            {selectedCert && !loadingCertDetail && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md animate-in fade-in duration-300">
                     <div className="bg-white rounded-[3rem] w-full max-w-5xl max-h-[92vh] shadow-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-500">
                         <div className="p-8 border-b border-slate-100 flex justify-between items-center bg-indigo-50/30">
