@@ -538,39 +538,57 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     </div>
                 )}
                 {checkinMode === 'face' ? <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" /> :
-                    <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900">
-                        <div id="qr-reader" className="w-full max-w-md"></div>
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 overflow-hidden">
+                        <div id="qr-reader" className="w-full max-w-md overflow-hidden rounded-2xl"></div>
                         {checkinMode === 'qr' && (
                             <button onClick={() => switchCheckinMode('qr', cameraFacing === 'environment' ? 'user' : 'environment')} className="absolute bottom-4 right-4 p-2 bg-slate-800 rounded-full text-white"><FlipHorizontal2 /></button>
                         )}
                     </div>}
 
-                {/* Face detection overlay - ONLY show in face mode */}
-                {checkinMode === 'face' && (
-                    <div className="absolute inset-0 pointer-events-none p-2 md:p-4 flex flex-col justify-center items-center">
-                        {/* AI Status Badge */}
-                        <div className={`absolute top-2 left-2 px-2 py-1 rounded-lg text-[10px] font-bold ${modelsReady && studentsLoaded ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
-                            {modelsReady && studentsLoaded ? '🤖 AI Sẵn sàng' : '⏳ Đang tải AI...'}
+                {/* Face & QR detection frame - Premium Style */}
+                <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-center items-center z-10">
+                    {/* Professional Scan Frame */}
+                    <div className="relative w-full aspect-square max-w-[260px] md:max-w-[320px]">
+                        {/* Radar Scan Animation inside the frame */}
+                        <div className="absolute inset-0 overflow-hidden rounded-[3rem] opacity-30">
+                            <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
                         </div>
 
-                        {/* Guidance text - smaller on mobile */}
-                        <div className={`absolute top-10 md:top-12 px-3 md:px-4 py-1 md:py-1.5 rounded-full font-bold text-xs md:text-sm backdrop-blur-md border ${faceDetected ? (stabilityProgress >= 100 ? 'bg-emerald-600/90 border-emerald-400' : 'bg-red-600/90 border-red-400') : 'bg-slate-900/60 border-white/10'} text-white transition-all duration-300`}>
-                            {guidance}
+                        {/* Main Frame Border - Only show in Face mode or as requested */}
+                        {checkinMode === 'face' && (
+                            <div className={`absolute inset-0 border-2 rounded-[3.5rem] transition-all duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500/60 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : faceDetected ? 'border-red-500/60 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'border-white/10'}`}></div>
+                        )}
+
+                        {/* Corners - Only show in Face mode for a cleaner QR look */}
+                        {checkinMode === 'face' && (
+                            <>
+                                <div className={`absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 rounded-tl-[2rem] transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                                <div className={`absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 rounded-tr-[2rem] transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                                <div className={`absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 rounded-bl-[2rem] transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                                <div className={`absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 rounded-br-[2rem] transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                            </>
+                        )}
+
+                        {/* Status Badge Over the Frame */}
+                        <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-max">
+                            <div className={`px-4 py-1.5 rounded-full font-bold text-xs shadow-lg backdrop-blur-md border transition-all duration-300 ${faceDetected ? (stabilityProgress >= 100 ? 'bg-emerald-600/90 border-emerald-400 text-white' : 'bg-red-600/90 border-red-400 text-white') : (checkinMode === 'qr' ? 'bg-indigo-600/90 border-indigo-400 text-white' : 'bg-slate-900/60 border-white/10 text-white/80')}`}>
+                                {checkinMode === 'qr' ? (qrScannerActive ? '📱 Đưa mã QR vào khung' : '⏳ Khởi động quét QR...') : guidance}
+                            </div>
                         </div>
 
-                        {/* Face detection frame - smaller on mobile */}
-                        <div className={`w-48 h-48 md:w-64 md:h-64 border-4 rounded-[2rem] transition-all duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500 scale-105 shadow-[0_0_25px_rgba(16,185,129,0.5)]' : faceDetected ? 'border-red-500 shadow-[0_0_20px_rgba(239,68,68,0.3)]' : 'border-white/20'}`}></div>
+                        {/* Stability Progress Bar - Bottom of Frame */}
+                        {faceDetected && stabilityProgress < 100 && (
+                            <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-32 h-1.5 bg-black/40 rounded-full overflow-hidden border border-white/10">
+                                <div className="h-full bg-indigo-500 transition-all duration-100" style={{ width: `${stabilityProgress}%` }}></div>
+                            </div>
+                        )}
                     </div>
-                )}
 
-                {/* QR mode guidance - separate and simpler */}
-                {checkinMode === 'qr' && (
-                    <div className="absolute top-2 left-0 right-0 flex justify-center pointer-events-none">
-                        <div className="px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-600/90 text-white backdrop-blur-md border border-emerald-400">
-                            📱 Đưa mã QR vào khung hình
-                        </div>
+                    {/* AI Ready Indicator - Separate */}
+                    <div className={`mt-16 px-3 py-1 rounded-xl text-[10px] font-bold backdrop-blur-md transition-all duration-500 ${modelsReady && studentsLoaded ? 'bg-emerald-500/10 text-emerald-400/70 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400/70 border border-amber-500/20'}`}>
+                        {modelsReady && studentsLoaded ? '🤖 AI Sẵn sàng' : '⏳ Đang tải AI...'}
                     </div>
-                )}
+                </div>
 
                 <button onClick={() => setShowConfigModal(true)} className="absolute top-2 right-2 md:top-4 md:right-4 z-50 p-1.5 md:p-2 bg-slate-800/50 rounded-full text-slate-400"><Settings className="w-4 h-4 md:w-5 md:h-5" /></button>
             </div>

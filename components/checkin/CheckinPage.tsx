@@ -576,6 +576,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         if (newFacing) setCameraFacing(newFacing);
         setCheckinMode(mode);
         setGuidance(mode === 'qr' ? 'Đang mở camera QR...' : 'Đang khởi động AI...');
+        setRecognizedPerson(null);
+        recognizedPersonRef.current = null;
 
         // STEP 2: Wait longer for camera to fully release (600ms instead of 400ms)
         await new Promise(resolve => setTimeout(resolve, 600));
@@ -958,6 +960,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         }
 
         setIsProcessing(true);
+        setNotification(null); // Clear previous notifications to avoid conflicts
 
         // OPTIMISTIC UPDATE: Add to cooldown immediately to prevent double-submit loop from rapid frames
         checkinCooldownsRef.current.set(checkInUserId, Date.now());
@@ -1454,30 +1457,46 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 {modelsReady && facesLoaded ? '🤖 AI Sẵn sàng' : '⏳ Đang tải AI...'}
                             </div>
 
-                            {/* Guidance Text - TOP CENTER */}
+                            {/* Guidance Text - Below Header */}
                             {guidance && (
-                                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full text-xs font-bold bg-black/60 text-white backdrop-blur-md border border-white/10">
+                                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full text-xs font-bold bg-black/60 text-white backdrop-blur-md border border-white/10 shadow-xl">
                                     {guidance}
                                 </div>
                             )}
 
-                            {/* Centered Scan Frame for Mobile */}
-                            <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-center p-8 pointer-events-none md:hidden">
-                                <div className="w-full aspect-square max-w-[280px] border-2 border-white/10 rounded-[40px] relative">
-                                    <div className="absolute -top-1 -left-1 w-12 h-12 border-t-4 border-l-4 border-indigo-500 rounded-tl-[32px]"></div>
-                                    <div className="absolute -top-1 -right-1 w-12 h-12 border-t-4 border-r-4 border-indigo-500 rounded-tr-[32px]"></div>
-                                    <div className="absolute -bottom-1 -left-1 w-12 h-12 border-b-4 border-l-4 border-indigo-500 rounded-bl-[32px]"></div>
-                                    <div className="absolute -bottom-1 -right-1 w-12 h-12 border-b-4 border-r-4 border-indigo-500 rounded-br-[32px]"></div>
+                            {/* Centered Scan Frame - Professional Fixed Unified Frame */}
+                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
+                                <div className="w-full aspect-square max-w-[280px] md:max-w-[340px] relative">
+                                    {/* Radar Animation */}
+                                    <div className="absolute inset-0 overflow-hidden rounded-[40px] md:rounded-[50px] opacity-20 pointer-events-none">
+                                        <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
+                                    </div>
 
-                                    {/* Animated scan line */}
-                                    <div className="absolute inset-x-4 top-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-scan opacity-40"></div>
+                                    {/* Main Frame Border - Dynamic Colors */}
+                                    <div className={`absolute inset-0 border-2 rounded-[40px] md:rounded-[50px] transition-all duration-300 ${isProcessing ? 'border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.2)]' : (recognizedPerson && faceDetected) ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)]' : faceDetected ? 'border-red-500/50 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'border-white/10'}`}></div>
+
+                                    {/* Corners - Top Left */}
+                                    <div className={`absolute -top-1 -left-1 w-12 h-12 border-t-4 border-l-4 rounded-tl-[32px] transition-colors duration-300 ${isProcessing ? 'border-amber-500' : (recognizedPerson && faceDetected) ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                                    {/* Corners - Top Right */}
+                                    <div className={`absolute -top-1 -right-1 w-12 h-12 border-t-4 border-r-4 rounded-tr-[32px] transition-colors duration-300 ${isProcessing ? 'border-amber-500' : (recognizedPerson && faceDetected) ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                                    {/* Corners - Bottom Left */}
+                                    <div className={`absolute -bottom-1 -left-1 w-12 h-12 border-b-4 border-l-4 rounded-bl-[32px] transition-colors duration-300 ${isProcessing ? 'border-amber-500' : (recognizedPerson && faceDetected) ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                                    {/* Corners - Bottom Right */}
+                                    <div className={`absolute -bottom-1 -right-1 w-12 h-12 border-b-4 border-r-4 rounded-br-[32px] transition-colors duration-300 ${isProcessing ? 'border-amber-500' : (recognizedPerson && faceDetected) ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+
+                                    {/* Animated scan line (Traditional) */}
+                                    <div className="absolute inset-x-4 top-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-scan opacity-30"></div>
                                 </div>
                             </div>
                             <canvas ref={canvasRef} className="hidden" />
                         </>
                     ) : (
-                        <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-slate-950">
+                        <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-slate-950 overflow-hidden">
                             <div className="w-full max-w-md aspect-square rounded-[40px] overflow-hidden border-2 border-white/5 relative shadow-2xl group">
+                                {/* Radar Animation for QR */}
+                                <div className="absolute inset-0 overflow-hidden rounded-[40px] opacity-10 pointer-events-none z-0">
+                                    <div className="radar-beam" style={{ animationDuration: '3s' }}></div>
+                                </div>
                                 {/* Decorative corners for QR area */}
                                 <div className="absolute inset-x-0 inset-y-0 z-10 pointer-events-none p-12">
                                     <div className="w-full h-full border-2 border-white/10 border-dashed rounded-[32px] flex items-center justify-center">
@@ -1492,6 +1511,12 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 </div>
 
                                 <div id="qr-reader-event" className="w-full h-full bg-black"></div>
+
+                                {/* Premium Corner Accents for QR - To match Boarding */}
+                                <div className="absolute -top-1 -left-1 w-12 h-12 border-t-4 border-l-4 border-emerald-500 rounded-tl-[32px] z-20"></div>
+                                <div className="absolute -top-1 -right-1 w-12 h-12 border-t-4 border-r-4 border-emerald-500 rounded-tr-[32px] z-20"></div>
+                                <div className="absolute -bottom-1 -left-1 w-12 h-12 border-b-4 border-l-4 border-emerald-500 rounded-bl-[32px] z-20"></div>
+                                <div className="absolute -bottom-1 -right-1 w-12 h-12 border-b-4 border-r-4 border-emerald-500 rounded-br-[32px] z-20"></div>
                             </div>
 
                             <div className="mt-12 text-center animate-fade-in space-y-3">
@@ -1530,33 +1555,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     )}
                 </div>
 
-                {/* Dynamic Face Tracking Box */}
-                {checkinMode === 'face' && faceBox && (
-                    <div
-                        className={`absolute border-2 rounded-2xl transition-all duration-200 ease-out ${isProcessing ? 'border-amber-500 shadow-[0_0_30px_rgba(245,158,11,0.3)] animate-pulse' :
-                            faceDetected ? 'border-indigo-500 shadow-[0_0_40px_rgba(99,102,241,0.4)]' : 'border-white/20'
-                            }`}
-                        style={{
-                            top: `${faceBox.y}px`,
-                            left: `${faceBox.x}px`,
-                            width: `${faceBox.width}px`,
-                            height: `${faceBox.height}px`
-                        }}
-                    >
-                        {/* More modern tracking corners */}
-                        <div className="absolute -top-1 -left-1 w-6 h-6 border-t-[3px] border-l-[3px] border-indigo-400 rounded-tl-xl transition-all duration-300"></div>
-                        <div className="absolute -top-1 -right-1 w-6 h-6 border-t-[3px] border-r-[3px] border-indigo-400 rounded-tr-xl transition-all duration-300"></div>
-                        <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-[3px] border-l-[3px] border-indigo-400 rounded-bl-xl transition-all duration-300"></div>
-                        <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-[3px] border-r-[3px] border-indigo-400 rounded-br-xl transition-all duration-300"></div>
-
-                        {/* Person Name Floating Badge */}
-                        {recognizedPerson && faceDetected && !isProcessing && (
-                            <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-indigo-600 px-4 py-1.5 rounded-full shadow-2xl animate-bounce-subtle border border-indigo-400/30">
-                                <span className="text-white text-xs font-black whitespace-nowrap">{recognizedPerson.name}</span>
-                            </div>
-                        )}
-                    </div>
-                )}
+                {/* Dynamic Face Tracking Box REMOVED - Using Fixed Unified Frame above */}
 
                 {/* Status badges - LEFT CORNER */}
                 <div className="absolute top-20 md:top-24 left-4 md:left-6 flex flex-col items-start gap-2.5 md:gap-4 z-[90] pointer-events-none">
@@ -1609,22 +1608,19 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     )}
                 </div>
 
-                {/* ALERTS & RESULTS - CENTER SCREEN */}
-                {/* ALERTS & RESULTS - TOP CENTER - LOWERED ON MOBILE */}
-                <div className="absolute top-36 md:top-32 left-1/2 -translate-x-1/2 flex flex-col items-center gap-4 z-20 w-full max-w-sm px-6 pointer-events-none">
+                {/* ALERTS & RESULTS - CENTERED ABOVE SCAN FRAME */}
+                <div className="absolute top-[18%] md:top-[15%] left-1/2 -translate-x-1/2 flex flex-col items-center gap-4 z-20 w-full max-w-sm px-6 pointer-events-none transition-all duration-500">
 
-                    {/* Recognized Person Badge */}
+                    {/* Recognized Person Badge - Smaller on Mobile */}
                     {recognizedPerson && faceDetected && !isProcessing && !showSuccessOverlay && (
-                        <div className="px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl text-white shadow-lg animate-scale-in">
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
-                                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                                    </svg>
+                        <div className="px-4 py-2 bg-gradient-to-r from-indigo-600/90 to-purple-600/90 backdrop-blur-xl rounded-2xl text-white shadow-xl animate-scale-in border border-white/20">
+                            <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 bg-white/20 rounded-lg flex items-center justify-center border border-white/30">
+                                    <UserIcon className="w-5 h-5" />
                                 </div>
                                 <div>
-                                    <p className="font-black text-lg">{recognizedPerson.name}</p>
-                                    <p className="text-white/70 text-xs">Độ chính xác: {Math.round(recognizedPerson.confidence)}%</p>
+                                    <p className="font-black text-sm md:text-lg tracking-tight">{recognizedPerson.name}</p>
+                                    <p className="text-white/70 text-[10px]">Độ chính xác: {Math.round(recognizedPerson.confidence)}%</p>
                                 </div>
                             </div>
                         </div>
