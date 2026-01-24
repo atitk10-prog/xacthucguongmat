@@ -165,6 +165,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     const [lastReportedCheckinId, setLastReportedCheckinId] = useState<string | null>(null);
     const lastReportedCheckinIdRef = useRef<string | null>(null);
 
+    // Network & Sync status
+    const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+    const [pendingSyncCount, setPendingSyncCount] = useState(0);
+
     // Ref to track if success overlay is active (to silence redundant alerts)
     const successActiveRef = useRef(false);
     useEffect(() => {
@@ -174,14 +178,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     // Unified function to add check-in to list without duplicates
     const addUniqueCheckin = (checkin: any) => {
         setRecentCheckins(prev => {
-            const alreadyExists = prev.some(c =>
-                ((c as any).participant_id && (c as any).participant_id === checkin.participant_id) ||
-                ((c as any).user_id && checkin.user_id && (c as any).user_id === checkin.user_id) ||
-                (c.name === checkin.name && !checkin.user_id)
-            );
+            // Check for various forms of identity to prevent duplication
+            const alreadyExists = prev.some(c => {
+                const sameUserId = (c as any).user_id && checkin.user_id && (c as any).user_id === checkin.user_id;
+                const sameParticipantId = (c as any).participant_id && checkin.participant_id && (c as any).participant_id === checkin.participant_id;
+                const sameNameAndTime = c.name === checkin.name && c.time === checkin.time;
+
+                return sameUserId || sameParticipantId || sameNameAndTime;
+            });
 
             if (alreadyExists) {
-                console.log('⏭️ List update: Skipping (already exists)', checkin.name);
+                console.log('⏭️ List update: Skipping duplicate entry for', checkin.name);
                 return prev;
             }
 
@@ -312,6 +319,33 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         };
 
         loadParticipantsAndFaces();
+
+        // Set initial sync count
+        setPendingSyncCount(dataService.getOfflineQueueLength());
+
+        // Network listeners
+        const handleOnline = () => {
+            setIsOnline(true);
+            dataService.syncOfflineData().then(() => {
+                setPendingSyncCount(dataService.getOfflineQueueLength());
+            });
+        };
+        const handleOffline = () => setIsOnline(false);
+
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+
+        // Sync count checker interval
+        const syncInterval = setInterval(() => {
+            const count = dataService.getOfflineQueueLength();
+            if (count !== pendingSyncCount) setPendingSyncCount(count);
+        }, 3000);
+
+        return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+            clearInterval(syncInterval);
+        };
     }, [event?.id, modelsReady]);
 
     // OPTIMIZED: Load existing check-ins (limit 15) + REALTIME SYNC
@@ -950,6 +984,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             }
 
             const participant = participants.find(p => p.id === checkInUserId);
+            const displayAvatar = participant?.avatar_url || undefined;
 
             const checkinResult = await dataService.checkin({
                 event_id: event.id,
@@ -961,38 +996,44 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             });
 
             if (checkinResult.success && checkinResult.data) {
-                playSound('success');
-                console.log('Check-in SUCCESS:', checkinResult);
+                if (checkinResult.alreadyExists) {
+                    console.log('ℹ️ User already checked in');
+                    setResult({
+                        success: true,
+                        message: `Bạn đã check-in rồi!`,
+                        capturedImage: displayAvatar,
+                        userName: checkInUserName
+                    });
+                    // Don't add to recent checkins list
+                } else {
+                    playSound('success');
+                    console.log('Check-in SUCCESS:', checkinResult);
 
-                // Find participant to get avatar
-                const participant = participants.find(p => p.id === checkInUserId);
-                const displayAvatar = participant?.avatar_url || undefined;
+                    setResult({
+                        success: true,
+                        message: `Check-in lúc ${new Date().toLocaleTimeString('vi-VN')}`,
+                        checkin: checkinResult.data.checkin,
+                        capturedImage: displayAvatar,
+                        userName: checkInUserName
+                    });
 
-                setResult({
-                    success: true,
-                    message: `Check-in lúc ${new Date().toLocaleTimeString('vi-VN')}`, // Removed 'match %'
-                    checkin: checkinResult.data.checkin,
-                    capturedImage: displayAvatar, // Use avatar for success screen
-                    userName: checkInUserName
-                });
-
-                // Update recent checkins list for right sidebar
-                // Update recent checkins list via Helper
-                addUniqueCheckin({
-                    name: checkInUserName,
-                    time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
-                    image: displayAvatar,
-                    status: checkinResult.data.checkin.status,
-                    full_name: participant?.full_name,
-                    organization: participant?.organization,
-                    student_code: (participant as any).student_code,
-                    birth_date: participant?.birth_date
-                        ? (isNaN(new Date(participant.birth_date).getTime()) ? participant.birth_date : new Date(participant.birth_date).toLocaleDateString('vi-VN'))
-                        : 'N/A',
-                    points: checkinResult.data.checkin.points_earned,
-                    participant_id: checkInUserId,
-                    user_id: participant?.user_id
-                });
+                    // Update recent checkins list via Helper
+                    addUniqueCheckin({
+                        name: checkInUserName,
+                        time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
+                        image: displayAvatar,
+                        status: checkinResult.data.checkin.status,
+                        full_name: participant?.full_name,
+                        organization: participant?.organization,
+                        student_code: (participant as any).student_code,
+                        birth_date: participant?.birth_date
+                            ? (isNaN(new Date(participant.birth_date).getTime()) ? participant.birth_date : new Date(participant.birth_date).toLocaleDateString('vi-VN'))
+                            : 'N/A',
+                        points: checkinResult.data.checkin.points_earned,
+                        participant_id: checkInUserId,
+                        user_id: participant?.user_id
+                    });
+                }
 
                 // Add to cooldown to prevent duplicate check-in attempts (Set BOTH)
                 const now = Date.now();
@@ -1268,6 +1309,21 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         <ChevronLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
                         <span>Quay lại</span>
                     </button>
+
+                    <div className="flex-1 flex justify-center items-center gap-4">
+                        {!isOnline && (
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-2xl text-[10px] font-black animate-pulse">
+                                <AlertTriangle className="w-3.5 h-3.5" />
+                                OFFLINE
+                            </div>
+                        )}
+                        {pendingSyncCount > 0 && (
+                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-2xl text-[10px] font-black">
+                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                {pendingSyncCount} CHỜ XỬ LÝ
+                            </div>
+                        )}
+                    </div>
 
                     <div className="flex items-center gap-2">
                         {/* Hybrid Mode Toggle - PREMIUM STYLE */}

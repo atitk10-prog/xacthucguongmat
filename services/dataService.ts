@@ -35,6 +35,25 @@ function getOfflineQueue(): OfflineRecord[] {
 
 function addToOfflineQueue(record: Omit<OfflineRecord, 'id' | 'timestamp'>): void {
     const queue = getOfflineQueue();
+
+    // Duplication Check: Prevent adding the exact same check-in/attendance twice while offline
+    const isDuplicate = queue.some(item => {
+        if (item.type !== record.type) return false;
+        if (record.type === 'attendance') {
+            return item.data.userId === record.data.userId && item.data.slotId === record.data.slotId;
+        }
+        if (record.type === 'checkin') {
+            return (item.data.user_id && item.data.user_id === record.data.user_id && item.data.event_id === record.data.event_id) ||
+                (item.data.participant_id && item.data.participant_id === record.data.participant_id && item.data.event_id === record.data.event_id);
+        }
+        return JSON.stringify(item.data) === JSON.stringify(record.data);
+    });
+
+    if (isDuplicate) {
+        console.warn(`📦 [Offline] Duplicate record ignored for type ${record.type}`);
+        return;
+    }
+
     queue.push({
         ...record,
         id: `offline_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
@@ -44,8 +63,23 @@ function addToOfflineQueue(record: Omit<OfflineRecord, 'id' | 'timestamp'>): voi
     console.log(`📦 [Offline] Added record to queue. Current size: ${queue.length}`);
 }
 
+function isDuplicatePending(type: OfflineRecord['type'], data: any): boolean {
+    const queue = getOfflineQueue();
+    return queue.some(item => {
+        if (item.type !== type) return false;
+        if (type === 'attendance') {
+            return item.data.userId === data.userId && item.data.slotId === data.slotId;
+        }
+        if (type === 'checkin') {
+            return (item.data.user_id && item.data.user_id === data.user_id && item.data.event_id === data.event_id) ||
+                (item.data.participant_id && item.data.participant_id === data.participant_id && item.data.event_id === data.event_id);
+        }
+        return JSON.stringify(item.data) === JSON.stringify(data);
+    });
+}
+
 async function syncOfflineData(): Promise<{ success: number; failed: number }> {
-    if (!navigator.onLine) return { success: 0, failed: 0 };
+    if (typeof navigator !== 'undefined' && !navigator.onLine) return { success: 0, failed: 0 };
 
     const queue = getOfflineQueue();
     if (queue.length === 0) return { success: 0, failed: 0 };
@@ -55,6 +89,7 @@ async function syncOfflineData(): Promise<{ success: number; failed: number }> {
     let failedCount = 0;
     const remainingQueue: OfflineRecord[] = [];
 
+    // Process one by one to avoid overwhelming or race conditions
     for (const record of queue) {
         try {
             let res: any;
@@ -62,18 +97,33 @@ async function syncOfflineData(): Promise<{ success: number; failed: number }> {
                 res = await checkin(record.data);
             } else if (record.type === 'point_log') {
                 res = await addPoints(record.data.userId, record.data.points, record.data.reason, record.data.type, record.data.eventId);
+            } else if (record.type === 'attendance') {
+                res = await boardingCheckin(record.data.userId, record.data.slotId, record.data.status);
             }
 
-            if (res.success) successCount++;
-            else remainingQueue.push(record);
+            if (res && res.success) {
+                successCount++;
+            } else {
+                remainingQueue.push(record);
+            }
         } catch (e) {
+            console.error(`❌ [Offline] Sync error for record ${record.id}:`, e);
             failedCount++;
             remainingQueue.push(record);
         }
     }
 
     localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(remainingQueue));
+
+    if (successCount > 0) {
+        console.log(`✅ [Offline] Synced ${successCount} records. ${remainingQueue.length} remaining.`);
+    }
+
     return { success: successCount, failed: failedCount };
+}
+
+function getOfflineQueueLength(): number {
+    return getOfflineQueue().length;
 }
 
 // Listen for network changes
@@ -126,6 +176,7 @@ interface ApiResponse<T> {
     data?: T;
     error?: string;
     message?: string;
+    alreadyExists?: boolean;
 }
 
 // =====================================================
@@ -1003,6 +1054,41 @@ async function checkin(data: {
             return { success: false, error: 'Thiếu thông tin người điểm danh' };
         }
 
+        // OFFLINE SUPPORT
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+            if (isDuplicatePending('checkin', data)) {
+                return {
+                    success: true,
+                    message: 'Bạn đã check-in rồi (Offline)',
+                    alreadyExists: true
+                } as any;
+            }
+            console.log(`📡 [Offline] No network. Queuing event check-in for id: ${data.user_id || data.participant_id}`);
+            addToOfflineQueue({
+                type: 'checkin',
+                data: data
+            });
+
+            // Return a "pseudo-success" structure
+            return {
+                success: true,
+                message: 'Đã lưu ngoại tuyến. Sẽ đồng bộ khi có mạng.',
+                alreadyExists: false,
+                data: {
+                    checkin: {
+                        id: `offline_${Date.now()}`,
+                        event_id: data.event_id,
+                        user_id: data.user_id || '',
+                        participant_id: data.participant_id || '',
+                        checkin_time: new Date().toISOString(),
+                        status: 'on_time', // Assume on_time, will be corrected on server
+                        points_earned: 0
+                    } as any,
+                    event: { id: data.event_id, start_time: new Date().toISOString() } as any
+                }
+            } as any;
+        }
+
         // Get event first
         const { data: event, error: eventError } = await supabase
             .from('events')
@@ -1530,7 +1616,49 @@ async function boardingCheckin(
         const today = getTodayDateStr();
         const now = new Date().toISOString();
 
-        // 1. Lưu vào bảng log duy nhất (boarding_attendance)
+        // OFFLINE SUPPORT
+        if (typeof navigator !== 'undefined' && !navigator.onLine) {
+            if (isDuplicatePending('attendance', { userId, slotId, status })) {
+                return {
+                    success: true,
+                    message: 'Bạn đã điểm danh rồi (Offline)',
+                    alreadyExists: true
+                };
+            }
+            console.log(`📡 [Offline] No network. Queuing check-in for ${userId} in slot ${slotId}`);
+            addToOfflineQueue({
+                type: 'attendance',
+                data: { userId, slotId, status }
+            });
+            // Return a "pseudo-success" for the UI to proceed
+            return {
+                success: true,
+                message: 'Đã lưu ngoại tuyến. Sẽ đồng bộ khi có mạng.',
+                alreadyExists: false,
+                data: { id: `offline_${Date.now()}`, user_id: userId, slot_id: slotId, date: today, checkin_time: now, status }
+            };
+        }
+
+        // 1. Kiểm tra xem đã có bản ghi điểm danh cho slot này hôm nay chưa
+        const { data: existingAttendance } = await supabase
+            .from('boarding_attendance')
+            .select('*')
+            .eq('user_id', userId)
+            .eq('slot_id', slotId)
+            .eq('date', today)
+            .maybeSingle();
+
+        if (existingAttendance) {
+            console.log(`ℹ️ [BoardingCheckin] User ${userId} already checked in for slot ${slotId} today.`);
+            return {
+                success: true,
+                message: 'Bạn đã điểm danh rồi',
+                data: existingAttendance,
+                alreadyExists: true
+            };
+        }
+
+        // 2. Lưu vào bảng log duy nhất (boarding_attendance)
         const { data: attendanceData, error: attendanceError } = await supabase
             .from('boarding_attendance')
             .upsert({
@@ -1547,7 +1675,7 @@ async function boardingCheckin(
 
         if (attendanceError) return { success: false, error: attendanceError.message };
 
-        // 2. Xử lý trừ điểm nếu đi muộn (Chỉ trừ nếu chưa có log điểm danh cho slot này trước đó)
+        // 3. Xử lý trừ điểm nếu đi muộn
         if (status === 'late') {
             // Kiểm tra xem đã trừ điểm cho slot này hôm nay chưa
             // Vì có thể chưa có cột date, ta kiểm tra theo created_at trong khoảng hôm nay
@@ -1610,7 +1738,7 @@ async function getBoardingCheckins(options?: {
             .from('boarding_attendance')
             .select(`
                 *,
-                user:users!user_id(full_name, student_code, organization),
+                user:users!user_id(full_name, student_code, organization, avatar_url),
                 slot:boarding_time_slots!slot_id(name, start_time, end_time)
             `)
             .order('date', { ascending: false });
@@ -1671,6 +1799,56 @@ async function getBoardingCheckins(options?: {
     }
 }
 
+/**
+ * Lấy danh sách điểm danh thô (không nhóm) cho một ngày và/hoặc slot cụ thể
+ */
+async function getRecentBoardingActivity(options?: {
+    date?: string;
+    slotId?: string;
+    limit?: number;
+}): Promise<ApiResponse<any[]>> {
+    try {
+        let query = supabase
+            .from('boarding_attendance')
+            .select(`
+                id,
+                checkin_time,
+                status,
+                user:users!user_id(id, full_name, avatar_url),
+                slot:boarding_time_slots!slot_id(id, name)
+            `)
+            .order('checkin_time', { ascending: false });
+
+        if (options?.date) query = query.eq('date', options.date);
+        if (options?.slotId) query = query.eq('slot_id', options.slotId);
+        if (options?.limit) query = query.limit(options.limit);
+        else query = query.limit(20);
+
+        const { data, error } = await query;
+        if (error) return { success: false, error: error.message };
+
+        return {
+            success: true,
+            data: data.map(log => {
+                const user = Array.isArray(log.user) ? log.user[0] : log.user;
+                const slot = Array.isArray(log.slot) ? log.slot[0] : log.slot;
+
+                return {
+                    id: log.id,
+                    user_id: user?.id,
+                    name: user?.full_name || 'Học sinh',
+                    avatar: user?.avatar_url,
+                    time: log.checkin_time,
+                    status: log.status,
+                    slot_name: slot?.name
+                };
+            })
+        };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tải danh sách check-in' };
+    }
+}
+
 // =====================================================
 // BOARDING TIME SLOTS API - Khung giờ check-in linh hoạt
 // =====================================================
@@ -1680,6 +1858,7 @@ interface ApiResponse<T> {
     data?: T;
     error?: string;
     message?: string;
+    alreadyExists?: boolean;
 }
 
 /**
@@ -2912,10 +3091,12 @@ export const dataService = {
 
     // Boarding Check-in
     boardingCheckin,
+    syncOfflineData,
+    getOfflineQueueLength,
     getBoardingCheckins,
+    getRecentBoardingActivity,
     getBoardingConfig,
     updateBoardingConfig,
-    syncOfflineData,
     getTeacherPermissions,
     subscribeToTeacherPermissions,
     updateTeacherPermission,
