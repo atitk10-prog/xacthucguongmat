@@ -204,7 +204,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 setCameraError('Thất bại khi khởi động camera QR.');
             }
         } else {
-            setGuidance('Đang khởi động AI...');
+            setGuidance(modelsReady && studentsLoaded ? 'Đang tìm khuôn mặt...' : 'Đang khởi động AI...');
             setCameraError(null);
             // startFaceCamera will be triggered by useEffect
         }
@@ -227,7 +227,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 await videoRef.current.play();
             }
             setCameraError(null);
-            setGuidance('Đang tìm khuôn mặt...');
+            setGuidance(modelsReady && studentsLoaded ? 'Đang tìm khuôn mặt...' : 'Đang khởi động AI...');
         } catch (e) {
             console.error('Face camera failed:', e);
             setCameraError('Không thể mở camera. Kiểm tra quyền truy cập.');

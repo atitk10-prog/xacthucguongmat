@@ -575,7 +575,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         const facing = newFacing || cameraFacing;
         if (newFacing) setCameraFacing(newFacing);
         setCheckinMode(mode);
-        setGuidance(mode === 'qr' ? 'Đang mở camera QR...' : 'Đang khởi động AI...');
+        setGuidance(mode === 'qr' ? 'Đang mở camera QR...' : (modelsReady && facesLoaded ? 'Đang tìm khuôn mặt...' : 'Đang khởi động AI...'));
         setRecognizedPerson(null);
         recognizedPersonRef.current = null;
 
