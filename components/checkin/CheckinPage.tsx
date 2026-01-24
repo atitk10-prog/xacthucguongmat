@@ -559,9 +559,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         await handleCheckIn(participant, 100);
     };
 
-    // Switch mode logic
+    // Switch mode logic - IMPROVED with retry and longer delay
     const switchCheckinMode = async (mode: 'face' | 'qr', newFacing?: 'environment' | 'user') => {
-        // Stop ALL active scanners first to prevent conflicts
+        // STEP 1: Stop ALL active scanners first to prevent conflicts
         try {
             await qrScannerService.stopScanner();
             setQrScannerActive(false);
@@ -569,38 +569,51 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             console.warn('Error stopping QR scanner:', e);
         }
 
-        // Stop face camera if switching to QR
-        if (mode === 'qr') {
-            stopFaceCamera();
-        }
+        // Always stop face camera when switching modes
+        stopFaceCamera();
 
         const facing = newFacing || cameraFacing;
         if (newFacing) setCameraFacing(newFacing);
-
         setCheckinMode(mode);
+        setGuidance(mode === 'qr' ? 'Đang mở camera QR...' : 'Đang khởi động AI...');
 
-        // Start QR scanner if switching to QR mode
+        // STEP 2: Wait longer for camera to fully release (600ms instead of 400ms)
+        await new Promise(resolve => setTimeout(resolve, 600));
+
+        // STEP 3: Start QR scanner if switching to QR mode (with retry)
         if (mode === 'qr') {
-            setTimeout(async () => {
-                try {
-                    await qrScannerService.startScanning(
-                        'qr-reader-event',
-                        (result) => {
-                            if (result.code) {
-                                handleQRCheckin(result.code);
-                            }
-                        },
-                        (error) => {
-                            console.error('QR Scanner error:', error);
-                        },
-                        facing
-                    );
-                    setQrScannerActive(true);
-                } catch (err) {
-                    console.error('Failed to start QR scanner:', err);
-                }
-            }, 400);
+            try {
+                await qrScannerService.startScanning(
+                    'qr-reader-event',
+                    (result) => {
+                        if (result.code) {
+                            handleQRCheckin(result.code);
+                        }
+                    },
+                    (error) => {
+                        console.error('QR Scanner error:', error);
+                        setGuidance('Lỗi camera: ' + error);
+                    },
+                    facing
+                );
+                setQrScannerActive(true);
+                setGuidance('Đưa mã QR vào khung hình...');
+            } catch (err) {
+                console.error('Failed to start QR scanner:', err);
+                setGuidance('Không thể mở camera QR. Đang thử lại...');
+                // Retry once after 1 second
+                setTimeout(async () => {
+                    try {
+                        await qrScannerService.startScanning('qr-reader-event', (res) => { if (res.code) handleQRCheckin(res.code); }, () => { }, facing);
+                        setQrScannerActive(true);
+                        setGuidance('Đưa mã QR vào khung hình...');
+                    } catch (e) {
+                        setGuidance('Camera không khả dụng. Vui lòng thử lại.');
+                    }
+                }, 1000);
+            }
         }
+        // Face camera will be started by useEffect when checkinMode === 'face'
     };
 
     // Initialize/Sync Camera Mode
@@ -1418,6 +1431,18 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 muted
                                 className="w-full h-full object-cover transform -scale-x-100 transition-opacity duration-700"
                             />
+
+                            {/* AI Status Badge - TOP LEFT */}
+                            <div className={`absolute top-4 left-4 z-30 px-3 py-1.5 rounded-xl text-xs font-bold backdrop-blur-md ${modelsReady && facesLoaded ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
+                                {modelsReady && facesLoaded ? '🤖 AI Sẵn sàng' : '⏳ Đang tải AI...'}
+                            </div>
+
+                            {/* Guidance Text - TOP CENTER */}
+                            {guidance && (
+                                <div className="absolute top-4 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full text-xs font-bold bg-black/60 text-white backdrop-blur-md border border-white/10">
+                                    {guidance}
+                                </div>
+                            )}
 
                             {/* Centered Scan Frame for Mobile */}
                             <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 flex items-center justify-center p-8 pointer-events-none md:hidden">
