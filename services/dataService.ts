@@ -101,9 +101,11 @@ async function syncOfflineData(): Promise<{ success: number; failed: number }> {
                 res = await boardingCheckin(record.data.userId, record.data.slotId, record.data.status);
             }
 
-            if (res && res.success) {
+            if (res && (res.success || res.alreadyExists || (res.error && (res.error.includes('already exists') || res.error.includes('đã check-in'))))) {
                 successCount++;
+                console.log(`✅ [Offline] Sync success for record ${record.id} (${record.type})`);
             } else {
+                console.warn(`⚠️ [Offline] Sync failed for record ${record.id}. Will retry. Error: ${res?.error}`);
                 remainingQueue.push(record);
             }
         } catch (e) {
@@ -1112,7 +1114,11 @@ async function checkin(data: {
         const { data: existingCheckin } = await query.single();
 
         if (existingCheckin) {
-            return { success: false, error: 'Bạn đã check-in sự kiện này rồi' };
+            return {
+                success: true,
+                message: 'Bạn đã check-in sự kiện này rồi',
+                alreadyExists: true
+            } as any;
         }
 
         // Calculate status
