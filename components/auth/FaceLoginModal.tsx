@@ -102,9 +102,9 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         if (!isOpen || !modelsReady || !usersLoaded || !videoRef.current || loginSuccess) return;
 
         let animationId: number;
-        const STABILITY_THRESHOLD = 400; // Optimized for speed (0.4s)
-        const PROCESSING_THROTTLE = 100; // ~10 FPS
-        const CONFIDENCE_THRESHOLD = 48; // Slightly more balanced sensitivity
+        const STABILITY_THRESHOLD = 300; // Faster auth (0.3s)
+        const PROCESSING_THROTTLE = 60; // ~16 FPS for smoother tracking
+        const CONFIDENCE_THRESHOLD = 42; // More practical sensitivity
 
         const loop = async () => {
             if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
@@ -113,7 +113,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             }
 
             if (isProcessingRef.current) {
-                setTimeout(() => { animationId = requestAnimationFrame(loop); }, 200);
+                setTimeout(() => { animationId = requestAnimationFrame(loop); }, 150);
                 return;
             }
 
@@ -125,14 +125,9 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             lastProcessedTimeRef.current = now;
 
             try {
-                const detections = await faceService.detectFaces(videoRef.current);
-                let primaryDetection = null;
-
-                if (detections.length > 0) {
-                    primaryDetection = detections.sort((a, b) =>
-                        (b.detection.box.width * b.detection.box.height) - (a.detection.box.width * a.detection.box.height)
-                    )[0];
-                }
+                // Optimized: Detect ONLY ONE face for login
+                const detections = await faceService.detectFaces(videoRef.current, true);
+                const primaryDetection = detections.length > 0 ? detections[0] : null;
 
                 const hasFace = !!primaryDetection;
                 setFaceDetected(hasFace);

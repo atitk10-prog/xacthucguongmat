@@ -408,7 +408,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         let animationId: number;
         // FAST CHECK-IN: Reduced from 1200ms to 200ms for high volume
         const STABILITY_THRESHOLD = 200;
-        const PROCESSING_THROTTLE = 80; // ~12 FPS, good balance
+        const PROCESSING_THROTTLE = 60; // 16 FPS
 
         const loop = async () => {
             if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
@@ -420,7 +420,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             if (isProcessingRef.current) {
                 setGuidance('Đang xử lý...');
                 setStabilityProgress(0);
-                setTimeout(() => { animationId = requestAnimationFrame(loop); }, 200);
+                setTimeout(() => { animationId = requestAnimationFrame(loop); }, 150);
                 return;
             }
 
@@ -433,17 +433,9 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             lastProcessedTimeRef.current = now;
 
             try {
-                // 3. Detect Faces
-                const detections = await faceService.detectFaces(videoRef.current);
-
-                // 4. Filter & Select Best Face
-                let primaryDetection = null;
-                if (detections.length > 0) {
-                    // Pick the largest face (closest/main user)
-                    primaryDetection = detections.sort((a, b) =>
-                        (b.detection.box.width * b.detection.box.height) - (a.detection.box.width * a.detection.box.height)
-                    )[0];
-                }
+                // 3. Detect Face (Optimized)
+                const detections = await faceService.detectFaces(videoRef.current, true);
+                const primaryDetection = detections.length > 0 ? detections[0] : null;
 
                 const hasFace = !!primaryDetection;
                 setFaceDetected(hasFace);

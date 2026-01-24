@@ -107,9 +107,17 @@ export async function getFaceDescriptor(input: HTMLImageElement | HTMLVideoEleme
     return detection.descriptor;
 }
 
-// Detect all faces in realtime
-export async function detectFaces(input: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement) {
+// Detect faces in realtime (all or single)
+export async function detectFaces(input: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement, single: boolean = false) {
     if (!modelsLoaded) await loadModels();
+
+    if (single) {
+        const detection = await faceapi
+            .detectSingleFace(input)
+            .withFaceLandmarks()
+            .withFaceDescriptor();
+        return detection ? [detection] : [];
+    }
 
     const detections = await faceapi
         .detectAllFaces(input)
@@ -124,10 +132,7 @@ export function compareFaces(descriptor1: Float32Array, descriptor2: Float32Arra
     const distance = faceapi.euclideanDistance(descriptor1, descriptor2);
     // Convert distance to confidence percentage (0-100)
     // Distance of 0 = 100% match.
-    // We use 0.8 as the max acceptable distance for "some" confidence.
-    // Stricter than default (1.0).
-    // Threshold 40% => Distance < 0.48. (Very safe)
-    // Threshold 50% => Distance < 0.40. (Extremely safe)
+    // 0.8 is the max distance for "some" confidence.
     const confidence = Math.max(0, Math.min(100, (1 - distance / 0.8) * 100));
     return Math.round(confidence);
 }
@@ -140,70 +145,70 @@ export interface RegisteredFace {
 }
 
 // Face matcher for comparing against multiple registered faces
-// Face matcher for comparing against multiple registered faces
 class FaceMatcherService {
     private registeredFaces: RegisteredFace[] = [];
 
-    // Register a face (same as addFace but more semantic)
+    // Register a face
     registerFace(userId: string, descriptor: Float32Array, name: string) {
-        this.removeFace(userId); // Ensure no duplicates
+        this.removeFace(userId);
         this.registeredFaces.push({ userId, descriptor, name });
     }
 
-    // Add a face to the matcher
     addFace(userId: string, descriptor: Float32Array, name: string) {
         this.registerFace(userId, descriptor, name);
     }
 
-    // Remove a registered face
     removeFace(userId: string) {
         this.registeredFaces = this.registeredFaces.filter(f => f.userId !== userId);
     }
 
-    // Clear all registered faces
     clearAll() {
         this.registeredFaces = [];
     }
 
-    // Find best match for a face descriptor, excluding specified user IDs
+    // Find best match for a face descriptor
     findMatch(descriptor: Float32Array, threshold: number = 25, excludeIds: string[] = []): { userId: string; name: string; confidence: number } | null {
         if (this.registeredFaces.length === 0) return null;
 
         let bestMatch: { userId: string; name: string; confidence: number } | null = null;
+        let secondBestMatch: { userId: string; name: string; confidence: number } | null = null;
         const allScores: { name: string; confidence: number }[] = [];
 
-        // Filter out excluded users (e.g. already checked in)
         const candidates = this.registeredFaces.filter(f => !excludeIds.includes(f.userId));
 
         for (const face of candidates) {
             const confidence = compareFaces(descriptor, face.descriptor);
-            if (confidence > 10) { // Only log somewhat relevant scores
+            if (confidence > 10) {
                 allScores.push({ name: face.name, confidence });
             }
 
-            if (confidence >= threshold && (!bestMatch || confidence > bestMatch.confidence)) {
-                bestMatch = { userId: face.userId, name: face.name, confidence };
+            if (confidence >= threshold) {
+                if (!bestMatch || confidence > bestMatch.confidence) {
+                    secondBestMatch = bestMatch;
+                    bestMatch = { userId: face.userId, name: face.name, confidence };
+                } else if (!secondBestMatch || confidence > secondBestMatch.confidence) {
+                    secondBestMatch = { userId: face.userId, name: face.name, confidence };
+                }
             }
         }
 
-        // Sort scores descending and take top 5 for cleaner logs
+        // Sort for logging
         allScores.sort((a, b) => b.confidence - a.confidence);
-        const topScores = allScores.slice(0, 5);
+        const topScores = allScores.slice(0, 3);
 
-        // Log optimization: Only log if there are candidates
         if (allScores.length > 0) {
             const scoresStr = topScores.map(s => `${s.name}: ${s.confidence}%`).join(', ');
 
-            // SECURITY CHECK: Ambiguity Detection
-            if (allScores.length >= 2) {
-                const margin = allScores[0].confidence - allScores[1].confidence;
-                if (margin < 8 && bestMatch) {
-                    console.log(`⚠️ AMBIGUOUS MATCH IGNORED (Margin ${margin}% < 8%): ${scoresStr}`);
-                    return null; // Force retry
+            // AMBIGUITY CHECK: Reduced margin from 8 to 5 for better usability
+            if (bestMatch && secondBestMatch) {
+                const margin = bestMatch.confidence - secondBestMatch.confidence;
+                if (margin < 5) {
+                    console.warn(`⚠️ AMBIGUOUS MATCH (Margin ${margin}% < 5%): ${scoresStr}`);
+                    return null;
                 }
             }
 
-            console.log(`📊 Điểm tương đồng (ngưỡng=${threshold}%): ${scoresStr}${allScores.length > 5 ? '...' : ''} → ${bestMatch ? `KẾT QUẢ: ${bestMatch.name}` : 'KHÔNG TÌM THẤY'}`);
+            console.log(`📊 Ngưỡng ${threshold}% | Best: ${bestMatch?.name || 'None'} (${bestMatch?.confidence || 0}%) | Top: ${scoresStr}`);
         }
 
         return bestMatch;
