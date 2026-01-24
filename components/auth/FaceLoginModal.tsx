@@ -244,158 +244,182 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
     const isLoading = !modelsReady || !usersLoaded;
 
     return (
-        <div className="fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-indigo-900 to-purple-900 flex flex-col animate-in fade-in duration-300">
-            {/* Header */}
-            <div className="flex justify-between items-center p-4 relative z-10">
+        <div className="fixed inset-0 z-[100] bg-black overflow-hidden font-sans select-none animate-in fade-in duration-300">
+            {/* ========== BACKGROUND CAMERA ========== */}
+            <div className="absolute inset-0 z-0 bg-slate-950">
+                {!isLoading && !loginSuccess && (
+                    <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className="w-full h-full object-cover scale-x-[-1]"
+                    />
+                )}
+
+                {/* Overlays for depth */}
+                <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/80 pointer-events-none"></div>
+
+                {/* Scanner Line Effect */}
+                {!isLoading && !loginSuccess && stream && (
+                    <div className="absolute inset-x-0 top-0 h-[2px] bg-indigo-400/50 shadow-[0_0_20px_rgba(129,140,248,0.8)] z-10 animate-scanline"></div>
+                )}
+            </div>
+
+            {/* ========== HEADER ========== */}
+            <div className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between h-20 px-4 pt-safe">
                 <div className="flex items-center gap-3">
-                    <div className="bg-white/10 backdrop-blur-sm p-2 rounded-xl border border-white/20">
-                        <Camera className="w-5 h-5 text-white" />
+                    <div className="bg-white/10 backdrop-blur-md p-2 rounded-2xl border border-white/10 shadow-lg">
+                        <Camera className="w-6 h-6 text-white" />
                     </div>
                     <div>
-                        <h2 className="text-lg font-black text-white">Đăng nhập bằng Khuôn mặt</h2>
-                        <p className="text-xs text-indigo-300">Xác thực AI không cần mật khẩu</p>
+                        <h2 className="text-lg font-black text-white leading-tight">AI Face Login</h2>
+                        <p className="text-[10px] text-indigo-300 uppercase tracking-widest font-bold">Secure ID Processing</p>
                     </div>
                 </div>
                 <button
                     onClick={onClose}
-                    className="p-3 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-all backdrop-blur-sm border border-white/20"
+                    className="w-12 h-12 flex items-center justify-center bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-2xl text-white border border-white/10 active:scale-90 transition-all shadow-lg"
                 >
-                    <X className="w-5 h-5" />
+                    <X className="w-6 h-6" />
                 </button>
             </div>
 
-            {/* Main Content */}
-            <div className="flex-1 flex flex-col items-center justify-center p-4 relative">
-                {/* Loading State */}
+            {/* ========== MAIN INTERACTION AREA ========== */}
+            <div className="absolute inset-0 z-10 flex flex-col items-center justify-center pointer-events-none p-6">
+
+                {/* LOADING STATE */}
                 {isLoading && (
-                    <div className="text-center">
-                        <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-3xl flex items-center justify-center mx-auto mb-6 animate-pulse shadow-2xl shadow-indigo-500/30">
+                    <div className="text-center animate-in zoom-in-95 duration-500">
+                        <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-[2rem] flex items-center justify-center mx-auto mb-8 animate-pulse shadow-2xl shadow-indigo-500/30">
                             <Loader2 className="w-10 h-10 text-white animate-spin" />
                         </div>
-                        <h3 className="text-xl font-bold text-white mb-2">{guidance}</h3>
-                        <p className="text-indigo-300 text-sm">Vui lòng chờ trong giây lát...</p>
-
-                        {/* Loading Steps */}
-                        <div className="mt-8 space-y-3 max-w-xs mx-auto">
-                            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl ${modelsReady ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
-                                {modelsReady ? (
-                                    <CheckCircle className="w-5 h-5 text-emerald-400" />
-                                ) : (
-                                    <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin" />
-                                )}
-                                <span className={`text-sm font-medium ${modelsReady ? 'text-emerald-400' : 'text-white'}`}>
-                                    {modelsReady ? 'AI đã sẵn sàng' : 'Đang tải AI nhận diện...'}
-                                </span>
-                            </div>
-                            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl ${usersLoaded ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
-                                {usersLoaded ? (
-                                    <CheckCircle className="w-5 h-5 text-emerald-400" />
-                                ) : (
-                                    <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin" />
-                                )}
-                                <span className={`text-sm font-medium ${usersLoaded ? 'text-emerald-400' : 'text-white'}`}>
-                                    {usersLoaded ? 'Dữ liệu khuôn mặt sẵn sàng' : 'Đang đồng bộ dữ liệu...'}
-                                </span>
+                        <div className="bg-white/10 backdrop-blur-xl border border-white/10 p-5 rounded-3xl shadow-2xl max-w-xs">
+                            <h3 className="text-white font-black text-lg mb-2">{guidance}</h3>
+                            <div className="w-full h-1 bg-white/10 rounded-full overflow-hidden">
+                                <div className="h-full bg-indigo-500 animate-progress origin-left"></div>
                             </div>
                         </div>
                     </div>
                 )}
 
-                {/* Camera View */}
+                {/* SCANNING FRAME (VISUAL FEEDBACK) */}
                 {!isLoading && !loginSuccess && (
-                    <div className="relative w-full max-w-sm md:max-w-md aspect-[3/4] rounded-2xl md:rounded-3xl overflow-hidden bg-black shadow-2xl border-2 md:border-4 border-white/20">
-                        <video
-                            ref={videoRef}
-                            autoPlay
-                            playsInline
-                            muted
-                            className="w-full h-full object-cover scale-x-[-1]"
-                        />
+                    <div className="relative w-[80vw] sm:w-80 h-[100vw] sm:h-96 mb-12">
+                        {/* Corners */}
+                        <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-white/30 rounded-tl-3xl"></div>
+                        <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-white/30 rounded-tr-3xl"></div>
+                        <div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-white/30 rounded-bl-3xl"></div>
+                        <div className="absolute bottom-0 right-0 w-12 h-12 border-b-4 border-r-4 border-white/30 rounded-br-3xl"></div>
 
-                        {/* Face Frame Overlay */}
-                        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            <div
-                                className={`w-48 h-60 rounded-[3rem] border-4 transition-all duration-300 ${faceDetected
-                                    ? stabilityProgress >= 100
-                                        ? 'border-emerald-400 shadow-[0_0_40px_rgba(52,211,153,0.5)]'
-                                        : 'border-indigo-400 shadow-[0_0_30px_rgba(99,102,241,0.4)]'
-                                    : 'border-white/40'
-                                    }`}
-                            >
-                                {/* Progress Ring */}
-                                {faceDetected && stabilityProgress > 0 && stabilityProgress < 100 && (
-                                    <svg className="absolute -inset-2 w-[calc(100%+16px)] h-[calc(100%+16px)]" viewBox="0 0 200 250">
-                                        <ellipse
-                                            cx="100"
-                                            cy="125"
-                                            rx="96"
-                                            ry="121"
-                                            fill="none"
-                                            stroke="rgba(99,102,241,0.3)"
-                                            strokeWidth="4"
-                                        />
-                                        <ellipse
-                                            cx="100"
-                                            cy="125"
-                                            rx="96"
-                                            ry="121"
-                                            fill="none"
-                                            stroke="#6366f1"
-                                            strokeWidth="4"
-                                            strokeDasharray={`${stabilityProgress * 6.7} 670`}
-                                            strokeLinecap="round"
-                                            className="transition-all duration-100"
-                                        />
-                                    </svg>
-                                )}
-                            </div>
-                        </div>
+                        {/* Smart Border */}
+                        <div className={`absolute inset-0 border-2 rounded-3xl transition-all duration-300 ${faceDetected
+                                ? (stabilityProgress >= 100
+                                    ? 'border-emerald-400 shadow-[0_0_50px_rgba(52,211,153,0.3)] bg-emerald-500/5'
+                                    : guidance.includes('Lùi') || guidance.includes('Lại gần')
+                                        ? 'border-red-500 shadow-[0_0_30px_rgba(239,68,68,0.2)] bg-red-500/5'
+                                        : 'border-indigo-500 shadow-[0_0_30px_rgba(99,102,241,0.2)] bg-indigo-500/5')
+                                : 'border-white/10'
+                            }`}>
 
-                        {/* Guidance Text */}
-                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-6">
-                            <p className="text-white text-center font-bold text-lg">{guidance}</p>
-                            {detectedPerson && (
-                                <p className="text-indigo-300 text-center text-sm mt-1">
-                                    {detectedPerson.name} • {detectedPerson.confidence}% khớp
-                                </p>
+                            {/* Inner Scanning Effect */}
+                            {faceDetected && !isProcessing && stabilityProgress > 0 && stabilityProgress < 100 && (
+                                <div className="absolute inset-0 overflow-hidden rounded-3xl">
+                                    <div
+                                        className="absolute bottom-0 left-0 right-0 bg-indigo-500/20 transition-all duration-300"
+                                        style={{ height: `${stabilityProgress}%` }}
+                                    ></div>
+                                    <div className="absolute inset-0 flex items-center justify-center">
+                                        <span className="text-4xl font-black text-white/80 drop-shadow-2xl">{Math.round(stabilityProgress)}%</span>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Processing Spinner */}
+                            {isProcessing && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-indigo-600/20 backdrop-blur-[2px] rounded-3xl">
+                                    <Loader2 className="w-12 h-12 text-white animate-spin" />
+                                </div>
                             )}
                         </div>
-
-                        {/* Error Message */}
-                        {error && (
-                            <div className="absolute top-4 left-4 right-4 bg-red-500/90 text-white px-4 py-3 rounded-xl flex items-center gap-2">
-                                <AlertTriangle className="w-5 h-5" />
-                                <span className="text-sm font-medium">{error}</span>
-                            </div>
-                        )}
                     </div>
                 )}
 
-                {/* Success State */}
+                {/* SUCCESS STATE */}
                 {loginSuccess && matchedUser && (
                     <div className="text-center animate-in zoom-in-95 duration-500">
-                        <div className="w-32 h-32 bg-gradient-to-br from-emerald-400 to-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-emerald-500/40">
+                        <div className="w-32 h-32 bg-gradient-to-br from-emerald-400 to-teal-600 rounded-full flex items-center justify-center mx-auto mb-8 shadow-2xl shadow-emerald-500/40">
                             <CheckCircle className="w-16 h-16 text-white" />
                         </div>
-                        <h3 className="text-3xl font-black text-white mb-2">Xin chào!</h3>
-                        <p className="text-2xl text-emerald-300 font-bold">{matchedUser.full_name}</p>
-                        <p className="text-indigo-300 text-sm mt-2">Đang chuyển hướng...</p>
+                        <div className="space-y-2">
+                            <h3 className="text-4xl font-black text-white tracking-tight">XÁC THỰC XONG</h3>
+                            <p className="text-2xl text-emerald-300 font-bold uppercase">{matchedUser.full_name}</p>
+                            <p className="text-indigo-300/60 font-medium pt-2">Đang chuyển sang trang chính...</p>
+                        </div>
                     </div>
                 )}
             </div>
 
-            {/* Footer - Switch to Email Login */}
-            {!loginSuccess && (
-                <div className="p-6 text-center">
+            {/* ========== FLOATING GUIDANCE & ERROR ========== */}
+            <div className="absolute bottom-12 left-0 right-0 z-40 flex flex-col items-center gap-6 px-6 pointer-events-none">
+                {/* GUIDANCE BAR */}
+                {!isLoading && !loginSuccess && (
+                    <div className={`px-8 py-4 rounded-2xl backdrop-blur-xl border-2 flex items-center gap-4 shadow-2xl transition-all duration-300 ${!faceDetected
+                            ? 'bg-black/60 border-white/10'
+                            : guidance.includes('Lùi') || guidance.includes('Lại gần')
+                                ? 'bg-red-600/80 border-red-400/50 scale-105'
+                                : 'bg-indigo-600/80 border-indigo-400/50 scale-105 animate-pulse'
+                        }`}>
+                        <div className="p-2 bg-white/10 rounded-xl">
+                            {guidance.includes('Lùi') || guidance.includes('Lại gần') ? <AlertTriangle className="w-5 h-5 text-white" /> : <UserIcon className="w-5 h-5 text-white" />}
+                        </div>
+                        <span className="text-white font-black text-sm sm:text-lg uppercase tracking-wider">
+                            {guidance}
+                        </span>
+                    </div>
+                )}
+
+                {/* ALTERNATIVE LOGIN BUTTON */}
+                {!loginSuccess && (
                     <button
                         onClick={onClose}
-                        className="inline-flex items-center gap-2 px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold transition-all backdrop-blur-sm border border-white/20"
+                        className="pointer-events-auto flex items-center gap-3 px-8 h-14 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-black text-sm transition-all backdrop-blur-md border border-white/10 shadow-xl active:scale-95"
                     >
                         <Mail className="w-5 h-5" />
-                        Đăng nhập bằng Email
+                        DÙNG EMAIL ĐĂNG NHẬP
                     </button>
-                </div>
-            )}
+                )}
+
+                {/* ERROR MESSAGE */}
+                {error && (
+                    <div className="bg-red-500 text-white px-6 py-3 rounded-2xl font-bold flex items-center gap-3 shadow-2xl animate-in slide-in-from-bottom duration-300">
+                        <AlertTriangle className="w-5 h-5" />
+                        {error}
+                    </div>
+                )}
+            </div>
+
+            {/* ========== CUSTOM STYLES ========== */}
+            <style dangerouslySetInnerHTML={{
+                __html: `
+                .pt-safe { padding-top: env(safe-area-inset-top); }
+                @keyframes scanline {
+                    0% { top: 0%; opacity: 0; }
+                    10% { opacity: 1; }
+                    90% { opacity: 1; }
+                    100% { top: 100%; opacity: 0; }
+                }
+                .animate-scanline {
+                    animation: scanline 4s linear infinite;
+                }
+                @keyframes progress-origin {
+                    0% { transform: scaleX(0); }
+                    100% { transform: scaleX(1); }
+                }
+                .animate-progress {
+                    animation: progress-origin 2s ease-in-out infinite;
+                }
+            ` }} />
         </div>
     );
 };
