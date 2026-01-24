@@ -8,7 +8,7 @@ import {
     Camera, RefreshCw, UserCheck, AlertTriangle, CheckCircle,
     ArrowDown, ArrowUp, Clock, History, ChevronLeft, MapPin,
     Moon, Sun, Sunrise, Sunset, Settings, Save, X, QrCode, User as UserIcon,
-    FlipHorizontal2, Loader2
+    FlipHorizontal2
 } from 'lucide-react';
 
 interface BoardingCheckinProps {
@@ -59,7 +59,6 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     const [selectedSlot, setSelectedSlot] = useState<BoardingTimeSlot | null>(null);
     const [slotStatus, setSlotStatus] = useState<'on_time' | 'late' | 'closed'>('closed');
     const [systemReady, setSystemReady] = useState(false);
-    const [showRecentSheet, setShowRecentSheet] = useState(false);
 
     // HID Scanner Buffer
     const scannerBuffer = useRef<string>('');
@@ -629,234 +628,605 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     }, []);
 
     return (
-        <div className="fixed inset-0 bg-black overflow-hidden font-sans select-none">
+        <div className="min-h-screen bg-slate-900 flex flex-col pt-14 md:pt-16 px-2 md:px-4 pb-2 md:pb-4 gap-2 md:gap-4 lg:flex-row font-sans">
             {/* ========== LOADING OVERLAY ========== */}
             {(!modelsReady || !studentsLoaded) && (
-                <div className="fixed inset-0 z-[200] bg-slate-900 flex flex-col items-center justify-center p-6">
-                    <div className="text-center max-w-sm">
-                        <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-emerald-500 rounded-3xl flex items-center justify-center mx-auto mb-8 animate-pulse shadow-2xl shadow-indigo-500/30">
-                            <UserCheck className="w-10 h-10 text-white" />
+                <div className="fixed inset-0 z-[200] bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col items-center justify-center">
+                    <div className="text-center">
+                        {/* Animated Logo */}
+                        <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-emerald-500 rounded-3xl flex items-center justify-center mx-auto mb-8 animate-pulse shadow-2xl shadow-indigo-500/30">
+                            <UserCheck className="w-12 h-12 text-white" />
                         </div>
-                        <h2 className="text-2xl font-black text-white mb-3">Đang khởi tạo AI</h2>
-                        <p className="text-slate-400 text-sm mb-8">Hệ thống đang tải dữ liệu khuôn mặt và cấu hình nề nếp...</p>
-                        <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden">
-                            <div className="h-full bg-indigo-500 animate-progress origin-left"></div>
+
+                        <h2 className="text-3xl font-black text-white mb-4">Đang khởi tạo hệ thống</h2>
+                        <p className="text-slate-400 text-lg mb-10 max-w-md mx-auto">Vui lòng chờ trong giây lát để đảm bảo hệ thống check-in hoạt động chính xác.</p>
+
+                        {/* Loading Steps */}
+                        <div className="space-y-4 max-w-sm mx-auto text-left">
+                            {/* Step 1: AI Models */}
+                            <div className={`flex items-center gap-4 px-6 py-4 rounded-2xl ${modelsReady ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
+                                {modelsReady ? (
+                                    <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                                        <CheckCircle className="w-6 h-6 text-white" />
+                                    </div>
+                                ) : (
+                                    <div className="w-10 h-10 bg-indigo-500/50 rounded-xl flex items-center justify-center flex-shrink-0 animate-spin">
+                                        <RefreshCw className="w-6 h-6 text-white" />
+                                    </div>
+                                )}
+                                <div>
+                                    <p className={`font-bold ${modelsReady ? 'text-emerald-400' : 'text-white'}`}>Mô hình AI nhận diện</p>
+                                    <p className={`text-sm ${modelsReady ? 'text-emerald-400/70' : 'text-slate-400'}`}>{modelsReady ? 'Đã sẵn sàng' : 'Đang tải...'}</p>
+                                </div>
+                            </div>
+
+                            {/* Step 2: Student Data */}
+                            <div className={`flex items-center gap-4 px-6 py-4 rounded-2xl ${studentsLoaded ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
+                                {studentsLoaded ? (
+                                    <div className="w-10 h-10 bg-emerald-500 rounded-xl flex items-center justify-center flex-shrink-0">
+                                        <CheckCircle className="w-6 h-6 text-white" />
+                                    </div>
+                                ) : (
+                                    <div className="w-10 h-10 bg-indigo-500/50 rounded-xl flex items-center justify-center flex-shrink-0 animate-spin">
+                                        <RefreshCw className="w-6 h-6 text-white" />
+                                    </div>
+                                )}
+                                <div>
+                                    <p className={`font-bold ${studentsLoaded ? 'text-emerald-400' : 'text-white'}`}>Dữ liệu học sinh ({studentsData.length})</p>
+                                    <p className={`text-sm ${studentsLoaded ? 'text-emerald-400/70' : 'text-slate-400'}`}>{studentsLoaded ? 'Đã sẵn sàng' : 'Đang đồng bộ khuôn mặt...'}</p>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* ========== FULLSCREEN BACKGROUND (CAMERA) ========== */}
-            <div className="absolute inset-0 z-0">
-                {checkinMode === 'face' ? (
-                    <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-full h-full object-cover scale-x-[-1]"
-                    />
-                ) : (
-                    <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center">
-                        <div id="qr-reader" className="w-full h-full max-w-lg aspect-square"></div>
+            {/* Header */}
+            <div className="absolute top-0 left-0 right-0 h-16 bg-slate-800/80 backdrop-blur-md flex items-center justify-between px-4 z-20 border-b border-white/10">
+                <div className="flex items-center gap-3">
+                    {onBack && (
+                        <button onClick={onBack} className="p-2 hover:bg-white/10 rounded-lg text-white transition-colors">
+                            <ChevronLeft className="w-6 h-6" />
+                        </button>
+                    )}
+                    <h1 className="text-xl font-bold text-white flex items-center gap-2">
+                        <span className="bg-indigo-600 p-1.5 rounded-lg">
+                            <UserCheck className="w-5 h-5 text-white" />
+                        </span>
+                        Check-in Nội trú
+                    </h1>
+                </div>
+
+                {/* Mode Toggle */}
+                <div className="flex items-center gap-2 bg-slate-700/50 rounded-xl p-1">
+                    <button
+                        onClick={() => switchCheckinMode('face')}
+                        className={`px-3 py-1.5 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-all ${checkinMode === 'face'
+                            ? 'bg-indigo-600 text-white shadow-lg'
+                            : 'text-slate-400 hover:text-white hover:bg-white/10'
+                            }`}
+                    >
+                        <UserIcon className="w-4 h-4" />
+                        Khuôn mặt
+                    </button>
+                    <button
+                        onClick={() => switchCheckinMode('qr')}
+                        className={`px-3 py-1.5 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-all ${checkinMode === 'qr'
+                            ? 'bg-emerald-600 text-white shadow-lg'
+                            : 'text-slate-400 hover:text-white hover:bg-white/10'
+                            }`}
+                    >
+                        <QrCode className="w-4 h-4" />
+                        Mã QR
+                    </button>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-red-500 animate-pulse"></div>
+                    <span className="text-white/60 text-sm font-mono flex items-center gap-2">
+                        <Clock className="w-4 h-4" />
+                        {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                    </span>
+                </div>
+            </div>
+
+            {/* Left: Camera / QR Scanner */}
+            <div className="flex-1 lg:flex-[2] relative bg-black rounded-2xl md:rounded-3xl overflow-hidden shadow-2xl border border-white/10 group min-h-[300px] md:min-h-[400px]">
+                {/* Status Indicator - Góc trên trái */}
+                <div className="absolute top-4 left-4 z-30">
+                    <div className={`px-3 py-1.5 rounded-full text-sm font-bold flex items-center gap-2 backdrop-blur-md shadow-lg ${checkinMode === 'face'
+                        ? 'bg-indigo-600/90 text-white border border-indigo-400/30'
+                        : 'bg-emerald-600/90 text-white border border-emerald-400/30'
+                        }`}>
+                        {checkinMode === 'face' ? (
+                            <>
+                                <UserIcon className="w-4 h-4" />
+                                Xác thực Gương mặt
+                            </>
+                        ) : (
+                            <>
+                                <QrCode className="w-4 h-4" />
+                                Quét mã QR
+                            </>
+                        )}
+                    </div>
+                </div>
+
+                {/* Face Mode: Video */}
+                {checkinMode === 'face' && (
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+                )}
+
+                {/* QR Mode: Scanner Container */}
+                {checkinMode === 'qr' && (
+                    <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900">
+                        <div id="qr-reader" className="w-full max-w-md" style={{ minHeight: '300px' }}></div>
                         {!qrScannerActive && (
-                            <div className="flex flex-col items-center gap-4">
-                                <RefreshCw className="w-8 h-8 text-indigo-500 animate-spin" />
-                                <p className="text-slate-400">Đang khởi động camera...</p>
-                            </div>
+                            <p className="text-slate-400 mt-4">Đang khởi động camera...</p>
                         )}
                     </div>
                 )}
 
-                {/* Overlays for depth */}
-                <div className="absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/60 pointer-events-none"></div>
-
-                {/* Scanner Line Effect */}
-                {checkinMode === 'face' && stream && !isProcessing && (
-                    <div className="absolute inset-x-0 top-0 h-[2px] bg-indigo-400/50 shadow-[0_0_20px_rgba(129,140,248,0.8)] z-10 animate-scanline"></div>
+                {/* Camera Flip Button - Chỉ hiển thị khi ở QR mode */}
+                {checkinMode === 'qr' && (
+                    <button
+                        onClick={() => {
+                            const newFacing = cameraFacing === 'environment' ? 'user' : 'environment';
+                            switchCheckinMode('qr', newFacing);
+                        }}
+                        className="absolute bottom-4 right-4 z-30 p-3 bg-slate-800/80 backdrop-blur-md rounded-full text-white hover:bg-slate-700 transition-all shadow-lg border border-white/10 pointer-events-auto"
+                        title={cameraFacing === 'environment' ? 'Chuyển camera trước' : 'Chuyển camera sau'}
+                    >
+                        <FlipHorizontal2 className="w-5 h-5" />
+                    </button>
                 )}
-            </div>
 
-            {/* ========== GLASS HEADER ========== */}
-            <div className="absolute top-0 left-0 right-0 z-50 flex flex-col pt-safe px-4 pb-4">
-                <div className="flex items-center justify-between h-16">
-                    {/* Back & Title */}
-                    <div className="flex items-center gap-3">
-                        <button
-                            onClick={onBack}
-                            className="w-10 h-10 flex items-center justify-center bg-white/10 backdrop-blur-md rounded-xl text-white border border-white/10 active:scale-95 transition-all"
-                        >
-                            <ChevronLeft className="w-6 h-6" />
-                        </button>
-                        <div className="hidden sm:block">
-                            <h1 className="text-lg font-black text-white leading-none">EduCheck Nội Trú</h1>
-                            <p className="text-[10px] text-indigo-300 uppercase tracking-widest mt-1">Live Intelligence</p>
-                        </div>
+                {/* Overlay UI */}
+                <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-6">
+                    {/* Status Badge */}
+                    <div className="self-center flex flex-col items-center gap-2">
+                        {isProcessing ? (
+                            <div className="bg-indigo-600/90 text-white px-6 py-2 rounded-full font-bold animate-pulse shadow-lg backdrop-blur-sm border border-indigo-400 flex items-center gap-2">
+                                <RefreshCw className="w-4 h-4 animate-spin" />
+                                Đang xử lý...
+                            </div>
+                        ) : detectedPerson ? (
+                            <div className={`px-6 py-2 rounded-full font-bold shadow-lg backdrop-blur-sm border flex items-center gap-2 transition-all duration-300 ${stabilityProgress >= 100
+                                ? 'bg-emerald-600/90 border-emerald-400 text-white'
+                                : 'bg-slate-900/80 border-white/20 text-white'
+                                }`}>
+                                {stabilityProgress >= 100 ? (
+                                    <span className="w-2 h-2 bg-white rounded-full animate-ping"></span>
+                                ) : (
+                                    <span className="w-4 h-4 flex items-center justify-center">
+                                        <svg className="w-4 h-4 -rotate-90 text-indigo-500" viewBox="0 0 24 24">
+                                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="62.83" strokeDashoffset={`${62.83 - (stabilityProgress / 100) * 62.83}`}></circle>
+                                        </svg>
+                                    </span>
+                                )}
+                                {detectedPerson.name} ({stabilityProgress >= 100 ? 'Đã check-in' : `${Math.round(stabilityProgress)}%`})
+                            </div>
+                        ) : (
+                            <div className="bg-slate-900/60 text-white/70 px-6 py-2 rounded-full text-sm backdrop-blur-sm border border-white/10 flex items-center gap-2">
+                                <Camera className="w-4 h-4" />
+                                {guidance}
+                            </div>
+                        )}
+
+                        {/* Detection Quality Warning */}
+                        {(!detectedPerson && faceDetected) && (
+                            <div className="text-amber-400 text-sm font-bold bg-black/50 px-3 py-1 rounded-full backdrop-blur-md animate-bounce">
+                                {guidance}
+                            </div>
+                        )}
                     </div>
 
-                    {/* Mode Toggles */}
-                    <div className="flex items-center bg-black/40 backdrop-blur-md rounded-2xl p-1 border border-white/10">
+                    {/* Header / Settings Button */}
+                    <button
+                        onClick={() => setShowConfigModal(true)}
+                        className="absolute top-4 right-4 z-50 p-2 bg-slate-800/50 backdrop-blur-md rounded-full text-slate-400 hover:text-white hover:bg-slate-700/50 transition-colors border border-white/5"
+                    >
+                        <Settings className="w-5 h-5" />
+                    </button>
+
+                    {/* Back Button */}
+                    {/* Scan Effects Overlay */}
+                    {checkinMode === 'face' && stream && (
+                        <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+                            {/* Scanner Line */}
+                            <div className="absolute top-0 left-0 w-full h-[2px] bg-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.8)] animate-scanner"></div>
+
+                            {/* Corner Borders */}
+                            <div className="absolute top-8 left-8 w-12 h-12 border-t-4 border-l-4 border-indigo-500/50 rounded-tl-2xl"></div>
+                            <div className="absolute top-8 right-8 w-12 h-12 border-t-4 border-r-4 border-indigo-500/50 rounded-tr-2xl"></div>
+                            <div className="absolute bottom-8 left-8 w-12 h-12 border-b-4 border-l-4 border-indigo-500/50 rounded-bl-2xl"></div>
+                            <div className="absolute bottom-8 right-8 w-12 h-12 border-b-4 border-r-4 border-indigo-500/50 rounded-br-2xl"></div>
+                        </div>
+                    )}
+
+                    {/* Face Frame Upgrade */}
+                    <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 border-2 rounded-[32px] transition-all duration-300 z-20 ${stabilityProgress >= 100
+                        ? 'border-emerald-400 shadow-[0_0_50px_rgba(52,211,153,0.3)] scale-105'
+                        : faceDetected
+                            ? 'border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.2)]'
+                            : 'border-white/20'
+                        }`}>
+
+                        {/* Interior Scan Effect */}
+                        {faceDetected && !isProcessing && stabilityProgress < 100 && (
+                            <div className="absolute inset-0 bg-indigo-500/5 animate-pulse rounded-[30px]"></div>
+                        )}
+
+                        {/* Stability Ring */}
+                        {faceDetected && stabilityProgress > 0 && stabilityProgress < 100 && (
+                            <div className="absolute -inset-4 border-2 border-indigo-500/20 rounded-[40px] animate-reverse-spin"></div>
+                        )}
+
+                        {/* Center guide */}
+                        {!faceDetected && (
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white/5">
+                                <UserCheck className="w-32 h-32" strokeWidth={0.5} />
+                            </div>
+                        )}
+
+                        {/* Loading State in Frame */}
+                        {isProcessing && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-indigo-600/20 rounded-[30px] backdrop-blur-[2px]">
+                                <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            </div>
+                        )}
+                    </div>
+
+                    <style dangerouslySetInnerHTML={{
+                        __html: `
+                    @keyframes scanner {
+                        0% { top: 10%; opacity: 0; }
+                        10% { opacity: 1; }
+                        90% { opacity: 1; }
+                        100% { top: 90%; opacity: 0; }
+                    }
+                    .animate-scanner {
+                        animation: scanner 3s linear infinite;
+                    }
+                    @keyframes reverse-spin {
+                        from { transform: rotate(360deg); }
+                        to { transform: rotate(0deg); }
+                    }
+                    .animate-reverse-spin {
+                        animation: reverse-spin 10s linear infinite;
+                    }
+                `
+                    }} />
+                </div>
+            </div>
+
+    // Mobile History View
+            const [showMobileHistory, setShowMobileHistory] = useState(false);
+
+            return (
+            <div className="min-h-screen bg-slate-900 flex flex-col pt-12 md:pt-16 px-1 md:px-4 pb-1 md:pb-4 gap-2 md:gap-4 lg:flex-row font-sans">
+                {/* ========== LOADING OVERLAY ========== */}
+                {(!modelsReady || !studentsLoaded) && (
+                    <div className="fixed inset-0 z-[200] bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 flex flex-col items-center justify-center p-4">
+                        <div className="text-center w-full max-w-sm">
+                            {/* Animated Logo */}
+                            <div className="w-16 h-16 sm:w-24 sm:h-24 bg-gradient-to-br from-indigo-500 to-emerald-500 rounded-3xl flex items-center justify-center mx-auto mb-6 sm:mb-8 animate-pulse shadow-2xl shadow-indigo-500/30">
+                                <UserCheck className="w-8 h-8 sm:w-12 sm:h-12 text-white" />
+                            </div>
+
+                            <h2 className="text-xl sm:text-3xl font-black text-white mb-2 sm:mb-4">Khởi tạo hệ thống</h2>
+                            <p className="text-slate-400 text-sm sm:text-lg mb-6 sm:mb-10 max-w-sm mx-auto px-4">Đang tải dữ liệu khuôn mặt và AI để đảm bảo tính chính xác.</p>
+
+                            {/* Loading Steps */}
+                            <div className="space-y-3 max-w-xs mx-auto text-left">
+                                <div className={`flex items-center gap-3 px-4 py-3 rounded-2xl ${modelsReady ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
+                                    {modelsReady ? (
+                                        <CheckCircle className="w-5 h-5 text-emerald-400" />
+                                    ) : (
+                                        <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin" />
+                                    )}
+                                    <div>
+                                        <p className={`text-sm font-bold ${modelsReady ? 'text-emerald-400' : 'text-white'}`}>AI Recognition</p>
+                                        <p className={`text-[10px] ${modelsReady ? 'text-emerald-400/70' : 'text-slate-400'}`}>{modelsReady ? 'Đã sẵn sàng' : 'Đang tải...'}</p>
+                                    </div>
+                                </div>
+
+                                <div className={`flex items-center gap-3 px-4 py-3 rounded-2xl ${studentsLoaded ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
+                                    {studentsLoaded ? (
+                                        <CheckCircle className="w-5 h-5 text-emerald-400" />
+                                    ) : (
+                                        <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin" />
+                                    )}
+                                    <div>
+                                        <p className={`text-sm font-bold ${studentsLoaded ? 'text-emerald-400' : 'text-white'}`}>Dữ liệu học sinh</p>
+                                        <p className={`text-[10px] ${studentsLoaded ? 'text-emerald-400/70' : 'text-slate-400'}`}>{studentsLoaded ? 'Đã đồng bộ' : 'Đang tải...'}</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Header */}
+                <div className="absolute top-0 left-0 right-0 h-12 md:h-16 bg-slate-800/80 backdrop-blur-md flex items-center justify-between px-3 md:px-4 z-20 border-b border-white/10">
+                    <div className="flex items-center gap-2 md:gap-3">
+                        {onBack && (
+                            <button onClick={onBack} className="p-1.5 md:p-2 hover:bg-white/10 rounded-lg text-white transition-colors">
+                                <ChevronLeft className="w-5 h-5 md:w-6 md:h-6" />
+                            </button>
+                        )}
+                        <h1 className="text-base md:text-xl font-bold text-white flex items-center gap-1.5 md:gap-2">
+                            <span className="bg-indigo-600 p-1 md:p-1.5 rounded-lg">
+                                <UserCheck className="w-4 h-4 md:w-5 h-5 text-white" />
+                            </span>
+                            Nội trú
+                        </h1>
+                    </div>
+
+                    {/* Mode Toggle */}
+                    <div className="flex items-center gap-1 bg-slate-700/50 rounded-xl p-0.5 md:p-1">
                         <button
                             onClick={() => switchCheckinMode('face')}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${checkinMode === 'face' ? 'bg-indigo-600 text-white shadow-lg' : 'text-slate-400'}`}
+                            className={`px-2 md:px-3 py-1 md:py-1.5 rounded-lg font-bold text-[10px] md:text-sm flex items-center gap-1 transition-all ${checkinMode === 'face'
+                                ? 'bg-indigo-600 text-white shadow-lg'
+                                : 'text-slate-400'
+                                }`}
                         >
-                            <UserIcon className="w-4 h-4" />
-                            <span className="hidden xs:inline">Mặt</span>
+                            <UserIcon className="w-3.5 h-3.5 md:w-4 h-4" />
+                            Khuôn mặt
                         </button>
                         <button
                             onClick={() => switchCheckinMode('qr')}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all ${checkinMode === 'qr' ? 'bg-emerald-600 text-white shadow-lg' : 'text-slate-400'}`}
+                            className={`px-2 md:px-3 py-1 md:py-1.5 rounded-lg font-bold text-[10px] md:text-sm flex items-center gap-1 transition-all ${checkinMode === 'qr'
+                                ? 'bg-emerald-600 text-white shadow-lg'
+                                : 'text-slate-400'
+                                }`}
                         >
-                            <QrCode className="w-4 h-4" />
-                            <span className="hidden xs:inline">QR</span>
+                            <QrCode className="w-3.5 h-3.5 md:w-4 h-4" />
+                            Mã QR
                         </button>
                     </div>
 
-                    {/* Settings/Clock */}
-                    <div className="flex items-center gap-3">
-                        <div className="hidden lg:flex flex-col items-end mr-2">
-                            <p className="text-white font-mono text-sm">{new Date().toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' })}</p>
-                            <p className="text-[10px] text-red-400 font-black animate-pulse uppercase">Live Recording</p>
-                        </div>
-                        <button
-                            onClick={() => setShowConfigModal(true)}
-                            className="w-10 h-10 flex items-center justify-center bg-white/10 backdrop-blur-md rounded-xl text-white border border-white/10 active:scale-95 transition-all"
-                        >
-                            <Settings className="w-5 h-5" />
-                        </button>
+                    <div className="flex items-center gap-1.5">
+                        <div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div>
+                        <span className="text-white/60 text-[10px] md:text-sm font-mono flex items-center gap-1">
+                            <Clock className="w-3.5 h-3.5 md:w-4 h-4" />
+                            {new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true })}
+                        </span>
                     </div>
                 </div>
 
-                {/* Sub-header for Slot Info */}
-                {selectedSlot && (
-                    <div className="mt-2 flex self-center">
-                        <div className={`px-4 py-1.5 rounded-full backdrop-blur-md border flex items-center gap-2 animate-in slide-in-from-top-4 duration-500 ${slotStatus === 'on_time' ? 'bg-emerald-500/20 border-emerald-500/30 text-emerald-400' : 'bg-amber-500/20 border-amber-500/30 text-amber-400'}`}>
-                            <div className={`w-2 h-2 rounded-full ${slotStatus === 'on_time' ? 'bg-emerald-500' : 'bg-amber-500'} animate-pulse`}></div>
-                            <span className="text-xs font-black uppercase tracking-wider">{selectedSlot.name}: {slotStatus === 'on_time' ? 'Đúng giờ' : 'Đã muộn'}</span>
+                {/* Left: Camera / QR Scanner */}
+                <div className="flex-1 lg:flex-[2] relative bg-black rounded-2xl md:rounded-3xl overflow-hidden shadow-2xl border border-white/10 group min-h-[350px] md:min-h-[400px]">
+                    {/* Status Indicator - Góc trên trái */}
+                    <div className="absolute top-3 left-3 md:top-4 left-4 z-30">
+                        <div className={`px-2.5 py-1 rounded-full text-[10px] md:text-sm font-bold flex items-center gap-1.5 backdrop-blur-md shadow-lg border transition-colors ${checkinMode === 'face'
+                            ? (guidance.includes('Lại gần') || guidance.includes('Lùi lại'))
+                                ? 'bg-rose-600/90 text-white border-rose-400/30'
+                                : 'bg-indigo-600/90 text-white border-indigo-400/30'
+                            : 'bg-emerald-600/90 text-white border-emerald-400/30'
+                            }`}>
+                            {checkinMode === 'face' ? (
+                                <>
+                                    <UserIcon className="w-3.5 h-3.5 md:w-4 h-4" />
+                                    Xác thực Gương mặt
+                                </>
+                            ) : (
+                                <>
+                                    <QrCode className="w-3.5 h-3.5 md:w-4 h-4" />
+                                    Quét mã QR
+                                </>
+                            )}
                         </div>
                     </div>
-                )}
-            </div>
 
-            {/* ========== SCANNING OVERLAY (FRAME) ========== */}
-            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-                <div className="relative w-[80vw] sm:w-80 h-[100vw] sm:h-96">
-                    {/* Corners */}
-                    <div className="absolute top-0 left-0 w-12 h-12 border-t-4 border-l-4 border-white/40 rounded-tl-3xl"></div>
-                    <div className="absolute top-0 right-0 w-12 h-12 border-t-4 border-r-4 border-white/40 rounded-tr-3xl"></div>
-                    <div className="absolute bottom-0 left-0 w-12 h-12 border-b-4 border-l-4 border-white/40 rounded-bl-3xl"></div>
-                    <div className="absolute bottom-0 right-0 w-12 h-12 border-b-4 border-r-4 border-white/40 rounded-br-3xl"></div>
+                    {/* Face Mode: Video */}
+                    {checkinMode === 'face' && (
+                        <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" />
+                    )}
 
-                    {/* Scanning Box */}
-                    <div className={`absolute inset-0 border-2 rounded-3xl transition-all duration-500 ${isProcessing ? 'border-indigo-400 bg-indigo-500/10' : faceDetected ? stabilityProgress >= 100 ? 'border-emerald-400 shadow-[0_0_50px_rgba(52,211,153,0.3)] bg-emerald-500/10' : 'border-indigo-500' : 'border-white/10'}`}>
-                        {/* Detection Indicators */}
-                        {isProcessing && (
-                            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-                                <Loader2 className="w-12 h-12 text-white animate-spin" />
-                                <span className="text-xs font-black text-white uppercase tracking-widest bg-black/40 px-3 py-1 rounded-full backdrop-blur-sm">Verifying AI...</span>
-                            </div>
-                        )}
-                        {!isProcessing && faceDetected && stabilityProgress > 0 && stabilityProgress < 100 && (
-                            <div className="absolute inset-0 overflow-hidden rounded-3xl">
-                                <div
-                                    className="absolute bottom-0 left-0 right-0 bg-indigo-500/30 transition-all duration-300"
-                                    style={{ height: `${stabilityProgress}%` }}
-                                ></div>
-                                <div className="absolute inset-0 flex items-center justify-center">
-                                    <span className="text-3xl font-black text-white drop-shadow-lg">{Math.round(stabilityProgress)}%</span>
-                                </div>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            </div>
-
-            {/* ========== FLOATING GUIDANCE & CONTROLS ========== */}
-            <div className="absolute bottom-12 left-0 right-0 z-40 flex flex-col items-center gap-6 px-6">
-                {/* Guidance Bubble */}
-                <div className={`px-6 py-3 rounded-2xl backdrop-blur-xl border-2 flex items-center gap-3 shadow-2xl transition-all duration-300 ${!faceDetected ? 'bg-black/60 border-white/10' : 'bg-indigo-600/80 border-indigo-400/50 scale-105'}`}>
-                    {!faceDetected ? (
-                        <div className="p-2 bg-white/10 rounded-xl">
-                            {checkinMode === 'face' ? <UserIcon className="w-5 h-5 text-white" /> : <QrCode className="w-5 h-5 text-white" />}
-                        </div>
-                    ) : (
-                        <div className="p-2 bg-white rounded-xl animate-bounce">
-                            <UserCheck className="w-5 h-5 text-indigo-600" />
+                    {/* QR Mode: Scanner Container */}
+                    {checkinMode === 'qr' && (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900">
+                            <div id="qr-reader" className="w-full max-w-md" style={{ minHeight: '300px' }}></div>
+                            {!qrScannerActive && (
+                                <p className="text-slate-400 mt-4 text-sm">Khởi động camera...</p>
+                            )}
                         </div>
                     )}
-                    <span className="text-white font-black text-sm sm:text-lg uppercase tracking-wide">
-                        {isProcessing ? 'Đang xác thực...' : guidance}
-                    </span>
-                </div>
 
-                {/* Bottom Main Controls */}
-                <div className="flex items-center gap-4 w-full max-w-sm">
-                    {/* View Recent Results Button (Mobile Focus) */}
-                    <button
-                        onClick={() => setShowRecentSheet(true)}
-                        className="flex-1 bg-white/10 backdrop-blur-md hover:bg-white/20 text-white rounded-2xl h-14 font-black text-sm flex items-center justify-center gap-3 border border-white/20 shadow-xl transition-all active:scale-95"
-                    >
-                        <History className="w-5 h-5 text-emerald-400" />
-                        <span>XEM DANH SÁCH ({recentCheckins.length})</span>
-                    </button>
-
-                    {/* QR Toggle / Camera Flip Floating */}
+                    {/* Camera Flip Button - QR mode */}
                     {checkinMode === 'qr' && (
                         <button
                             onClick={() => {
                                 const newFacing = cameraFacing === 'environment' ? 'user' : 'environment';
                                 switchCheckinMode('qr', newFacing);
                             }}
-                            className="w-14 h-14 bg-indigo-600 text-white rounded-2xl flex items-center justify-center shadow-xl active:rotate-180 transition-all duration-500"
+                            className="absolute bottom-4 right-4 z-30 p-2.5 bg-slate-800/80 backdrop-blur-md rounded-full text-white border border-white/10"
                         >
-                            <FlipHorizontal2 className="w-6 h-6" />
+                            <FlipHorizontal2 className="w-5 h-5" />
                         </button>
                     )}
+
+                    {/* Overlay UI */}
+                    <div className="absolute inset-0 pointer-events-none flex flex-col justify-between p-4 md:p-6">
+                        {/* Status Badge */}
+                        <div className="self-center flex flex-col items-center gap-2">
+                            {isProcessing ? (
+                                <div className="bg-indigo-600/90 text-white px-5 py-1.5 rounded-full font-bold animate-pulse shadow-lg backdrop-blur-sm border border-indigo-400 flex items-center gap-2 text-sm sm:text-base">
+                                    <RefreshCw className="w-4 h-4 animate-spin" />
+                                    Đang xử lý...
+                                </div>
+                            ) : detectedPerson ? (
+                                <div className={`px-4 sm:px-6 py-1.5 rounded-full font-bold shadow-lg backdrop-blur-sm border flex items-center gap-2 transition-all duration-300 text-xs sm:text-base ${stabilityProgress >= 100
+                                    ? 'bg-emerald-600/90 border-emerald-400 text-white'
+                                    : 'bg-slate-900/80 border-white/20 text-white'
+                                    }`}>
+                                    {stabilityProgress >= 100 ? (
+                                        <span className="w-2 h-2 bg-white rounded-full animate-ping"></span>
+                                    ) : (
+                                        <span className="w-3 sm:w-4 h-3 sm:h-4 flex items-center justify-center">
+                                            <svg className="w-3 sm:w-4 h-3 sm:h-4 -rotate-90 text-indigo-500" viewBox="0 0 24 24">
+                                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"></circle>
+                                                <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" strokeDasharray="62.83" strokeDashoffset={`${62.83 - (stabilityProgress / 100) * 62.83}`}></circle>
+                                            </svg>
+                                        </span>
+                                    )}
+                                    {detectedPerson.name} ({stabilityProgress >= 100 ? 'Đã nhận dạng' : `${Math.round(stabilityProgress)}%`})
+                                </div>
+                            ) : (
+                                <div className={`px-4 sm:px-6 py-1.5 rounded-full text-[10px] sm:text-sm backdrop-blur-sm border flex items-center gap-2 transition-colors ${faceDetected && (guidance.includes('Lại gần') || guidance.includes('Lùi lại')) ? 'bg-rose-600/90 border-rose-400/30 text-white' : 'bg-slate-900/60 border-white/10 text-white/70'}`}>
+                                    <Camera className="w-4 h-4" />
+                                    {guidance}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Back to Home Button (Requested for mobile) */}
+                        <button
+                            onClick={onBack}
+                            className="absolute top-3 right-3 md:hidden z-50 p-2 bg-slate-800/80 backdrop-blur-md rounded-full text-white border border-white/10 pointer-events-auto"
+                            title="Quay lại"
+                        >
+                            <X className="w-5 h-5" />
+                        </button>
+
+                        {/* History Toggle for Mobile */}
+                        <button
+                            onClick={() => setShowMobileHistory(!showMobileHistory)}
+                            className="absolute bottom-4 left-4 md:hidden z-50 p-2.5 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-500/30 pointer-events-auto border border-indigo-400"
+                            title="Lịch sử check-in"
+                        >
+                            {showMobileHistory ? <X className="w-5 h-5" /> : <History className="w-5 h-5" />}
+                        </button>
+
+                        {/* Scan Effects Overlay */}
+                        {checkinMode === 'face' && stream && (
+                            <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+                                {/* Scanner Line */}
+                                <div className="absolute top-0 left-0 w-full h-[2px] bg-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.8)] animate-scanner"></div>
+
+                                {/* Corner Borders */}
+                                <div className="absolute top-6 left-6 w-8 h-8 md:w-12 h-12 border-t-4 border-l-4 border-indigo-500/50 rounded-tl-xl md:rounded-tl-2xl"></div>
+                                <div className="absolute top-6 right-6 w-8 h-8 md:w-12 h-12 border-t-4 border-r-4 border-indigo-500/50 rounded-tr-xl md:rounded-tr-2xl"></div>
+                                <div className="absolute bottom-6 left-6 w-8 h-8 md:w-12 h-12 border-b-4 border-l-4 border-indigo-500/50 rounded-bl-xl md:rounded-bl-2xl"></div>
+                                <div className="absolute bottom-6 right-6 w-8 h-8 md:w-12 h-12 border-b-4 border-r-4 border-indigo-500/50 rounded-br-xl md:rounded-br-2xl"></div>
+                            </div>
+                        )}
+
+                        {/* Face Frame Upgrade */}
+                        <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-56 h-56 sm:w-72 sm:h-72 border-2 rounded-[32px] transition-all duration-300 z-20 ${stabilityProgress >= 100
+                            ? 'border-emerald-400 shadow-[0_0_50px_rgba(52,211,153,0.3)] scale-105'
+                            : faceDetected
+                                ? (guidance.includes('Lại gần') || guidance.includes('Lùi lại'))
+                                    ? 'border-rose-500 shadow-[0_0_30px_rgba(244,63,94,0.4)]'
+                                    : 'border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.2)]'
+                                : 'border-white/20'
+                            }`}>
+
+                            {/* Loading State in Frame */}
+                            {isProcessing && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-indigo-600/20 rounded-[30px] backdrop-blur-[2px]">
+                                    <div className="w-10 h-10 sm:w-12 sm:h-12 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                </div>
+                            )}
+                        </div>
+
+                        <style dangerouslySetInnerHTML={{
+                            __html: `
+                    @keyframes scanner { 0% { top: 10%; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { top: 90%; opacity: 0; } }
+                    .animate-scanner { animation: scanner 3s linear infinite; }
+                `
+                        }} />
+                    </div>
                 </div>
-            </div>
 
-            {/* ========== BOTTOM SHEET / RECENT LIST MODAL ========== */}
-            {showRecentSheet && (
-                <div className="fixed inset-0 z-[100] animate-in fade-in duration-300">
-                    <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowRecentSheet(false)}></div>
-                    <div className="absolute bottom-0 left-0 right-0 bg-slate-900 border-t border-white/10 rounded-t-[3rem] max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-500">
-                        {/* Handler Line */}
-                        <div className="w-12 h-1.5 bg-white/20 rounded-full mx-auto my-4"></div>
-
-                        <div className="px-6 pb-6 flex items-center justify-between">
-                            <h3 className="text-xl font-black text-white flex items-center gap-2">
-                                <History className="w-6 h-6 text-emerald-400" />
-                                Lịch sử vừa điểm danh
+                {/* Right: Controls */}
+                <div className={`w-full lg:w-96 flex flex-col gap-3 md:gap-4 ${showMobileHistory ? 'fixed inset-0 z-[100] bg-slate-900 md:relative md:inset-auto md:bg-transparent p-4 md:p-0' : 'block md:block'}`}>
+                    {/* Header for mobile history overlay */}
+                    {showMobileHistory && (
+                        <div className="flex justify-between items-center mb-2 md:hidden">
+                            <h3 className="text-white font-bold text-lg flex items-center gap-2">
+                                <History className="w-5 h-5 text-indigo-400" />
+                                Lịch sử check-in
                             </h3>
-                            <button onClick={() => setShowRecentSheet(false)} className="w-10 h-10 flex items-center justify-center bg-white/10 rounded-full text-white">
+                            <button onClick={() => setShowMobileHistory(false)} className="p-2 bg-slate-800 rounded-xl text-white">
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
+                    )}
 
-                        <div className="flex-1 overflow-y-auto px-6 pb-20 space-y-3 custom-scrollbar">
-                            {recentCheckins.length === 0 ? (
-                                <div className="text-center py-20 text-slate-500 flex flex-col items-center gap-4">
-                                    <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center">
-                                        <History className="w-10 h-10 opacity-20" />
+                    {/* Auto Status Display */}
+                    <div className={`p-4 md:p-5 rounded-2xl md:rounded-3xl border shadow-xl transition-all duration-500 ${showMobileHistory ? 'hidden md:block' : 'block'} ${selectedSlot
+                        ? (slotStatus === 'on_time' ? 'bg-emerald-900/40 border-emerald-500/30' : 'bg-amber-900/40 border-amber-500/30')
+                        : 'bg-slate-800/50 border-white/10'
+                        }`}>
+
+                        <div className="flex items-center justify-between mb-3 md:mb-4 gap-2">
+                            <h3 className="text-white/80 font-bold flex items-center gap-1.5 text-[10px] md:text-sm uppercase tracking-wider truncate flex-1">
+                                <Clock className="w-3.5 h-3.5 md:w-4 h-4 text-indigo-400 flex-shrink-0" />
+                                Trạng thái
+                            </h3>
+                            <div className={`flex items-center gap-1.5 px-2 py-0.5 md:py-1 rounded-full text-[9px] md:text-xs font-bold flex-shrink-0 ${systemReady ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400'}`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${systemReady ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></div>
+                                {systemReady ? 'Live' : 'Sync...'}
+                            </div>
+                        </div>
+
+                        {selectedSlot ? (
+                            <div className="space-y-3 sm:space-y-4">
+                                <div>
+                                    <h2 className="text-xl md:text-2xl font-black text-white truncate">{selectedSlot.name}</h2>
+                                    <p className="text-white/60 text-xs md:text-sm flex items-center gap-1.5 mt-1">
+                                        <Clock className="w-3 h-3" />
+                                        {selectedSlot.start_time} - {selectedSlot.end_time}
+                                    </p>
+                                </div>
+
+                                <div className={`px-3 py-2 md:py-3 rounded-xl border flex items-center gap-2 md:gap-3 ${slotStatus === 'on_time' ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400' : 'bg-amber-500/20 border-amber-500/50 text-amber-400'}`}>
+                                    {slotStatus === 'on_time' ? <CheckCircle className="w-5 h-5 sm:w-6 sm:h-6" /> : <AlertTriangle className="w-5 h-5 sm:w-6 sm:h-6" />}
+                                    <div className="min-w-0">
+                                        <p className="font-bold text-sm md:text-lg leading-tight truncate">{slotStatus === 'on_time' ? 'Hợp lệ' : 'Đi Muộn'}</p>
+                                        <p className="text-[10px] sm:text-xs opacity-80 truncate">{slotStatus === 'on_time' ? 'Bình thường' : 'Bị trừ điểm'}</p>
                                     </div>
-                                    <p className="font-bold">Chưa có ai check-in trong phiên này</p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="text-center py-4 md:py-6">
+                                <Moon className="w-6 h-6 md:w-8 md:h-8 mx-auto mb-2 text-slate-600" />
+                                <h3 className="text-white font-bold text-sm md:text-lg">Ngoài khung giờ</h3>
+                                <p className="text-slate-400 text-[10px] md:text-sm">Chưa đến giờ điểm danh</p>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* Recent Use - Hidden on mobile unless toggled */}
+                    <div className={`flex-1 bg-slate-800/50 backdrop-blur-md p-4 md:p-5 rounded-2xl md:rounded-3xl border border-white/10 shadow-xl flex flex-col ${showMobileHistory ? 'flex' : 'hidden md:flex'}`}>
+                        <h3 className="text-white/80 font-bold mb-3 md:mb-4 flex items-center gap-2 text-[10px] md:text-sm uppercase tracking-wider">
+                            <History className="w-3.5 h-3.5 md:w-4 h-4 text-emerald-400" />
+                            Vừa Check-in
+                        </h3>
+                        <div className="flex-1 overflow-y-auto space-y-2 md:space-y-3 custom-scrollbar">
+                            {recentCheckins.length === 0 ? (
+                                <div className="text-center text-slate-500 py-10 italic flex flex-col items-center gap-2">
+                                    <History className="w-6 h-6 md:w-8 md:h-8 opacity-20" />
+                                    <span className="text-xs">Chưa có bản ghi</span>
                                 </div>
                             ) : (
                                 recentCheckins.map((item, i) => (
-                                    <div key={i} className="flex items-center gap-4 bg-white/5 border border-white/5 p-4 rounded-3xl animate-in fade-in zoom-in-95" style={{ animationDelay: `${i * 50}ms` }}>
-                                        <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-black text-white shadow-lg">
+                                    <div key={i} className="flex items-center gap-2 md:gap-3 bg-white/5 p-2.5 md:p-3 rounded-xl md:rounded-2xl border border-white/5">
+                                        <div className="w-8 h-8 md:w-10 md:h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center font-bold text-white text-[10px] md:text-sm">
                                             {item.name.charAt(0)}
                                         </div>
-                                        <div className="flex-1">
-                                            <p className="font-bold text-white text-lg">{item.name}</p>
-                                            <div className="flex items-center gap-2 text-indigo-300 text-xs mt-1">
-                                                <span className="font-mono bg-white/10 px-2 py-0.5 rounded-lg">{item.time}</span>
-                                                <span className="w-1 h-1 bg-white/30 rounded-full"></span>
-                                                <span>{item.type}</span>
-                                            </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-white font-bold truncate text-[11px] md:text-base">{item.name}</p>
+                                            <p className="text-indigo-300 text-[9px] md:text-xs flex items-center gap-1 truncate">
+                                                {item.type} • {item.time}
+                                            </p>
                                         </div>
-                                        <div className={`p-2 rounded-xl bg-opacity-20 ${item.status === 'warning' ? 'bg-amber-400 text-amber-400' : 'bg-emerald-400 text-emerald-400'}`}>
-                                            {item.status === 'warning' ? <AlertTriangle className="w-6 h-6" /> : <CheckCircle className="w-6 h-6" />}
+                                        <div className={item.status === 'warning' ? 'text-amber-400' : 'text-emerald-400'}>
+                                            {item.status === 'warning' ? <AlertTriangle className="w-4 h-4 md:w-5 h-5" /> : <CheckCircle className="w-4 h-4 md:w-5 h-5" />}
                                         </div>
                                     </div>
                                 ))
@@ -864,97 +1234,91 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                         </div>
                     </div>
                 </div>
-            )}
 
-            {/* Config Modal */}
-            {showConfigModal && (
-                <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
-                    <div className="bg-slate-900 border border-slate-700 p-6 rounded-3xl w-full max-w-md relative shadow-2xl animate-scale-in">
-                        <button
-                            onClick={() => setShowConfigModal(false)}
-                            className="absolute top-4 right-4 text-slate-500 hover:text-white"
-                        >
-                            <X className="w-5 h-5" />
-                        </button>
-
-                        <h3 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
-                            <Settings className="w-5 h-5 text-indigo-400" />
-                            Cấu hình khung giờ
-                        </h3>
-                        <p className="text-slate-400 text-sm mb-6">Điều chỉnh thời gian giới nghiêm.</p>
-
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Sáng</label>
-                                <input
-                                    type="time"
-                                    value={configForm.morning_curfew}
-                                    onChange={e => setConfigForm({ ...configForm, morning_curfew: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
-                                />
+                {/* Success Popup */}
+                {result && result.success && (
+                    <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+                        <div className="bg-slate-800 border border-slate-700 p-6 md:p-8 rounded-[1.5rem] md:rounded-[2rem] shadow-2xl max-w-sm w-full text-center animate-scale-in">
+                            <div className={`w-16 h-16 md:w-24 md:h-24 mx-auto bg-gradient-to-br rounded-full flex items-center justify-center mb-4 md:mb-6 ${result.status === 'late' ? 'from-amber-400 to-orange-500' : 'from-emerald-400 to-teal-500'}`}>
+                                {result.status === 'late' ? <AlertTriangle className="w-8 h-8 md:w-12 md:h-12 text-white" /> : <CheckCircle className="w-8 h-8 md:w-12 md:h-12 text-white" />}
                             </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Trưa</label>
-                                <input
-                                    type="time"
-                                    value={configForm.noon_curfew}
-                                    onChange={e => setConfigForm({ ...configForm, noon_curfew: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
-                                />
+                            <h2 className="text-xl md:text-3xl font-black text-white mb-2">{result.user?.full_name}</h2>
+                            <div className={`px-3 py-1 rounded-full inline-block font-bold text-[10px] md:text-sm mb-4 md:mb-6 ${result.status === 'late' ? 'bg-amber-500/10 text-amber-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
+                                {result.message}
                             </div>
-                            <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Tối</label>
-                                <input
-                                    type="time"
-                                    value={configForm.evening_curfew}
-                                    onChange={e => setConfigForm({ ...configForm, evening_curfew: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
-                                />
-                            </div>
-                        </div>
-
-                        <div className="mt-8 flex gap-3">
-                            <button
-                                onClick={() => setShowConfigModal(false)}
-                                className="flex-1 py-3 rounded-xl font-bold text-slate-400 hover:bg-white/5 transition-colors"
-                            >
-                                Hủy
-                            </button>
-                            <button
-                                onClick={handleSaveConfig}
-                                className="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-2"
-                            >
-                                <Save className="w-5 h-5" />
-                                Lưu cấu hình
-                            </button>
                         </div>
                     </div>
-                </div>
-            )}
+                )}
+            </div>
+            );
 
-            {/* Custom Styles */}
-            <style dangerouslySetInnerHTML={{
-                __html: `
-                .pt-safe { padding-top: env(safe-area-inset-top); }
-                @keyframes scanline {
-                    0% { top: 0%; opacity: 0; }
-                    10% { opacity: 1; }
-                    90% { opacity: 1; }
-                    100% { top: 100%; opacity: 0; }
-                }
-                .animate-scanline {
-                    animation: scanline 4s linear infinite;
-                }
-                @keyframes progress-origin {
-                    0% { transform: scaleX(0); }
-                    100% { transform: scaleX(1); }
-                }
-                .animate-progress {
-                    animation: progress-origin 2s ease-in-out infinite;
-                }
-                .xs\\:inline { display: none; }
-                @media (min-width: 400px) { .xs\\:inline { display: inline; } }
-            ` }} />
+            {/* Config Modal */}
+            {
+                showConfigModal && (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+                        <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md relative shadow-2xl animate-scale-in">
+                            <button
+                                onClick={() => setShowConfigModal(false)}
+                                className="absolute top-4 right-4 text-slate-500 hover:text-white"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+
+                            <h3 className="text-xl font-bold text-white mb-1 flex items-center gap-2">
+                                <Settings className="w-5 h-5 text-indigo-400" />
+                                Cấu hình khung giờ
+                            </h3>
+                            <p className="text-slate-400 text-sm mb-6">Điều chỉnh thời gian giới nghiêm cho các buổi.</p>
+
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Sáng</label>
+                                    <input
+                                        type="time"
+                                        value={configForm.morning_curfew}
+                                        onChange={e => setConfigForm({ ...configForm, morning_curfew: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Trưa</label>
+                                    <input
+                                        type="time"
+                                        value={configForm.noon_curfew}
+                                        onChange={e => setConfigForm({ ...configForm, noon_curfew: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Giờ giới nghiêm Tối</label>
+                                    <input
+                                        type="time"
+                                        value={configForm.evening_curfew}
+                                        onChange={e => setConfigForm({ ...configForm, evening_curfew: e.target.value })}
+                                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:border-indigo-500 transition-colors font-mono text-lg"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="mt-8 flex gap-3">
+                                <button
+                                    onClick={() => setShowConfigModal(false)}
+                                    className="flex-1 py-3 rounded-xl font-bold text-slate-400 hover:bg-white/5 transition-colors"
+                                >
+                                    Hủy
+                                </button>
+                                <button
+                                    onClick={handleSaveConfig}
+                                    className="flex-1 py-3 rounded-xl font-bold bg-indigo-600 text-white hover:bg-indigo-500 transition-colors shadow-lg shadow-indigo-900/20 flex items-center justify-center gap-2"
+                                >
+                                    <Save className="w-5 h-5" />
+                                    Lưu cấu hình
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                )
+            }
         </div>
     );
 };
