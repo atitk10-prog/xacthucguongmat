@@ -1028,18 +1028,19 @@ const BoardingManager: React.FC<{
     return (
         <div className="space-y-6">
             {/* Header & Tabs */}
-            <div className="bg-white rounded-2xl p-2 shadow-sm border border-slate-100 flex p-1.5 w-fit">
+            {/* Header & Tabs */}
+            <div className="bg-white rounded-2xl p-1.5 shadow-sm border border-slate-100 flex overflow-x-auto w-full no-scrollbar gap-1">
                 {tabs.map(tab => (
                     <button
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id as any)}
-                        className={`px-4 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 transition-all ${activeTab === tab.id
+                        className={`px-3 md:px-4 py-2 md:py-2.5 rounded-xl text-xs md:text-sm font-bold flex items-center gap-2 transition-all whitespace-nowrap ${activeTab === tab.id
                             ? 'bg-indigo-600 text-white shadow-md'
                             : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'
                             }`}
                     >
                         {tab.icon}
-                        {tab.label}
+                        <span className="md:inline">{tab.label}</span>
                     </button>
                 ))}
             </div>

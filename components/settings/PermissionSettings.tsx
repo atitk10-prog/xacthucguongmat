@@ -83,8 +83,8 @@ const PermissionSettings: React.FC = () => {
                 <Icons.Shield className="absolute -right-6 -bottom-6 w-48 h-48 text-white/10 rotate-12" />
             </div>
 
-            <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-hidden">
-                <table className="w-full text-left border-collapse">
+            <div className="bg-white rounded-[2.5rem] shadow-sm border border-slate-100 overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[600px]">
                     <thead>
                         <tr className="bg-slate-50 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">
                             <th className="px-8 py-5 font-sans">Tên Module</th>

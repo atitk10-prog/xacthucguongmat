@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../../services/dataService';
 import { supabase } from '../../services/supabaseClient';
 import { utils, writeFile } from 'xlsx';
-import { Award, Download, Loader2, FileDown, Plus, ChevronRight, Settings2, CheckCircle2, X, ArrowLeft } from 'lucide-react';
+import { Award, Download, Loader2, FileDown, Plus, ChevronRight, Settings2, CheckCircle2, X, ArrowLeft, Users, Home } from 'lucide-react';
 import { generateSingleExportPDF, generateBatchPDF } from '../../services/certificateExportService';
 import { useToast } from '../ui/Toast';
 
@@ -513,31 +513,32 @@ const RankingBoard: React.FC<RankingBoardProps> = ({ type = 'student', classId, 
 
                 <div className="flex w-full md:w-auto gap-2 items-center flex-wrap">
                     {/* View Type Toggle */}
-                    <div className="flex flex-1 md:flex-none gap-1 bg-white rounded-xl md:rounded-2xl p-1 shadow-sm border border-slate-100 overflow-hidden">
+                    {/* View Type Toggle */}
+                    <div className="flex bg-white rounded-xl md:rounded-2xl p-1 shadow-sm border border-slate-100 w-fit">
                         {filterClass ? (
                             <button
                                 onClick={handleBackToClasses}
-                                className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg md:rounded-xl font-bold hover:bg-indigo-700 flex items-center gap-2 w-full justify-center md:w-auto shadow-sm transition-all text-xs md:text-sm"
+                                className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg md:rounded-xl font-bold hover:bg-indigo-700 flex items-center gap-2 w-full justify-center md:w-auto shadow-sm transition-all text-[10px] md:text-sm"
                             >
-                                <ArrowLeft className="w-4 h-4" />
-                                <span className="truncate">Quay lại DS Lớp</span>
+                                <ArrowLeft className="w-3.5 h-3.5" />
+                                <span className="truncate">Quay lại DS Cá nhân</span>
                             </button>
                         ) : (
                             <>
                                 <button
                                     onClick={() => setViewType('student')}
-                                    className={`flex-1 md:flex-none px-3 py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${viewType === 'student' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
+                                    className={`px-3 py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-sm font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${viewType === 'student' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
                                         }`}
                                 >
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>
+                                    <Users className="w-3.5 h-3.5 text-current" />
                                     Cá nhân
                                 </button>
                                 <button
                                     onClick={() => setViewType('class')}
-                                    className={`flex-1 md:flex-none px-3 py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-sm font-bold transition-all flex items-center justify-center gap-1.5 ${viewType === 'class' ? 'bg-indigo-600 text-white' : 'text-slate-500 hover:bg-slate-50'
+                                    className={`px-3 py-1.5 rounded-lg md:rounded-xl text-[10px] md:text-sm font-bold transition-all flex items-center justify-center gap-1.5 whitespace-nowrap ${viewType === 'class' ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'
                                         }`}
                                 >
-                                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18m13.5-18v18M9 6.75h1.5m-1.5 3h1.5m-1.5 3h1.5m3-6H15m-1.5 3H15m-1.5 3H15M9 21v-3.375c0-.621.504-1.125 1.125-1.125h3.75c.621 0 1.125.504 1.125 1.125V21" /></svg>
+                                    <Home className="w-3.5 h-3.5 text-current" />
                                     Lớp
                                 </button>
                             </>
