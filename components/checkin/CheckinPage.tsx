@@ -1296,12 +1296,15 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                     }`}>
                                     {result.checkin.status === 'on_time' ? '✓ Đúng giờ' : '⚠ Đi muộn'}
                                 </span>
-                                <span className={`px-6 py-3 rounded-full font-bold ${result.checkin.points_earned >= 0
-                                    ? 'bg-white/20 text-white'
-                                    : 'bg-red-500/30 text-red-200'
-                                    }`}>
-                                    {result.checkin.points_earned >= 0 ? '+' : ''}{result.checkin.points_earned} điểm
-                                </span>
+                                {/* Only show points if not 0 */}
+                                {result.checkin.points_earned !== 0 && (
+                                    <span className={`px-6 py-3 rounded-full font-bold ${result.checkin.points_earned >= 0
+                                        ? 'bg-white/20 text-white'
+                                        : 'bg-red-500/30 text-red-200'
+                                        }`}>
+                                        {result.checkin.points_earned >= 0 ? '+' : ''}{result.checkin.points_earned} điểm
+                                    </span>
+                                )}
                             </div>
                         )}
 

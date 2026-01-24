@@ -45,7 +45,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
 
     // Results & Config
-    const [result, setResult] = useState<{ success: boolean; message: string; data?: BoardingCheckinType; user?: User; status?: 'late' | 'on_time' } | null>(null);
+    const [result, setResult] = useState<{ success: boolean; message: string; data?: BoardingCheckinType; user?: User; status?: 'late' | 'on_time'; points?: number } | null>(null);
     const [recentCheckins, setRecentCheckins] = useState<Array<{ name: string; time: string; type: string; status: string; image?: string; userId?: string }>>([]);
     const [showConfigModal, setShowConfigModal] = useState(false);
     const [configForm, setConfigForm] = useState<BoardingConfig>({
@@ -126,7 +126,15 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                         image: student?.avatar_url,
                         status: status === 'late' ? 'warning' : 'success'
                     });
-                    setResult({ success: true, message: status === 'late' ? 'Check-in Muộn' : 'Check-in Thành công', user: { full_name: name, student_code: '' }, status: status });
+                    // Get points from response if available
+                    const points = response.data?.points_earned ?? null;
+                    setResult({
+                        success: true,
+                        message: status === 'late' ? 'Check-in Muộn' : 'Check-in Thành công',
+                        user: { full_name: name, student_code: '' },
+                        status: status,
+                        points: points
+                    });
                 }
 
                 setTimeout(() => { setResult(null); setIsProcessing(false); stableStartTimeRef.current = null; setStabilityProgress(0); }, 3000);
@@ -578,6 +586,12 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                         <div className={`w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6 ${result.status === 'late' ? 'bg-amber-500' : 'bg-emerald-500'}`}>{result.status === 'late' ? <AlertTriangle className="text-white w-10 h-10" /> : <CheckCircle className="text-white w-10 h-10" />}</div>
                         <h2 className="text-white font-black text-2xl mb-2">{result.user?.full_name}</h2>
                         <p className={result.status === 'late' ? 'text-amber-400' : 'text-emerald-400'}>{result.message}</p>
+                        {/* Points display - only show if points exist */}
+                        {result.points !== undefined && result.points !== null && result.points !== 0 && (
+                            <div className={`mt-4 inline-block px-4 py-2 rounded-full font-bold text-lg ${result.points > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                                {result.points > 0 ? '+' : ''}{result.points} điểm
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
