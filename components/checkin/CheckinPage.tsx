@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { dataService } from '../../services/dataService';
 import { supabase } from '../../services/supabaseClient';
 import { faceService, faceMatcher, base64ToImage, stringToDescriptor, descriptorToString } from '../../services/faceService';
-import { Event, User, EventCheckin } from '../../types';
+import { qrScannerService } from '../../services/qrScannerService';
+import { Event, User, EventCheckin, CheckinMethod } from '../../types';
+import { Camera, X, CheckCircle, RefreshCw, AlertTriangle, ChevronLeft, Settings, Clock, User as UserIcon, QrCode, FlipHorizontal2 } from 'lucide-react';
 
 // Interface for event participant with face data
 interface EventParticipant {
@@ -153,9 +155,40 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     // Dynamic Face Tracking Box State
     const [faceBox, setFaceBox] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
 
+    // QR Mode States
+    const [checkinMode, setCheckinMode] = useState<'face' | 'qr'>('face');
+    const [qrScannerActive, setQrScannerActive] = useState(false);
+    const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('user');
+    const [guidance, setGuidance] = useState<string>('');
+
     // Smart Alert State - Prevent repetitive "Already Checked In" alerts
     const [lastReportedCheckinId, setLastReportedCheckinId] = useState<string | null>(null);
     const lastReportedCheckinIdRef = useRef<string | null>(null);
+
+    // Ref to track if success overlay is active (to silence redundant alerts)
+    const successActiveRef = useRef(false);
+    useEffect(() => {
+        successActiveRef.current = showSuccessOverlay;
+    }, [showSuccessOverlay]);
+
+    // Unified function to add check-in to list without duplicates
+    const addUniqueCheckin = (checkin: any) => {
+        setRecentCheckins(prev => {
+            const alreadyExists = prev.some(c =>
+                ((c as any).participant_id && (c as any).participant_id === checkin.participant_id) ||
+                ((c as any).user_id && checkin.user_id && (c as any).user_id === checkin.user_id) ||
+                (c.name === checkin.name && !checkin.user_id)
+            );
+
+            if (alreadyExists) {
+                console.log('⏭️ List update: Skipping (already exists)', checkin.name);
+                return prev;
+            }
+
+            // Keep last 15
+            return [checkin, ...prev.slice(0, 14)];
+        });
+    };
 
     // Load face-api.js models
     useEffect(() => {
@@ -203,6 +236,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         avatar_url: p.user?.avatar_url || p.avatar_url, // Prefer user's avatar (more reliable)
                         birth_date: p.birth_date,
                         organization: p.organization,
+                        // Fix: Load identitifer fields
+                        student_code: p.student_code || p.user?.student_code || '',
+                        qr_code: p.qr_code || '',
+                        user_id: p.user_id,
                         // CRITICAL FIX: Prefer authoritative face_descriptor from 'users' table if linked
                         face_descriptor: p.user?.face_descriptor || p.face_descriptor,
                         hasFaceDescriptor: false
@@ -317,6 +354,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
         loadCheckins();
 
+        loadCheckins();
+
         // ========== REALTIME SUBSCRIPTION ==========
         // Subscribe to new check-ins for this event from ANY device
         const channel = supabase
@@ -334,16 +373,23 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     const newCheckin = payload.new as any;
 
                     // DUPLICATE FIX: Multiple checks to prevent duplicate entries
-                    if (newCheckin.user_id) {
-                        // Check 1: If this device just checked in this user (<5 sec ago), skip
-                        const existingCooldown = checkinCooldownsRef.current.get(newCheckin.user_id);
-                        if (existingCooldown && Date.now() - existingCooldown < 5000) {
-                            console.log('⏭️ Realtime: Skipping (cooldown active for this user)');
-                            return;
-                        }
-                        // Add/update cooldown for check-ins from OTHER devices
-                        checkinCooldownsRef.current.set(newCheckin.user_id, Date.now());
+                    const pId = newCheckin.participant_id;
+                    const uId = newCheckin.user_id;
+
+                    // Check 1: If this device just checked in this user (<5 sec ago), skip
+                    // Check BOTH participant_id and user_id for maximum safety
+                    const pCooldown = pId ? checkinCooldownsRef.current.get(pId) : null;
+                    const uCooldown = uId ? checkinCooldownsRef.current.get(uId) : null;
+                    const now = Date.now();
+
+                    if ((pCooldown && now - pCooldown < 5000) || (uCooldown && now - uCooldown < 5000)) {
+                        console.log('⏭️ Realtime: Skipping (cooldown active for this user)');
+                        return;
                     }
+
+                    // Update cooldown for check-ins from OTHER devices
+                    if (pId) checkinCooldownsRef.current.set(pId, now);
+                    if (uId) checkinCooldownsRef.current.set(uId, now);
 
                     // Fetch participant info for display
                     let participant = participants.find(p => p.id === newCheckin.user_id);
@@ -373,35 +419,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         }
                     }
 
-                    // Check 2: Skip if this user is already in the recent list (prevents duplicates)
-                    setRecentCheckins(prev => {
-                        // Check if user ID or full name already exists in the list
-                        const alreadyExists = prev.some(c =>
-                            (c as any).user_id && (c as any).user_id === newCheckin.user_id ||
-                            c.name === participant?.full_name
-                        );
-
-                        if (alreadyExists) {
-                            console.log('⏭️ Realtime: Skipping (already in list)');
-                            return prev;
-                        }
-
-                        // Should skip if name is unknown to avoid confusing "Người tham gia" duplicates
-                        if (!participant?.full_name) {
-                            console.log('⏭️ Realtime: Skipping (unknown user details)');
-                            return prev;
-                        }
-
-                        return [{
-                            name: participant?.full_name || 'Người tham gia',
-                            time: new Date(newCheckin.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
-                            image: participant?.avatar_url,
-                            status: newCheckin.status,
-                            student_code: (participant as any).student_code || 'N/A',
-                            organization: participant?.organization || 'N/A',
-                            user_id: newCheckin.user_id, // Store user_id for duplicate check
-                            points: newCheckin.points_earned
-                        } as any, ...prev.slice(0, 14)];
+                    // Check 2 & Add via Helper
+                    addUniqueCheckin({
+                        name: participant?.full_name || 'Người tham gia',
+                        time: new Date(newCheckin.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
+                        image: participant?.avatar_url,
+                        status: newCheckin.status,
+                        student_code: (participant as any).student_code || 'N/A',
+                        organization: participant?.organization || 'N/A',
+                        participant_id: newCheckin.participant_id,
+                        user_id: newCheckin.user_id,
+                        points: newCheckin.points_earned
                     });
                 }
             )
@@ -421,42 +449,160 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         recognizedPersonRef.current = recognizedPerson;
     }, [recognizedPerson]);
 
-    useEffect(() => {
-        const startCamera = async () => {
-            try {
-                // Request camera with higher resolution for wider field of view
-                const mediaStream = await navigator.mediaDevices.getUserMedia({
-                    video: {
-                        facingMode: 'user',
-                        width: { ideal: 1280 }, // Lower resolution to prevent zoom/crop on some devices
-                        height: { ideal: 720 }
-                    }
-                });
-                setStream(mediaStream);
-                if (videoRef.current) videoRef.current.srcObject = mediaStream;
-            } catch (err) {
-                const errorMessage = err instanceof Error ? err.message : 'Lỗi không xác định';
-                if (errorMessage.includes('Permission denied') || errorMessage.includes('NotAllowedError')) {
-                    setCameraError('Vui lòng cho phép truy cập camera trong cài đặt trình duyệt.');
-                } else if (errorMessage.includes('NotFoundError')) {
-                    setCameraError('Không tìm thấy camera. Vui lòng kiểm tra thiết bị.');
-                } else if (!window.location.protocol.includes('https') && !window.location.hostname.includes('localhost')) {
-                    setCameraError('Camera yêu cầu HTTPS. Vui lòng truy cập qua HTTPS.');
-                } else {
-                    setCameraError('Không thể truy cập camera. Vui lòng kiểm tra quyền truy cập trong trình duyệt.');
+    // Reusable function to start face camera
+    const startFaceCamera = async () => {
+        // Stop any existing stream first to avoid conflicts
+        if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+            setStream(null);
+        }
+        try {
+            const newStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+            });
+            setStream(newStream);
+            if (videoRef.current) {
+                videoRef.current.srcObject = newStream;
+            }
+            console.log('✅ Face camera started');
+        } catch (err) {
+            console.error('Camera error', err);
+            setCameraError('Không thể truy cập camera. Vui lòng cấp quyền.');
+        }
+    };
+
+    // Stop face camera (to release for QR scanner)
+    const stopFaceCamera = () => {
+        if (stream) {
+            stream.getTracks().forEach(t => t.stop());
+            setStream(null);
+            if (videoRef.current) {
+                videoRef.current.srcObject = null;
+            }
+            console.log('🛑 Face camera stopped');
+        }
+    };
+
+    // QR Check-in Handler
+    const handleQRCheckin = async (studentCode: string) => {
+        if (isProcessing) return;
+
+        // Find participant by student_code, qr_code or ID (Robust comparison)
+        const participant = participants.find(p => {
+            const cleanInput = studentCode.replace('EDUCHECK_USER:', '').trim();
+            const cleanPCode = (p.student_code || '').replace('EDUCHECK_USER:', '').trim();
+            const cleanPQr = (p.qr_code || '').replace('EDUCHECK_USER:', '').trim();
+
+            return (
+                cleanPCode === cleanInput ||
+                cleanPQr === cleanInput ||
+                p.id === cleanInput ||
+                p.id === studentCode || // Fallback for raw UUID
+                p.user_id === cleanInput // CRITICAL FIX: Allow matching by system user_id
+            );
+        });
+
+        if (!participant) {
+            setNotification({ type: 'error', message: `Mã không hợp lệ: ${studentCode}` });
+            playSound('error');
+            return;
+        }
+
+        // Check cooldown
+        const now = Date.now();
+        const lastCheckin = checkinCooldownsRef.current.get(participant.id);
+
+        // Show "already checked in" warning only if NOT currently showing a success popup
+        // and some time has passed since the SUCCESS check-in to avoid overlap
+        if (lastCheckin && now - lastCheckin < COOLDOWN_PERIOD) {
+            if (!successActiveRef.current && !result) {
+                setNotification({ type: 'warning', message: `${participant.full_name} đã check-in rồi!` });
+            }
+            return;
+        }
+
+        // Perform check-in
+        await handleCheckIn(participant, 100);
+    };
+
+    // Switch mode logic
+    const switchCheckinMode = async (mode: 'face' | 'qr', newFacing?: 'environment' | 'user') => {
+        // Stop ALL active scanners first to prevent conflicts
+        try {
+            await qrScannerService.stopScanner();
+            setQrScannerActive(false);
+        } catch (e) {
+            console.warn('Error stopping QR scanner:', e);
+        }
+
+        // Stop face camera if switching to QR
+        if (mode === 'qr') {
+            stopFaceCamera();
+        }
+
+        const facing = newFacing || cameraFacing;
+        if (newFacing) setCameraFacing(newFacing);
+
+        setCheckinMode(mode);
+
+        // Start QR scanner if switching to QR mode
+        if (mode === 'qr') {
+            setTimeout(async () => {
+                try {
+                    await qrScannerService.startScanning(
+                        'qr-reader-event',
+                        (result) => {
+                            if (result.code) {
+                                handleQRCheckin(result.code);
+                            }
+                        },
+                        (error) => {
+                            console.error('QR Scanner error:', error);
+                        },
+                        facing
+                    );
+                    setQrScannerActive(true);
+                } catch (err) {
+                    console.error('Failed to start QR scanner:', err);
                 }
+            }, 400);
+        }
+    };
+
+    // Initialize/Sync Camera Mode
+    useEffect(() => {
+        if (checkinMode === 'face' && modelsReady) {
+            // Small delay to ensure QR scanner fully released camera
+            const timer = setTimeout(() => {
+                startFaceCamera();
+            }, 200);
+            return () => {
+                clearTimeout(timer);
+                stopFaceCamera();
+            };
+        }
+        return () => {
+            if (checkinMode === 'qr') {
+                qrScannerService.stopScanner();
+                setQrScannerActive(false);
             }
         };
-        startCamera();
-        return () => {
-            if (stream) stream.getTracks().forEach(track => track.stop());
-        };
-    }, []);
+    }, [checkinMode, modelsReady, event?.id]);
+
+    // Initialize specific mode from event settings
+    useEffect(() => {
+        if (event) {
+            const method = event.checkin_method || (event.require_face ? 'face' : 'qr');
+            if (method === 'qr') switchCheckinMode('qr');
+            else if (method === 'face') switchCheckinMode('face');
+            else if (method === 'both') switchCheckinMode('face'); // Default 'both' to face
+        }
+    }, [event?.id]);
 
     // SIMPLIFIED Real-time face detection with auto check-in
     // Logic: Detect face -> Wait 1s stable -> Check-in once -> Show result
     useEffect(() => {
-        if (!event?.require_face || !modelsReady || !videoRef.current) return;
+        if (!event?.require_face || !modelsReady || !videoRef.current || checkinMode !== 'face') return;
 
         let animationId: number;
         let checkInAttempted = false; // Flag to prevent multiple attempts
@@ -504,6 +650,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // Filter detections to get only the largest face (The main user)
                 // This eliminates background ghost faces
                 let primaryDetection = null;
+                let isFaceTooSmall = false;
 
                 if (detections.length > 0) {
                     // Sort by box area (width * height) descending
@@ -515,16 +662,31 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                     // Only take the largest face
                     primaryDetection = sortedDetections[0];
+
+                    // Check if the face is large enough (at least 25% of video width)
+                    if (primaryDetection && videoRef.current) {
+                        const faceWidth = primaryDetection.detection.box.width;
+                        const videoWidth = videoRef.current.videoWidth;
+                        const sizeRatio = faceWidth / videoWidth;
+
+                        // If face is too far (small), ignore it
+                        if (sizeRatio < 0.25) {
+                            isFaceTooSmall = true;
+                        }
+                    }
                 }
 
                 // We proceed as if only 1 face exists (the largest one)
                 // This effectively ignores other smaller faces
-                const faceCount = primaryDetection ? 1 : 0;
+                const faceCount = (primaryDetection && !isFaceTooSmall) ? 1 : 0;
 
                 // Get box of the first face and update tracking state
-                if (primaryDetection && primaryDetection.detection) {
+                if (primaryDetection && !isFaceTooSmall && primaryDetection.detection) {
                     const box = primaryDetection.detection.box;
                     const videoEl = videoRef.current;
+
+                    // ... rest of the box drawing logic ...
+                    // (I'll keep the existing box logic but wrap it in the size check)
 
                     // Get actual displayed dimensions to scale the box correctly
                     const displayWidth = videoEl.clientWidth;
@@ -543,8 +705,6 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     const scaledY = box.y * scaleY;
 
                     // Correctly mirror the X coordinate
-                    // Since the video is visually mirrored (scaleX(-1)), the "left" of the source is "right" of the screen.
-                    // Source X=0 (Left) -> Visual X=Width (Right)
                     const mirroredX = displayWidth - scaledX - scaledWidth;
 
                     setFaceBox({
@@ -565,6 +725,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     if (singleFaceDetected && !faceDetectedRef.current) {
                         setLastFaceDetectedTime(Date.now());
                         lastFaceDetectedTimeRef.current = Date.now();
+                    } else if (!singleFaceDetected) {
+                        // STRICT RESET: Face lost or too small
+                        setLastFaceDetectedTime(null);
+                        lastFaceDetectedTimeRef.current = null;
+                        setFaceStableTime(0);
                     }
                     setFaceDetected(singleFaceDetected);
                     faceDetectedRef.current = singleFaceDetected;
@@ -572,6 +737,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     // Reset reported ID when face is lost so we can alert again when they return
                     if (!singleFaceDetected) {
                         setLastReportedCheckinId(null);
+                        lastReportedCheckinIdRef.current = null;
                     }
                 }
 
@@ -592,31 +758,33 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 // Already checked in - logic to prevent repetitive alerts
 
                                 // Only alert if we haven't reported this user recently in this session (frame loop)
-                                if (lastReportedCheckinIdRef.current !== match.userId) {
+                                // AND silence if a success popup is already active
+                                if (lastReportedCheckinIdRef.current !== match.userId && !successActiveRef.current) {
                                     setRecognizedPerson({ id: match.userId, name: match.name, confidence: match.confidence });
 
-                                    // Show SUCCESS popup first (confirming their previous check-in)
-                                    if (!result) {
-                                        setResult({
-                                            success: true,
-                                            message: `✅ ${match.name} đã check-in thành công!`,
-                                            userName: match.name
-                                        });
-                                        // Show success popup
-                                        setShowSuccessOverlay(true);
+                                    // Show guidance instead of result for "already checked in"
+                                    if (!successActiveRef.current) {
+                                        setGuidance(`${match.name} đã check-in rồi`);
 
-                                        // After popup closes, if user still detected, show "please leave" message
+                                        // Still allow showing the "Success info" if they just checked in 
+                                        // but don't force a full results popup if one is already active
+                                        if (!result) {
+                                            setResult({
+                                                success: true,
+                                                message: `✅ ${match.name} đã check-in thành công!`,
+                                                userName: match.name
+                                            });
+
+                                            // Only show popup for a fresh success, not a reminder
+                                            // setTimeout(() => setShowSuccessOverlay(true), 300);
+                                        }
+
+                                        // Update guidance to remind them to leave
                                         setTimeout(() => {
-                                            setShowSuccessOverlay(false);
-                                            // Show gentle reminder to leave
                                             if (faceDetectedRef.current && recognizedPersonRef.current?.id === match.userId) {
-                                                setResult({
-                                                    success: true,
-                                                    message: `📍 ${match.name} - Vui lòng rời khỏi để người khác check-in`,
-                                                    userName: match.name
-                                                });
+                                                setGuidance(`${match.name} - Vui lòng rời khỏi camera`);
                                             }
-                                        }, 2500);
+                                        }, 2000);
                                     }
 
                                     // Mark this user as reported so we don't beep again
@@ -649,27 +817,33 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 } else if (!singleFaceDetected) {
                     if (recognizedPersonRef.current !== null) {
                         setRecognizedPerson(null);
+                        recognizedPersonRef.current = null; // FORCE GLOBAL REF RESET
                     }
                     setLastFaceDetectedTime(null);
                     lastFaceDetectedTimeRef.current = null;
                     setFaceStableTime(0);
+                    setGuidance(''); // Clear guidance
                     setLastReportedCheckinId(null);
                     lastReportedCheckinIdRef.current = null;
                 }
 
-                // AUTO CHECK-IN: After 1 second stable with recognized face
+                // AUTO CHECK-IN: After stabilization
                 const lastTime = lastFaceDetectedTimeRef.current;
-
-                // Only auto check-in if NOT recently checked in (cooldown)
                 const isCooldown = currentMatch ? checkinCooldownsRef.current.has(currentMatch.userId) : false;
 
-                if (autoCheckInMode && singleFaceDetected && currentMatch && lastTime && !checkInAttempted && !isCooldown) {
+                if (autoCheckInMode && singleFaceDetected && currentMatch && !checkInAttempted && !isCooldown) {
+                    if (!lastTime) {
+                        setLastFaceDetectedTime(Date.now());
+                        lastFaceDetectedTimeRef.current = Date.now();
+                        return;
+                    }
+
                     const stableMs = Date.now() - lastTime;
-                    const TARGET_STABILITY = 400; // Optimized for speed (0.4s)
+                    const TARGET_STABILITY = 300; // Faster (0.3s)
                     setFaceStableTime(Math.min(stableMs, TARGET_STABILITY));
 
                     if (stableMs >= TARGET_STABILITY) {
-                        console.log('🚀 Check-in after 1s stable:', currentMatch.name);
+                        setGuidance('Đang check-in...');
                         checkInAttempted = true;
                         autoCheckInRef.current = true;
                         handleCheckIn();
@@ -709,20 +883,26 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     };
 
     // Handle check-in
-    const handleCheckIn = useCallback(async () => {
+    const handleCheckIn = useCallback(async (manualParticipant?: EventParticipant, manualConfidence?: number) => {
         if (!event || isProcessing) return;
 
         // Determine who to check-in
         let checkInUserId: string;
         let checkInUserName: string;
+        let confidenceScore: number;
 
         // Use ref to get latest recognized person (avoid race condition)
         const latestRecognizedPerson = recognizedPersonRef.current;
 
-        if (facesLoaded && latestRecognizedPerson) {
+        if (manualParticipant) {
+            checkInUserId = manualParticipant.id;
+            checkInUserName = manualParticipant.full_name;
+            confidenceScore = manualConfidence || 100;
+        } else if (facesLoaded && latestRecognizedPerson) {
             // Use recognized person from face matching
             checkInUserId = latestRecognizedPerson.id;
             checkInUserName = latestRecognizedPerson.name;
+            confidenceScore = latestRecognizedPerson.confidence;
             console.log('✅ Check-in for recognized person:', checkInUserName);
         } else {
             // No face recognized and no fallback allowed for Face ID mode
@@ -739,8 +919,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         const capturedImage = undefined;
 
         try {
-            let faceConfidence = latestRecognizedPerson?.confidence || 0;
-            let faceVerified = true; // Always verified if we got here via face recognition
+            let faceConfidence = confidenceScore;
+            let faceVerified = !!latestRecognizedPerson || !!manualParticipant;
 
             if (event.require_face && videoRef.current) {
                 const detections = await faceService.detectFaces(videoRef.current);
@@ -790,43 +970,49 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                 setResult({
                     success: true,
-                    message: `Check-in lúc ${new Date().toLocaleTimeString('vi-VN')}${latestRecognizedPerson ? ` (${Math.round(latestRecognizedPerson.confidence)}% match)` : ''}`,
+                    message: `Check-in lúc ${new Date().toLocaleTimeString('vi-VN')}`, // Removed 'match %'
                     checkin: checkinResult.data.checkin,
                     capturedImage: displayAvatar, // Use avatar for success screen
                     userName: checkInUserName
                 });
 
                 // Update recent checkins list for right sidebar
-                setRecentCheckins(prev => [{
+                // Update recent checkins list via Helper
+                addUniqueCheckin({
                     name: checkInUserName,
                     time: new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
-                    image: displayAvatar, // Use avatar
+                    image: displayAvatar,
                     status: checkinResult.data.checkin.status,
-                    full_name: participant?.full_name, // Add these for details
+                    full_name: participant?.full_name,
                     organization: participant?.organization,
-                    student_code: (participant as any).student_code, // Cast if needed or update interface
+                    student_code: (participant as any).student_code,
                     birth_date: participant?.birth_date
                         ? (isNaN(new Date(participant.birth_date).getTime()) ? participant.birth_date : new Date(participant.birth_date).toLocaleDateString('vi-VN'))
                         : 'N/A',
                     points: checkinResult.data.checkin.points_earned,
-                    user_id: checkInUserId // Store user_id for duplicate detection
-                } as any, ...prev.slice(0, 9)]); // Keep last 10
+                    participant_id: checkInUserId,
+                    user_id: participant?.user_id
+                });
 
-                // Add to cooldown to prevent duplicate check-in attempts
-                checkinCooldownsRef.current.set(checkInUserId, Date.now());
+                // Add to cooldown to prevent duplicate check-in attempts (Set BOTH)
+                const now = Date.now();
+                checkinCooldownsRef.current.set(checkInUserId, now);
+                if (participant?.user_id) checkinCooldownsRef.current.set(participant.user_id, now);
 
-                // Show fullscreen success overlay if enabled
+                // Show fullscreen success overlay if enabled (Added slight delay for UX)
                 const shouldShowPopup = event.enable_popup !== undefined ? event.enable_popup : true;
                 if (shouldShowPopup) {
-                    setShowSuccessOverlay(true);
+                    setTimeout(() => {
+                        setShowSuccessOverlay(true);
+                    }, 400); // 0.4s delay so user can blink/adjust
+
                     setTimeout(() => {
                         setShowSuccessOverlay(false);
                         setResult(null);
                         autoCheckInRef.current = false;
                         setLastFaceDetectedTime(null);
-                        setLastFaceDetectedTime(null);
                         setFaceStableTime(0);
-                    }, 3000);
+                    }, 3500);
                 } else {
                     // Quick reset if popup disabled
                     setNotification({ type: 'success', message: 'Check-in thành công!' });
@@ -1077,71 +1263,132 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             {/* Left Side - Camera & Check-in */}
             <div className="flex-1 relative h-screen">
                 {/* Header - Mobile Responsive */}
-                <div className="absolute top-0 left-0 right-0 z-10 p-2 md:p-4 flex justify-between items-center">
-                    <button onClick={onBack} className="px-3 py-2 bg-white/10 backdrop-blur-md text-white rounded-xl font-semibold text-xs md:text-sm hover:bg-white/20 flex items-center gap-1 transition-all">
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                        </svg>
-                        <span className="hidden md:inline">Quay lại</span>
+                <div className="absolute top-0 left-0 right-0 z-[100] p-4 md:p-6 flex justify-between items-center bg-gradient-to-b from-black/80 via-black/40 to-transparent">
+                    <button onClick={onBack} className="group px-4 py-2.5 bg-white/5 backdrop-blur-xl text-white rounded-2xl font-bold text-xs md:text-sm hover:bg-white/10 flex items-center gap-2 transition-all border border-white/10 shadow-2xl">
+                        <ChevronLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
+                        <span>Quay lại</span>
                     </button>
 
                     <div className="flex items-center gap-2">
+                        {/* Hybrid Mode Toggle - PREMIUM STYLE */}
+                        {event && (event.checkin_method === 'both' || !event.checkin_method) && (
+                            <div className="bg-black/60 backdrop-blur-2xl p-1.5 rounded-[22px] flex border border-white/10 shadow-2xl">
+                                <button
+                                    onClick={() => switchCheckinMode('face')}
+                                    className={`px-5 py-2.5 rounded-[18px] text-[11px] font-black flex items-center gap-2.5 transition-all duration-500 ${checkinMode === 'face' ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30' : 'text-white/40 hover:text-white/70'}`}
+                                >
+                                    <UserIcon className={`w-4 h-4 ${checkinMode === 'face' ? 'animate-pulse' : ''}`} />
+                                    <span>Face ID</span>
+                                </button>
+                                <button
+                                    onClick={() => switchCheckinMode('qr')}
+                                    className={`px-5 py-2.5 rounded-[18px] text-[11px] font-black flex items-center gap-2.5 transition-all duration-500 ${checkinMode === 'qr' ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/30' : 'text-white/40 hover:text-white/70'}`}
+                                >
+                                    <QrCode className={`w-4 h-4 ${checkinMode === 'qr' ? 'animate-bounce' : ''}`} />
+                                    <span>Quét QR</span>
+                                </button>
+                            </div>
+                        )}
+
                         {/* Auto check-in toggle */}
-                        <button
-                            onClick={() => setAutoCheckInMode(!autoCheckInMode)}
-                            className={`px-3 py-2 backdrop-blur-md rounded-xl font-semibold text-xs transition-all flex items-center gap-1 ${autoCheckInMode
-                                ? 'bg-emerald-500/80 text-white'
-                                : 'bg-white/10 text-white/70'
-                                }`}
-                        >
-                            <div className={`w-3 h-3 rounded-full border-2 ${autoCheckInMode ? 'bg-white border-white' : 'border-white/50'}`} />
-                            <span className="hidden md:inline">Auto</span>
-                        </button>
+                        {checkinMode === 'face' && (
+                            <button
+                                onClick={() => setAutoCheckInMode(!autoCheckInMode)}
+                                className={`px-4 py-2.5 backdrop-blur-xl rounded-2xl font-black text-[11px] transition-all duration-300 flex items-center gap-2 border border-white/10 shadow-xl ${autoCheckInMode
+                                    ? 'bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-400 border-emerald-500/30'
+                                    : 'bg-white/5 text-white/40'
+                                    }`}
+                            >
+                                <div className={`w-2.5 h-2.5 rounded-full ${autoCheckInMode ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-white/20'}`} />
+                                <span>Tự động</span>
+                            </button>
+                        )}
+
+                        {checkinMode === 'qr' && (
+                            <button
+                                onClick={() => switchCheckinMode('qr', cameraFacing === 'user' ? 'environment' : 'user')}
+                                className="w-11 h-11 bg-white/5 backdrop-blur-xl text-white rounded-2xl flex items-center justify-center border border-white/10 hover:bg-white/10 shadow-xl transition-all active:scale-95"
+                            >
+                                <FlipHorizontal2 className="w-5 h-5" />
+                            </button>
+                        )}
 
                         {event && (
-                            <div className="bg-white/10 backdrop-blur-md px-2 py-1 rounded-xl">
-                                <p className="text-white text-xs font-bold truncate max-w-[100px] md:max-w-none">{event.name}</p>
+                            <div className="bg-white/10 backdrop-blur-xl px-4 py-2.5 rounded-2xl border border-white/10 shadow-lg hidden sm:block">
+                                <p className="text-white text-xs font-black tracking-tight">{event.name}</p>
                             </div>
                         )}
                     </div>
                 </div>
 
-                {/* Sensitivity Slider - Mobile Friendly */}
-                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 z-20 w-[90%] max-w-xs">
-                    <div className="bg-black/60 backdrop-blur-md rounded-xl p-3 border border-white/10">
-                        <div className="flex justify-between items-center mb-1">
-                            <span className="text-white/70 text-xs">Độ nhạy</span>
-                            <span className={`text-sm font-bold ${sensitivity < 35 ? 'text-green-400' : 'text-blue-400'}`}>
-                                {sensitivity}%
-                            </span>
+                {/* Sensitivity Slider */}
+                {checkinMode === 'face' && (
+                    <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-20 w-[90%] max-w-xs group">
+                        <div className="bg-black/40 backdrop-blur-3xl rounded-[28px] p-4 border border-white/10 shadow-2xl transition-all hover:bg-black/60">
+                            <div className="flex justify-between items-center mb-2 px-1">
+                                <span className="text-white/50 text-[10px] font-black uppercase tracking-[0.1em]">Độ nhạy AI</span>
+                                <span className={`text-xs font-black px-2 py-0.5 rounded-full ${sensitivity < 35 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                                    {sensitivity}%
+                                </span>
+                            </div>
+                            <input
+                                type="range"
+                                min="20"
+                                max="80"
+                                step="5"
+                                value={sensitivity}
+                                onChange={(e) => setSensitivity(parseInt(e.target.value))}
+                                className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500 group-hover:accent-indigo-400 transition-all"
+                            />
                         </div>
-                        <input
-                            type="range"
-                            min="20"
-                            max="80"
-                            step="5"
-                            value={sensitivity}
-                            onChange={(e) => setSensitivity(parseInt(e.target.value))}
-                            className="w-full h-2 bg-white/20 rounded-lg appearance-none cursor-pointer accent-indigo-500"
-                        />
                     </div>
-                </div>
+                )}
 
                 {/* Advanced Settings Controls - Bottom Right */}
                 {/* Advanced Settings Controls REMOVED - Managed in Event Settings */}
 
-                {/* Main Camera View - FULLSCREEN */}
-                <div className="w-full h-full relative bg-black overflow-hidden">
-                    {/* Video - FULLSCREEN with object-contain to match tracking coordinates */}
-                    <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-full h-full object-contain bg-black transform -scale-x-100"
-                    />
-                    {/* Hidden canvas for image capture */}
-                    <canvas ref={canvasRef} className="hidden" />
+                {/* Main Viewport */}
+                <div className="w-full h-full relative bg-slate-950 overflow-hidden">
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-indigo-500/10 via-transparent to-transparent opacity-50 pointer-events-none"></div>
+                    {checkinMode === 'face' ? (
+                        <>
+                            <video
+                                ref={videoRef}
+                                autoPlay
+                                playsInline
+                                muted
+                                className="w-full h-full object-contain transform -scale-x-100 transition-opacity duration-700"
+                            />
+                            <canvas ref={canvasRef} className="hidden" />
+                        </>
+                    ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center p-6 bg-slate-950">
+                            <div className="w-full max-w-md aspect-square rounded-[40px] overflow-hidden border-2 border-white/5 relative shadow-2xl group">
+                                {/* Decorative corners for QR area */}
+                                <div className="absolute inset-x-0 inset-y-0 z-10 pointer-events-none p-12">
+                                    <div className="w-full h-full border-2 border-white/10 border-dashed rounded-[32px] flex items-center justify-center">
+                                        <div className="w-12 h-12 border-t-4 border-l-4 border-emerald-500 rounded-tl-2xl absolute top-8 left-8"></div>
+                                        <div className="w-12 h-12 border-t-4 border-r-4 border-emerald-500 rounded-tr-2xl absolute top-8 right-8"></div>
+                                        <div className="w-12 h-12 border-b-4 border-l-4 border-emerald-500 rounded-bl-2xl absolute bottom-8 left-8"></div>
+                                        <div className="w-12 h-12 border-b-4 border-r-4 border-emerald-500 rounded-br-2xl absolute bottom-8 right-8"></div>
+
+                                        {/* Animated scanner light */}
+                                        <div className="w-[80%] h-1 bg-gradient-to-r from-transparent via-emerald-400 to-transparent absolute shadow-[0_0_20px_rgba(52,211,153,0.6)] animate-scan-slow opacity-80"></div>
+                                    </div>
+                                </div>
+
+                                <div id="qr-reader-event" className="w-full h-full bg-black"></div>
+                            </div>
+
+                            <div className="mt-12 text-center animate-fade-in space-y-3">
+                                <div className="inline-flex px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[10px] font-black uppercase tracking-widest mb-2">
+                                    Scanning Active
+                                </div>
+                                <h3 className="text-3xl font-black text-white tracking-tight">Đang chờ quét QR...</h3>
+                                <p className="text-slate-400 text-sm font-medium">Đưa mã QR học sinh vào khung để ghi nhận điểm danh</p>
+                            </div>
+                        </div>
+                    )}
 
                     {/* Auto check-in progress bar */}
                     {autoCheckInMode && faceDetected && faceStableTime > 0 && !isProcessing && !result && (
@@ -1170,10 +1417,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 </div>
 
                 {/* Dynamic Face Tracking Box */}
-                {faceBox && (
+                {checkinMode === 'face' && faceBox && (
                     <div
-                        className={`absolute border-4 rounded-xl transition-all duration-100 ease-linear ${isProcessing ? 'border-indigo-500 animate-pulse' :
-                            faceDetected ? 'border-emerald-400 shadow-[0_0_20px_rgba(52,211,153,0.5)]' : 'border-white/40'
+                        className={`absolute border-2 rounded-2xl transition-all duration-200 ease-out ${isProcessing ? 'border-amber-500 shadow-[0_0_30px_rgba(245,158,11,0.3)] animate-pulse' :
+                            faceDetected ? 'border-indigo-500 shadow-[0_0_40px_rgba(99,102,241,0.4)]' : 'border-white/20'
                             }`}
                         style={{
                             top: `${faceBox.y}px`,
@@ -1182,59 +1429,42 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             height: `${faceBox.height}px`
                         }}
                     >
-                        {/* Tracking Corners */}
-                        <div className={`absolute -top-1 -left-1 w-4 h-4 border-t-4 border-l-4 rounded-tl-lg ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
-                        <div className={`absolute -top-1 -right-1 w-4 h-4 border-t-4 border-r-4 rounded-tr-lg ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
-                        <div className={`absolute -bottom-1 -left-1 w-4 h-4 border-b-4 border-l-4 rounded-bl-lg ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
-                        <div className={`absolute -bottom-1 -right-1 w-4 h-4 border-b-4 border-r-4 rounded-br-lg ${faceDetected ? 'border-emerald-400' : 'border-indigo-400'}`} />
+                        {/* More modern tracking corners */}
+                        <div className="absolute -top-1 -left-1 w-6 h-6 border-t-[3px] border-l-[3px] border-indigo-400 rounded-tl-xl transition-all duration-300"></div>
+                        <div className="absolute -top-1 -right-1 w-6 h-6 border-t-[3px] border-r-[3px] border-indigo-400 rounded-tr-xl transition-all duration-300"></div>
+                        <div className="absolute -bottom-1 -left-1 w-6 h-6 border-b-[3px] border-l-[3px] border-indigo-400 rounded-bl-xl transition-all duration-300"></div>
+                        <div className="absolute -bottom-1 -right-1 w-6 h-6 border-b-[3px] border-r-[3px] border-indigo-400 rounded-br-xl transition-all duration-300"></div>
 
-                        {/* Auto check-in progress (attached to moving box) */}
-                        {autoCheckInMode && faceDetected && faceStableTime > 0 && !isProcessing && !result && (
-                            <div className="absolute -bottom-6 left-0 right-0">
-                                <div className="w-full h-1.5 bg-black/50 rounded-full overflow-hidden backdrop-blur-sm">
-                                    <div
-                                        className="h-full bg-emerald-400 rounded-full transition-all duration-150"
-                                        style={{ width: `${Math.min((faceStableTime / 400) * 100, 100)}%` }}
-                                    />
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Admin/Debug Info - Confidence Score */}
-                        {recognizedPerson && (
-                            <div className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap bg-black/50 backdrop-blur-md px-2 py-1 rounded-lg text-[10px] text-white font-mono">
-                                {Math.round(recognizedPerson.confidence)}%
+                        {/* Person Name Floating Badge */}
+                        {recognizedPerson && faceDetected && !isProcessing && (
+                            <div className="absolute -top-12 left-1/2 -translate-x-1/2 bg-indigo-600 px-4 py-1.5 rounded-full shadow-2xl animate-bounce-subtle border border-indigo-400/30">
+                                <span className="text-white text-xs font-black whitespace-nowrap">{recognizedPerson.name}</span>
                             </div>
                         )}
                     </div>
                 )}
 
                 {/* Status badges - LEFT CORNER */}
-                <div className="absolute top-20 left-4 flex flex-col items-start gap-2 z-10">
-                    {/* Mode badge - hidden on mobile to save space */}
-                    <div className={`hidden md:flex px-4 py-1.5 rounded-full backdrop-blur-md text-white text-xs font-bold shadow-lg ${event?.require_face ? 'bg-indigo-600/80' : 'bg-emerald-600/80'
-                        }`}>
-                        {event?.require_face ? (
-                            <span className="flex items-center gap-1.5">
-                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                                </svg>
-                                Face ID
-                            </span>
-                        ) : 'Nhanh'}
+                <div className="absolute top-24 left-6 flex flex-col items-start gap-4 z-10 pointer-events-none">
+                    {/* Status Badge */}
+                    <div className={`px-5 py-2 rounded-2xl backdrop-blur-2xl text-white text-[11px] font-black shadow-2xl border border-white/10 transition-all duration-500 ${checkinMode === 'face' ? 'bg-indigo-600/40 text-indigo-100' : 'bg-emerald-600/40 text-emerald-100'}`}>
+                        <div className="flex items-center gap-2.5">
+                            {checkinMode === 'face' ? <UserIcon className="w-4 h-4" /> : <QrCode className="w-4 h-4" />}
+                            <span className="uppercase tracking-widest">{checkinMode === 'face' ? 'Face Identity Active' : 'QR Scanner Active'}</span>
+                        </div>
                     </div>
 
                     {isLoadingModels && (
-                        <div className="px-4 py-2 bg-amber-500/80 backdrop-blur-md rounded-full text-white text-xs font-bold animate-pulse flex items-center gap-2">
-                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                            Đang tải AI...
+                        <div className="px-5 py-2.5 bg-amber-500/20 backdrop-blur-xl border border-amber-500/30 rounded-2xl text-amber-400 text-[10px] font-black animate-pulse flex items-center gap-2.5 shadow-2xl">
+                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                            ĐANG TẢI AI...
                         </div>
                     )}
 
                     {/* Face status badge - compact on mobile */}
-                    {modelsReady && event?.require_face && (
-                        <div className={`px-2 py-1 md:px-3 md:py-1.5 rounded-full text-[10px] md:text-xs font-bold flex items-center gap-1 md:gap-1.5 transition-all ${multipleFaces ? 'bg-red-500/90 text-white animate-pulse' :
-                            faceDetected ? 'bg-emerald-500/80 text-white' : 'bg-orange-500/80 text-white'
+                    {checkinMode === 'face' && modelsReady && !showSuccessOverlay && (
+                        <div className={`px-4 py-2 rounded-2xl text-[10px] font-black flex items-center gap-2.5 transition-all border shadow-2xl backdrop-blur-xl ${multipleFaces ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse' :
+                            faceDetected ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-orange-500/20 text-orange-400 border-orange-500/30'
                             }`}>
                             {multipleFaces ? (
                                 <>
@@ -1270,7 +1500,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 <div className="absolute top-32 left-1/2 -translate-x-1/2 flex flex-col items-center gap-4 z-20 w-full max-w-md px-4 pointer-events-none">
 
                     {/* Recognized Person Badge */}
-                    {recognizedPerson && faceDetected && !isProcessing && (
+                    {recognizedPerson && faceDetected && !isProcessing && !showSuccessOverlay && (
                         <div className="px-5 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 rounded-xl text-white shadow-lg animate-scale-in">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center">
@@ -1288,7 +1518,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                     {/* No match warning */}
                     {/* No match warning - compact */}
-                    {faceDetected && facesLoaded && !recognizedPerson && !isProcessing && (
+                    {faceDetected && facesLoaded && !recognizedPerson && !isProcessing && !showSuccessOverlay && (
                         <div className="px-2 py-1 md:px-3 md:py-1.5 bg-amber-500/90 rounded-full text-white text-[10px] md:text-xs font-bold flex items-center gap-1">
                             <svg className="w-3 h-3 md:w-4 md:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -1301,7 +1531,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                     {/* Already Checked-in Warning */}
                     {faceDetected && facesLoaded && recognizedPerson && checkinCooldownsRef.current.has(recognizedPerson.id) &&
-                        (Date.now() - (checkinCooldownsRef.current.get(recognizedPerson.id) || 0) < COOLDOWN_PERIOD) && (
+                        (Date.now() - (checkinCooldownsRef.current.get(recognizedPerson.id) || 0) < COOLDOWN_PERIOD) && !showSuccessOverlay && (
                             <div className="px-4 py-2 bg-emerald-500/90 rounded-full text-white text-xs font-bold flex items-center gap-2 animate-bounce-once">
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
@@ -1321,28 +1551,26 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                 {/* Manual Check-in Button (when auto mode is off) */}
                 {
-                    !autoCheckInMode && (
+                    !autoCheckInMode && checkinMode === 'face' && (
                         <div className="absolute bottom-8 left-1/2 -translate-x-1/2">
                             <button
-                                onClick={handleCheckIn}
-                                disabled={isProcessing || (event?.require_face && !faceDetected)}
-                                className={`px-12 py-5 rounded-2xl font-bold text-xl shadow-2xl transition-all transform ${isProcessing
-                                    ? 'bg-slate-600 text-slate-300 cursor-not-allowed'
-                                    : faceDetected || !event?.require_face
-                                        ? 'bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:scale-105 hover:shadow-emerald-500/50'
-                                        : 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                                onClick={() => handleCheckIn()}
+                                disabled={isProcessing || !faceDetected}
+                                className={`px-12 py-5 rounded-2xl font-black text-xl shadow-2xl transition-all transform border-2 border-white/20 backdrop-blur-md ${isProcessing
+                                    ? 'bg-slate-600/50 text-slate-300 cursor-not-allowed'
+                                    : faceDetected
+                                        ? 'bg-emerald-500 text-white hover:scale-105 hover:shadow-emerald-500/50 border-emerald-400'
+                                        : 'bg-slate-700/50 text-slate-400 cursor-not-allowed'
                                     }`}
                             >
                                 {isProcessing ? (
                                     <span className="flex items-center gap-3">
-                                        <div className="w-6 h-6 border-3 border-white border-t-transparent rounded-full animate-spin" />
+                                        <RefreshCw className="w-6 h-6 animate-spin" />
                                         Đang xử lý...
                                     </span>
                                 ) : (
                                     <span className="flex items-center gap-3">
-                                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
+                                        <CheckCircle className="w-6 h-6" />
                                         CHECK-IN NGAY
                                     </span>
                                 )}
@@ -1361,9 +1589,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             <p className="text-indigo-200 text-sm font-medium">Sự kiện</p>
                             <h2 className="text-white text-xl font-black">{event?.name}</h2>
                         </div>
-                        <div className={`px-3 py-1 rounded-full text-xs font-bold ${event?.require_face ? 'bg-white/20 text-white' : 'bg-emerald-400/20 text-emerald-300'
+                        <div className={`px-3 py-1 rounded-full text-xs font-black border border-white/10 ${checkinMode === 'face' ? 'bg-white/20 text-white' : 'bg-emerald-400/20 text-emerald-300'
                             }`}>
-                            {event?.require_face ? 'Face ID' : 'QR'}
+                            {checkinMode === 'face' ? 'Face ID' : 'QR Scan'}
                         </div>
                     </div>
                     <div className="flex items-center gap-4 text-sm text-indigo-200">
@@ -1485,6 +1713,16 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     from { transform: translateX(20px); opacity: 0; }
                     to { transform: translateX(0); opacity: 1; }
                 }
+                @keyframes scan-slow {
+                    0%, 100% { transform: translateY(0); opacity: 0.3; }
+                    50% { transform: translateY(220px); opacity: 1; }
+                }
+                @keyframes bounce-subtle {
+                    0%, 100% { transform: translateX(-50%) translateY(0); }
+                    50% { transform: translateX(-50%) translateY(-5px); }
+                }
+                .animate-scan-slow { animation: scan-slow 3s ease-in-out infinite; }
+                .animate-bounce-subtle { animation: bounce-subtle 2s ease-in-out infinite; }
                 .animate-fade-in { animation: fade-in 0.3s ease-out; }
                 .animate-scale-in { animation: scale-in 0.4s ease-out; }
                 .animate-bounce-once { animation: bounce-once 0.5s ease-out; }

@@ -101,9 +101,27 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
         avatar_url: ''
     });
 
+    const [confirmModal, setConfirmModal] = useState<{
+        show: boolean;
+        title: string;
+        message: string;
+        onConfirm: () => void;
+        type: 'danger' | 'warning' | 'info';
+    }>({
+        show: false,
+        title: '',
+        message: '',
+        onConfirm: () => { },
+        type: 'info'
+    });
+
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [rooms, setRooms] = useState<any[]>([]); // Use any or Room interface if available
+
+    useEffect(() => {
+        loadData();
+    }, []);
 
     useEffect(() => {
         loadUsers();
@@ -125,13 +143,13 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
             const userName = user?.full_name || 'Người dùng';
 
             if (result.success) {
-                success(`✅ Face ID: ${userName} - Thành công!`);
+                success(`Face ID: ${userName} - Thành công!`);
                 // Update local state to reflect the new face_descriptor
                 setUsers(prev => prev.map(u =>
                     u.id === userId ? { ...u, face_descriptor: 'computed' } as User : u
                 ));
             } else {
-                toastError(`❌ Face ID: ${userName} - ${result.error || 'Thất bại'}`);
+                toastError(`Face ID: ${userName} - ${result.error || 'Thất bại'}`);
             }
         });
 
@@ -255,7 +273,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                     .maybeSingle();
 
                 if (searchError || !foundUsers) {
-                    setUploadLogs(prev => [`❌ Không tìm thấy user có mã: ${studentCode}`, ...prev]);
+                    setUploadLogs(prev => [`Lỗi: Không tìm thấy user có mã: ${studentCode}`, ...prev]);
                     failCount++;
                     continue;
                 }
@@ -284,16 +302,16 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                 dataService.computeAndSaveFaceDescriptor(foundUsers.id, urlData.publicUrl)
                     .catch(e => console.error('Batch face compute trigger error:', e));
 
-                setUploadLogs(prev => [`✅ Đã cập nhật ảnh & đang phân tích Face ID cho: ${foundUsers.full_name}`, ...prev]);
+                setUploadLogs(prev => [`Đã cập nhật ảnh & đang phân tích Face ID cho: ${foundUsers.full_name}`, ...prev]);
                 successCount++;
 
             } catch (err: any) {
-                setUploadLogs(prev => [`❌ Lỗi file ${file.name}: ${err.message}`, ...prev]);
+                setUploadLogs(prev => [`Lỗi file ${file.name}: ${err.message}`, ...prev]);
                 failCount++;
             }
         }
 
-        setUploadLogs(prev => [`---`, `🏁 HOÀN TẤT QUÁ TRÌNH TẢI LÊN`, `✅ Thành công: ${successCount}`, `❌ Thất bại: ${failCount}`, `📝 Vui lòng kiểm tra log ở trên.`, ...prev]);
+        setUploadLogs(prev => [`---`, `HOÀN TẤT QUÁ TRÌNH TẢI LÊN`, `Thành công: ${successCount}`, `Thất bại: ${failCount}`, `Vui lòng kiểm tra log ở trên.`, ...prev]);
 
         if (failCount === 0) {
             success(`Đã xử lý xong ${successCount} ảnh!`);
@@ -389,18 +407,18 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                 if (!exists) {
                     const res = await dataService.createUser(payload);
                     if (res.success) {
-                        setUploadLogs(prev => [`✅ Đã thêm: ${payload.full_name}`, ...prev]);
+                        setUploadLogs(prev => [`Đã thêm: ${payload.full_name}`, ...prev]);
                         successCount++;
                     } else {
                         console.error('Create User Error:', res.error);
-                        setUploadLogs(prev => [`❌ Lỗi thêm ${payload.full_name}: ${JSON.stringify(res.error)}`, ...prev]);
+                        setUploadLogs(prev => [`Lỗi thêm ${payload.full_name}: ${JSON.stringify(res.error)}`, ...prev]);
                         failCount++;
                     }
                 } else {
-                    setUploadLogs(prev => [`⚠️ Bỏ qua (Đã tồn tại): ${payload.full_name} (${payload.student_code})`, ...prev]);
+                    setUploadLogs(prev => [`Bỏ qua (Đã tồn tại): ${payload.full_name} (${payload.student_code})`, ...prev]);
                 }
             }
-            setUploadLogs(prev => [`---`, `🏁 HOÀN TẤT NHẬP DỮ LIỆU`, `✅ Thêm mới: ${successCount}`, `⚠️ Bỏ qua/Lỗi: ${failCount}`, `📝 Vui lòng kiểm tra chi tiết bên dưới.`, ...prev]);
+            setUploadLogs(prev => [`---`, `HOÀN TẤT NHẬP DỮ LIỆU`, `Thêm mới: ${successCount}`, `Bỏ qua/Lỗi: ${failCount}`, `Vui lòng kiểm tra chi tiết bên dưới.`, ...prev]);
 
             if (failCount === 0) success(`Đã xử lý xong ${successCount} người dùng!`);
             else info(`Đã xong. Có ${failCount} trường hợp cần lưu ý.`);
@@ -461,21 +479,54 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
         setShowModal(true);
     };
 
+    const handleResetPassword = async (user: User) => {
+        setConfirmModal({
+            show: true,
+            title: 'Reset Mật khẩu',
+            message: `Bạn có chắc chắn muốn đặt lại mật khẩu cho ${user.full_name} về mặc định '123456'?`,
+            type: 'warning',
+            onConfirm: async () => {
+                try {
+                    const result = await dataService.updateUser(user.id, { password: '123456' } as any);
+                    if (result.success) {
+                        success(`Đã reset mật khẩu cho ${user.full_name} thành công!`);
+                        setConfirmModal(prev => ({ ...prev, show: false }));
+                    } else {
+                        toastError(`Lỗi reset mật khẩu: ${result.error}`);
+                    }
+                } catch (error: any) {
+                    toastError(`Lỗi không mong muốn: ${error.message}`);
+                }
+            }
+        });
+    };
+
     const handleDelete = async (user: User) => {
         if (user.role === 'admin') {
             toastError('Không được phép xóa tài khoản Quản trị viên!');
             return;
         }
-        if (!confirm(`Bạn có chắc muốn xóa người dùng "${user.full_name}"?`)) return;
-        try {
-            const result = await dataService.deleteUser(user.id);
-            if (result.success) {
-                setUsers(prev => prev.filter(u => u.id !== user.id));
-                success('Xóa thành công!');
-            } else {
-                toastError('Lỗi khi xóa: ' + result.error);
+
+        setConfirmModal({
+            show: true,
+            title: 'Xóa Người dùng',
+            message: `Bạn có chắc muốn xóa người dùng "${user.full_name}"? Hành động này không thể hoàn tác.`,
+            type: 'danger',
+            onConfirm: async () => {
+                try {
+                    const result = await dataService.deleteUser(user.id);
+                    if (result.success) {
+                        setUsers(prev => prev.filter(u => u.id !== user.id));
+                        success('Xóa thành công!');
+                        setConfirmModal(prev => ({ ...prev, show: false }));
+                    } else {
+                        toastError('Lỗi khi xóa: ' + result.error);
+                    }
+                } catch (error) {
+                    console.error(error);
+                }
             }
-        } catch (error) { console.error(error); }
+        });
     };
 
     const filteredUsers = users; // Filtering is now done on server-side
@@ -620,6 +671,13 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                                         </td>
                                         <td className="px-4 py-3 text-right">
                                             <div className="flex gap-2 justify-end">
+                                                <button
+                                                    onClick={() => handleResetPassword(user)}
+                                                    className="p-2 text-amber-600 hover:bg-amber-50 rounded-lg"
+                                                    title="Reset mật khẩu về 123456"
+                                                >
+                                                    <Icons.Key className="w-5 h-5" />
+                                                </button>
                                                 <button onClick={() => handleEdit(user)} className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg">
                                                     <Icons.Edit className="w-5 h-5" />
                                                 </button>
@@ -835,9 +893,12 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                     <div className="bg-white rounded-3xl p-6 max-w-lg w-full max-h-[80vh] flex flex-col">
                         <h3 className="text-xl font-black text-slate-900 mb-4">Tải ảnh thẻ hàng loạt</h3>
                         <div className="space-y-4 flex-1 overflow-y-auto min-h-[300px]">
-                            <div className="bg-blue-50 text-blue-800 p-4 rounded-xl text-sm leading-relaxed">
-                                <p className="font-bold mb-1">📝 Hướng dẫn:</p>
-                                <ul className="list-disc pl-5 space-y-1">
+                            <div className="bg-indigo-50 text-indigo-800 p-4 rounded-xl text-sm leading-relaxed border border-indigo-100">
+                                <p className="font-bold mb-2 flex items-center gap-2">
+                                    <Icons.Info className="w-4 h-4" />
+                                    Hướng dẫn:
+                                </p>
+                                <ul className="list-disc pl-5 space-y-1 text-indigo-700/80">
                                     <li>Đặt tên file ảnh trùng với <strong>Mã số</strong> (ví dụ: <code>SV001.jpg</code>).</li>
                                     <li>Hệ thống sẽ tự động tìm user có mã <code>SV001</code> và cập nhật ảnh.</li>
                                 </ul>
@@ -868,8 +929,9 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                         <div className="flex gap-4 pt-4 border-t border-slate-100 mt-4">
                             <button onClick={() => setShowBatchModal(false)} className="px-4 py-3 rounded-xl font-bold text-slate-600 hover:bg-slate-100 flex-1">Đóng</button>
                             {batchFiles && !isBatchProcessing && (
-                                <button onClick={handleBatchProcess} className="px-4 py-3 rounded-xl font-bold text-white bg-emerald-600 hover:bg-emerald-700 flex-1">
-                                    Tải lên 🚀
+                                <button onClick={handleBatchProcess} className="px-4 py-3 rounded-xl font-bold text-white bg-indigo-600 hover:bg-indigo-700 flex-1 flex items-center justify-center gap-2 shadow-lg shadow-indigo-100">
+                                    Tải lên ngay
+                                    <Icons.ChevronRight className="w-4 h-4" />
                                 </button>
                             )}
                         </div>
@@ -883,16 +945,19 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                     <div className="bg-white rounded-3xl p-6 max-w-lg w-full max-h-[80vh] flex flex-col">
                         <h3 className="text-xl font-black text-slate-900 mb-4">Nhập Người dùng từ Excel</h3>
                         <div className="space-y-4 flex-1 overflow-y-auto min-h-[300px]">
-                            <div className="bg-green-50 text-green-800 p-4 rounded-xl text-sm leading-relaxed">
-                                <p className="font-bold mb-1">📝 Cấu trúc file Excel:</p>
-                                <p className="mb-2">Hàng đầu tiên là tiêu đề. Các cột cần thiết:</p>
-                                <ul className="list-disc pl-5 space-y-1">
+                            <div className="bg-slate-50 text-slate-800 p-4 rounded-xl text-sm leading-relaxed border border-slate-200">
+                                <p className="font-bold mb-2 flex items-center gap-2 text-indigo-600">
+                                    <Icons.FileText className="w-4 h-4" />
+                                    Cấu trúc file Excel:
+                                </p>
+                                <p className="mb-2 text-slate-500">Hàng đầu tiên là tiêu đề. Các cột cần thiết:</p>
+                                <ul className="list-disc pl-5 space-y-1 text-slate-600">
                                     <li><strong>Họ tên</strong> (Bắt buộc)</li>
-                                    <li><strong>Mã số</strong> (Hoặc: ID, Code)</li>
-                                    <li><strong>Ngày sinh</strong> (Hoặc: Birthday, DOB)</li>
-                                    <li><strong>Lớp</strong> (Hoặc: Tổ, Organization)</li>
+                                    <li><strong>Mã số</strong> (ID, Code)</li>
+                                    <li><strong>Ngày sinh</strong> (Birthday, DOB)</li>
+                                    <li><strong>Lớp</strong> (Tổ, Organization)</li>
                                     <li><strong>Vai trò</strong> (Học sinh/Giáo viên/Quản trị)</li>
-                                    <li><strong>Email</strong> (Nếu không có sẽ tự sinh: <code>mã@school.edu.vn</code>)</li>
+                                    <li><strong>Email</strong> (Mặc định: <code>mã@school.edu.vn</code>)</li>
                                 </ul>
                                 <button
                                     onClick={() => {
@@ -937,6 +1002,44 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                         </div>
                         <div className="flex gap-4 pt-4 border-t border-slate-100 mt-4">
                             <button onClick={() => setShowExcelModal(false)} className="px-4 py-3 rounded-xl font-bold text-slate-600 hover:bg-slate-100 flex-1">Đóng</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Confirm Modal */}
+            {confirmModal.show && (
+                <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-[60] animate-in fade-in duration-200">
+                    <div className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in-95 duration-200">
+                        <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 ${confirmModal.type === 'danger' ? 'bg-red-50 text-red-500' :
+                            confirmModal.type === 'warning' ? 'bg-amber-50 text-amber-500' :
+                                'bg-indigo-50 text-indigo-500'
+                            }`}>
+                            {confirmModal.type === 'danger' ? <Icons.Trash className="w-8 h-8" /> :
+                                confirmModal.type === 'warning' ? <Icons.AlertCircle className="w-8 h-8" /> :
+                                    <Icons.Info className="w-8 h-8" />
+                            }
+                        </div>
+                        <h3 className="text-2xl font-black text-slate-900 text-center mb-2">{confirmModal.title}</h3>
+                        <p className="text-slate-500 text-center mb-8 font-medium leading-relaxed">
+                            {confirmModal.message}
+                        </p>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setConfirmModal(prev => ({ ...prev, show: false }))}
+                                className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-2xl font-bold hover:bg-slate-200 transition-colors"
+                            >
+                                Hủy
+                            </button>
+                            <button
+                                onClick={confirmModal.onConfirm}
+                                className={`flex-1 py-4 text-white rounded-2xl font-bold shadow-lg transition-all active:scale-95 ${confirmModal.type === 'danger' ? 'bg-red-500 hover:bg-red-600 shadow-red-100' :
+                                    confirmModal.type === 'warning' ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-100' :
+                                        'bg-indigo-500 hover:bg-indigo-600 shadow-indigo-100'
+                                    }`}
+                            >
+                                Xác nhận
+                            </button>
                         </div>
                     </div>
                 </div>

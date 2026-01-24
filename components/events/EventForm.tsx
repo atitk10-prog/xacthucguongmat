@@ -1,6 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
-import { Event, EventType, User } from '../../types';
+import { Event, EventType, User, CheckinMethod } from '../../types';
+import QRCode from 'qrcode';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 
 interface EventFormProps {
     editingEvent?: Event | null;
@@ -18,6 +21,8 @@ interface NewParticipant {
     avatar_url?: string;
     isNew: boolean;
     user_id?: string;
+    student_code?: string;
+    qr_code?: string;
     face_descriptor?: string; // JSON string
 }
 
@@ -39,6 +44,9 @@ const Icons = {
     user: <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" /></svg>,
     check: <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     upload: <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" /></svg>,
+    qr: (props: any) => <svg {...props} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M3.75 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 013.75 9.375v-4.5zM3.75 14.625c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5a1.125 1.125 0 01-1.125-1.125v-4.5zM13.5 4.875c0-.621.504-1.125 1.125-1.125h4.5c.621 0 1.125.504 1.125 1.125v4.5c0 .621-.504 1.125-1.125 1.125h-4.5A1.125 1.125 0 0113.5 9.375v-4.5z" /><path strokeLinecap="round" strokeLinejoin="round" d="M15 12h1.5m-1.5 1.5H15m1.5 0H18m-1.5 1.5H15m1.5 0H18M13.5 13.5h1.5m0 1.5H15m1.5 0h1.5m1.5 1.5H15m1.5 0H18m-1.5 1.5h1.5M13.5 18h1.5M13.5 15h1.5" /></svg>,
+    face: (props: any) => <svg {...props} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15.182 15.182a4.5 4.5 0 01-6.364 0M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9.75 9.75c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75zm6 0c0 .414-.168.75-.375.75s-.375-.336-.375-.75.168-.75.375-.75.375.336.375.75z" /></svg>,
+    sparkles: (props: any) => <svg {...props} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 00-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 003.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 003.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 00-3.09 3.09zM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 00-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 002.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 002.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 00-2.456 2.456zM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 00-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 001.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 001.423 1.423l1.183.394-1.183.394a2.25 2.25 0 00-1.423 1.423z" /></svg>,
 };
 
 // Custom Time Input Component for AM/PM support
@@ -116,7 +124,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
     const [formData, setFormData] = useState({
         name: '', type: 'học_tập' as EventType, start_time: '', end_time: '', location: '',
         target_audience: 'all', late_threshold_mins: 15, points_on_time: 10, points_late: -5,
-        points_absent: -10, require_face: false, face_threshold: 40, checkin_mode: 'student' as 'student' | 'event',
+        points_absent: -10, checkin_method: 'qr' as CheckinMethod, face_threshold: 40, checkin_mode: 'student' as 'student' | 'event',
         enable_popup: true
     });
     const [isLoading, setIsLoading] = useState(false);
@@ -129,7 +137,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
     const [searchQuery, setSearchQuery] = useState('');
     const [showAddNewForm, setShowAddNewForm] = useState(false);
     const [newParticipantForm, setNewParticipantForm] = useState<Omit<NewParticipant, 'id' | 'isNew'>>({
-        full_name: '', birth_date: '', address: '', organization: '', avatar_url: ''
+        full_name: '', birth_date: '', address: '', organization: '', avatar_url: '', student_code: '', qr_code: ''
     });
 
     // New states for improvements
@@ -184,7 +192,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                 location: editingEvent.location, target_audience: editingEvent.target_audience,
                 late_threshold_mins: editingEvent.late_threshold_mins, points_on_time: editingEvent.points_on_time,
                 points_late: editingEvent.points_late, points_absent: editingEvent.points_absent,
-                require_face: editingEvent.require_face, face_threshold: editingEvent.face_threshold,
+                checkin_method: editingEvent.checkin_method || (editingEvent.require_face ? 'both' : 'qr'),
+                face_threshold: editingEvent.face_threshold,
                 checkin_mode: editingEvent.checkin_mode || 'student',
                 enable_popup: editingEvent.enable_popup !== undefined ? editingEvent.enable_popup : true
             });
@@ -206,13 +215,15 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
         try {
             const result = await dataService.getEventParticipants(eventId);
             if (result.success && result.data) {
-                const participants: NewParticipant[] = result.data.map((p: { id?: string; full_name: string; birth_date?: string; organization?: string; address?: string; avatar_url?: string }) => ({
+                const participants: NewParticipant[] = result.data.map((p: any) => ({
                     id: p.id || `loaded_${Date.now()}`,
                     full_name: p.full_name,
                     birth_date: p.birth_date || '',
                     organization: p.organization || '',
                     address: p.address || '',
                     avatar_url: p.avatar_url || '',
+                    student_code: p.student_code || '',
+                    qr_code: p.qr_code || '',
                     isNew: false
                 }));
                 setNewParticipants(participants);
@@ -294,6 +305,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                 ...formData,
                 start_time: startISO,
                 end_time: endISO,
+                require_face: formData.checkin_method === 'face' || formData.checkin_method === 'both',
                 participants: allParticipantIds
             };
 
@@ -319,6 +331,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                         address: '', // User table doesn't have address
                         avatar_url: user.avatar_url || '',
                         user_id: user.id, // Link to system user
+                        student_code: user.student_code || '',
+                        qr_code: user.qr_code || user.id,
                         face_descriptor: user.face_descriptor || '' // Copy user's face descriptor
                     };
                 }).filter(Boolean) as any[];
@@ -330,6 +344,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                     organization: p.organization || '',
                     address: p.address || '',
                     avatar_url: p.avatar_url || '',
+                    student_code: p.student_code || '',
+                    qr_code: p.qr_code || p.id, // CRITICAL FIX: Save the ID (import_ or new_) as the qr_code
                     face_descriptor: p.face_descriptor || '' // Pass face descriptor to save
                 })), ...selectedUsersToSave];
 
@@ -364,7 +380,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
             isNew: true
         };
         setNewParticipants(prev => [...prev, newP]);
-        setNewParticipantForm({ full_name: '', birth_date: '', address: '', organization: '', avatar_url: '' });
+        setNewParticipantForm({ full_name: '', birth_date: '', address: '', organization: '', avatar_url: '', student_code: '', qr_code: '' });
         setShowAddNewForm(false);
     };
 
@@ -395,6 +411,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                     address: updatedParticipant.address,
                     avatar_url: updatedParticipant.avatar_url,
                     user_id: updatedParticipant.user_id,
+                    student_code: updatedParticipant.student_code,
+                    qr_code: updatedParticipant.qr_code,
                     face_descriptor: updatedParticipant.face_descriptor // Save parsed face descriptor
                 }]);
 
@@ -656,6 +674,78 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
             ));
         };
         reader.readAsDataURL(file);
+    };
+
+    // Download QR Code for participant
+    const downloadParticipantQRCode = async (participant: NewParticipant) => {
+        try {
+            const rawCode = participant.student_code || participant.qr_code || participant.id;
+            // Always use EDUCHECK_USER: prefix for consistency with scanners
+            const codeValue = rawCode.startsWith('EDUCHECK_USER:') ? rawCode : `EDUCHECK_USER:${rawCode}`;
+
+            const dataUrl = await QRCode.toDataURL(codeValue, {
+                width: 500,
+                margin: 2,
+                color: { dark: '#000000', light: '#ffffff' }
+            });
+
+            const link = document.createElement('a');
+            link.href = dataUrl;
+            link.download = `QR_${participant.full_name}_${codeValue}.png`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            setImportNotification({ type: 'success', message: `Đã tải mã QR cho ${participant.full_name}` });
+            setTimeout(() => setImportNotification(null), 2000);
+        } catch (err) {
+            console.error('QR generation failed:', err);
+            setImportNotification({ type: 'error', message: 'Lỗi tạo mã QR' });
+        }
+    };
+
+    // Export all QR codes as a ZIP file (Only for new non-system participants)
+    const exportAllQRCodes = async () => {
+        const participantsToExport = newParticipants.filter(p => p.isNew && !p.user_id);
+
+        if (participantsToExport.length === 0) {
+            setImportNotification({ type: 'warning', message: 'Không có người tham gia mới (không phải học sinh hệ thống) để xuất QR' });
+            return;
+        }
+
+        setIsLoading(true);
+        const zip = new JSZip();
+        const qrFolder = zip.folder("qr_codes");
+
+        try {
+            setImportNotification({ type: 'success', message: `Bắt đầu tạo ${participantsToExport.length} mã QR...` });
+
+            for (const p of participantsToExport) {
+                const rawCode = p.student_code || p.qr_code || p.id;
+                const codeValue = rawCode.startsWith('EDUCHECK_USER:') ? rawCode : `EDUCHECK_USER:${rawCode}`;
+
+                const dataUrl = await QRCode.toDataURL(codeValue, {
+                    width: 500,
+                    margin: 2,
+                    color: { dark: '#000000', light: '#ffffff' }
+                });
+
+                // Remove data:image/png;base64, prefix
+                const base64Data = dataUrl.replace(/^data:image\/png;base64,/, "");
+                qrFolder?.file(`${p.full_name}_${codeValue}.png`, base64Data, { base64: true });
+            }
+
+            const content = await zip.generateAsync({ type: "blob" });
+            saveAs(content, `QR_Codes_Event_${editingEvent?.name || 'New'}.zip`);
+
+            setImportNotification({ type: 'success', message: 'Đã xuất hàng loạt mã QR thành công!' });
+        } catch (err) {
+            console.error('Bulk QR export failed:', err);
+            setImportNotification({ type: 'error', message: 'Lỗi xuất hàng loạt mã QR' });
+        } finally {
+            setIsLoading(false);
+            setTimeout(() => setImportNotification(null), 3000);
+        }
     };
 
     const filteredUsers = existingUsers.filter(user => {
@@ -922,11 +1012,45 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                     )}
                                 </div>
 
-                                <div className="mt-6 p-4 bg-indigo-50 rounded-2xl">
-                                    <label className="flex items-center justify-between cursor-pointer">
-                                        <div><p className="font-bold text-slate-900">Xác nhận khuôn mặt</p><p className="text-sm text-slate-500">Yêu cầu quét khuôn mặt khi check-in</p></div>
-                                        <input type="checkbox" checked={formData.require_face} onChange={(e) => setFormData({ ...formData, require_face: e.target.checked })} className="w-6 h-6 rounded accent-indigo-600" />
-                                    </label>
+                                <div className="mt-6 p-5 bg-indigo-50/50 rounded-3xl border border-indigo-100">
+                                    <label className="block text-xs font-black text-slate-400 uppercase mb-4">Phương thức điểm danh</label>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormData({ ...formData, checkin_method: 'qr' })}
+                                            className={`p-5 rounded-3xl border-2 flex flex-col items-center gap-3 transition-all duration-300 ${formData.checkin_method === 'qr' ? 'bg-white border-indigo-600 shadow-xl shadow-indigo-100 text-indigo-700 scale-[1.02]' : 'bg-slate-50/50 border-slate-100 text-slate-400 hover:bg-white hover:border-slate-200'}`}
+                                        >
+                                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${formData.checkin_method === 'qr' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                <Icons.qr className="w-6 h-6" />
+                                            </div>
+                                            <span className="font-black text-xs uppercase tracking-wider">Chỉ mã QR</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormData({ ...formData, checkin_method: 'face' })}
+                                            className={`p-5 rounded-3xl border-2 flex flex-col items-center gap-3 transition-all duration-300 ${formData.checkin_method === 'face' ? 'bg-white border-indigo-600 shadow-xl shadow-indigo-100 text-indigo-700 scale-[1.02]' : 'bg-slate-50/50 border-slate-100 text-slate-400 hover:bg-white hover:border-slate-200'}`}
+                                        >
+                                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${formData.checkin_method === 'face' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                <Icons.face className="w-6 h-6" />
+                                            </div>
+                                            <span className="font-black text-xs uppercase tracking-wider">Chỉ Khuôn mặt</span>
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setFormData({ ...formData, checkin_method: 'both' })}
+                                            className={`p-5 rounded-3xl border-2 flex flex-col items-center gap-3 transition-all duration-300 ${formData.checkin_method === 'both' ? 'bg-gradient-to-br from-indigo-600 to-purple-600 border-indigo-600 shadow-xl shadow-indigo-200 text-white scale-[1.02]' : 'bg-slate-50/50 border-slate-100 text-slate-400 hover:bg-white hover:border-slate-200'}`}
+                                        >
+                                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-colors ${formData.checkin_method === 'both' ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-400'}`}>
+                                                <Icons.sparkles className="w-6 h-6" />
+                                            </div>
+                                            <span className="font-black text-xs uppercase tracking-wider">Cả hai</span>
+                                        </button>
+                                    </div>
+                                    <p className="mt-3 text-[11px] text-slate-500 font-medium">
+                                        {formData.checkin_method === 'both' ? '💡 Học sinh có thể dùng QR hoặc Khuôn mặt để điểm danh (1 trong 2).' :
+                                            formData.checkin_method === 'face' ? '💡 Bắt đầu điểm danh bằng nhận diện khuôn mặt AI.' :
+                                                '💡 Quét mã QR học sinh để ghi nhận sự kiện.'}
+                                    </p>
                                 </div>
 
                                 <div className="mt-4 p-4 bg-emerald-50 rounded-2xl">
@@ -1025,16 +1149,27 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                         />
                                     </label>
                                     {newParticipants.length > 0 && (
-                                        <button
-                                            type="button"
-                                            onClick={exportParticipantsToExcel}
-                                            className="px-4 py-2 bg-blue-100 text-blue-700 rounded-xl font-bold text-sm hover:bg-blue-200 flex items-center gap-2"
-                                        >
-                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                                                <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
-                                            </svg>
-                                            Xuất Excel ({newParticipants.length})
-                                        </button>
+                                        <>
+                                            <button
+                                                type="button"
+                                                onClick={exportParticipantsToExcel}
+                                                className="px-4 py-2 bg-blue-100 text-blue-700 rounded-xl font-bold text-sm hover:bg-blue-200 flex items-center gap-2"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                                                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                                                </svg>
+                                                Xuất Excel ({newParticipants.length})
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={exportAllQRCodes}
+                                                disabled={isLoading}
+                                                className="px-4 py-2 bg-indigo-100 text-indigo-700 rounded-xl font-bold text-sm hover:bg-indigo-200 flex items-center gap-2 disabled:opacity-50"
+                                            >
+                                                <Icons.qr className="w-4 h-4" />
+                                                Xuất hàng loạt QR (.zip)
+                                            </button>
+                                        </>
                                     )}
                                 </div>
                                 <p className="text-xs text-slate-500 mt-2">
@@ -1053,6 +1188,11 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                             <label className="block text-xs font-bold text-slate-600 mb-1">Họ và tên *</label>
                                             <input type="text" value={newParticipantForm.full_name} onChange={e => setNewParticipantForm({ ...newParticipantForm, full_name: e.target.value })}
                                                 placeholder="VD: Nguyễn Văn A" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl" />
+                                        </div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-600 mb-1">Mã định danh (Số báo danh/MSSV) *</label>
+                                            <input type="text" value={newParticipantForm.student_code} onChange={e => setNewParticipantForm({ ...newParticipantForm, student_code: e.target.value })}
+                                                placeholder="VD: 2024001" className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl" />
                                         </div>
                                         <div>
                                             <label className="block text-xs font-bold text-slate-600 mb-1">Ngày sinh</label>
@@ -1148,6 +1288,17 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                                             <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L6.832 19.82a4.5 4.5 0 01-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 011.13-1.897L16.863 4.487zm0 0L19.5 7.125" />
                                                         </svg>
                                                     </button>
+                                                    {/* QR Download button - Only for new non-system participants */}
+                                                    {(p.isNew || !p.user_id) && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => downloadParticipantQRCode(p)}
+                                                            className="p-2 text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                                            title="Tải mã QR"
+                                                        >
+                                                            <Icons.qr className="w-4 h-4" />
+                                                        </button>
+                                                    )}
                                                     {/* Delete button */}
                                                     <button
                                                         type="button"
@@ -1311,6 +1462,27 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                     onChange={(e) => setEditingParticipant({ ...editingParticipant, address: e.target.value })}
                                     className="w-full px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                                 />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-bold text-slate-600 mb-1">Mã định danh (QR Code) *</label>
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={editingParticipant.student_code || ''}
+                                        onChange={(e) => setEditingParticipant({ ...editingParticipant, student_code: e.target.value })}
+                                        placeholder="VD: 2024001"
+                                        className="flex-1 px-4 py-3 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => downloadParticipantQRCode(editingParticipant)}
+                                        className="p-3 bg-indigo-50 text-indigo-600 rounded-xl hover:bg-indigo-100 transition-colors"
+                                        title="Tải QR"
+                                    >
+                                        <Icons.qr className="w-5 h-5" />
+                                    </button>
+                                </div>
                             </div>
                         </div>
 

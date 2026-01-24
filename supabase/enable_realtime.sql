@@ -1,25 +1,11 @@
--- ==========================================
--- KÍCH HOẠT REALTIME CHO CÁC BẢNG QUAN TRỌNG
--- ==========================================
+-- =====================================================
+-- ENABLE REALTIME FOR BOARDING SYSTEM
+-- Run this in Supabase SQL Editor
+-- =====================================================
 
--- Thêm các bảng vào danh sách publication của Supabase Realtime
--- giúp ứng dụng nhận thông báo tức thì mà không cần F5.
+-- 1. Thêm bảng boarding_checkins vào publication supabase_realtime
+-- Điều này cho phép client nhận thông báo khi có bản ghi mới hoặc cập nhật
+ALTER PUBLICATION supabase_realtime ADD TABLE boarding_checkins;
 
-DO $$
-BEGIN
-    -- 1. Kích hoạt cho bảng thông báo (Học sinh)
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'notifications'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE notifications;
-    END IF;
-
-    -- 2. Kích hoạt cho bảng đơn xin phép (Admin)
-    IF NOT EXISTS (
-        SELECT 1 FROM pg_publication_tables 
-        WHERE pubname = 'supabase_realtime' AND tablename = 'exit_permissions'
-    ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE exit_permissions;
-    END IF;
-END $$;
+-- 2. (Tùy chọn) Đảm bảo bảng có Full Replica Identity nếu bạn muốn nhận dữ liệu cũ khi UPDATE
+-- ALTER TABLE boarding_checkins REPLICA IDENTITY FULL;

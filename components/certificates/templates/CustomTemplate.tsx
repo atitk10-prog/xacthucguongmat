@@ -45,7 +45,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
         title: customConfig?.labels?.title || 'Certificate',
         presentedTo: customConfig?.labels?.presentedTo || 'Trao tặng cho',
         eventPrefix: customConfig?.labels?.eventPrefix || 'Đã tham gia sự kiện',
-        datePrefix: customConfig?.labels?.datePrefix || 'Ngày cấp:',
+        datePrefix: customConfig?.labels?.datePrefix || 'Ngày cấp',
         signature: customConfig?.labels?.signature || 'Ban Tổ Chức',
         entryNo: customConfig?.labels?.entryNo || 'Vào sổ số: ______'
     };
@@ -165,10 +165,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                             <Editable val={labels.entryNo} k="entryNo" />
                         </p>
                         <div className="text-lg">
-                            <span className="italic opacity-80 mr-2">
-                                <Editable val={labels.datePrefix} k="datePrefix" />
-                            </span>
-                            {data.issuedDate && <span className="font-bold">{data.issuedDate}</span>}
+                            <Editable val={labels.datePrefix} k="datePrefix" />
                         </div>
                     </div>
 

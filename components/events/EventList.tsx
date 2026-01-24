@@ -7,6 +7,8 @@ interface EventListProps {
     onSelectEvent: (event: Event) => void;
     onCreateEvent: () => void;
     onEditEvent?: (event: Event) => void;
+    currentUser: User;
+    teacherPermissions: any[];
 }
 
 // SVG Icons
@@ -110,7 +112,17 @@ const getEventStatus = (event: Event): EventStatus => {
     return 'completed'; // Past
 };
 
-const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onEditEvent }) => {
+const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onEditEvent, currentUser, teacherPermissions }) => {
+    // Determine permissions for this module
+    const modulePerm = teacherPermissions?.find(p => p.module_id === 'events');
+    const isTeacher = currentUser.role === 'teacher';
+    const isAdmin = currentUser.role === 'admin';
+
+    // logic: Admin always can. Teacher only if enabled.
+    const canCreate = isAdmin || (modulePerm?.is_enabled && modulePerm?.can_edit);
+    const canEdit = isAdmin || (modulePerm?.is_enabled && modulePerm?.can_edit);
+    const canDelete = isAdmin || (modulePerm?.is_enabled && modulePerm?.can_delete);
+
     const [events, setEvents] = useState<Event[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [filter, setFilter] = useState<'all' | EventStatus>('all');
@@ -126,6 +138,7 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
     const [participantCounts, setParticipantCounts] = useState<Record<string, number>>({});
     const [checkedInCounts, setCheckedInCounts] = useState<Record<string, number>>({});
     const [showQRModal, setShowQRModal] = useState<Event | null>(null);
+    const [qrMode, setQrMode] = useState<'self' | 'staff'>('self');
 
     useEffect(() => {
         loadEvents();
@@ -389,9 +402,11 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                     >
                         {Icons.lightbulb}
                     </button>
-                    <button onClick={onCreateEvent} className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black text-sm flex items-center gap-2 shadow-lg hover:bg-indigo-700">
-                        {Icons.plus} TẠO SỰ KIỆN MỚI
-                    </button>
+                    {canCreate && (
+                        <button onClick={onCreateEvent} className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-black text-sm flex items-center gap-2 shadow-lg hover:bg-indigo-700">
+                            {Icons.plus} TẠO SỰ KIỆN MỚI
+                        </button>
+                    )}
                 </div>
             </div>
 
@@ -640,27 +655,33 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                                             >
                                                 {Icons.users}
                                             </button>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); handleDuplicateEvent(event); }}
-                                                className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                                                title="Nhân bản"
-                                            >
-                                                {Icons.copy}
-                                            </button>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); onEditEvent?.(event); }}
-                                                className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
-                                                title="Sửa"
-                                            >
-                                                {Icons.edit}
-                                            </button>
-                                            <button
-                                                onClick={(e) => { e.stopPropagation(); setConfirmDelete(event); }}
-                                                className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                                                title="Xóa"
-                                            >
-                                                {Icons.trash}
-                                            </button>
+                                            {canEdit && (
+                                                <>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); handleDuplicateEvent(event); }}
+                                                        className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                                                        title="Nhân bản"
+                                                    >
+                                                        {Icons.copy}
+                                                    </button>
+                                                    <button
+                                                        onClick={(e) => { e.stopPropagation(); onEditEvent?.(event); }}
+                                                        className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                                                        title="Sửa"
+                                                    >
+                                                        {Icons.edit}
+                                                    </button>
+                                                </>
+                                            )}
+                                            {canDelete && (
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); setConfirmDelete(event); }}
+                                                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                                                    title="Xóa"
+                                                >
+                                                    {Icons.trash}
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
 
@@ -854,42 +875,65 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                         </div>
 
                         <div className="bg-white p-4 rounded-3xl border-2 border-slate-100 shadow-xl inline-block mb-6 relative group">
-                            <QRImage url={`${window.location.origin}/self-checkin/${showQRModal.id}`} />
+                            <QRImage url={qrMode === 'self' ? `${window.location.origin}/self-checkin/${showQRModal.id}` : `${window.location.origin}/checkin/${showQRModal.id}?token=EDUCHECK_STAFF`} />
                             <div className="absolute inset-0 bg-white/10 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-2xl">
-                                <span className="px-3 py-1 bg-slate-900 text-white text-[10px] font-bold rounded-lg">Mã tự điểm danh</span>
+                                <span className="px-3 py-1 bg-slate-900 text-white text-[10px] font-bold rounded-lg">
+                                    {qrMode === 'self' ? 'Mã tự điểm danh' : 'Mã máy điểm danh phụ'}
+                                </span>
                             </div>
                         </div>
 
                         <div className="space-y-4">
+                            <div className="flex gap-2 bg-slate-100 p-1 rounded-xl mb-4">
+                                <button
+                                    onClick={() => setQrMode('self')}
+                                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${qrMode === 'self' ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:bg-white/50'}`}
+                                >
+                                    HỌC SINH TỰ QUÉT
+                                </button>
+                                <button
+                                    onClick={() => setQrMode('staff')}
+                                    className={`flex-1 py-1.5 rounded-lg text-[10px] font-black transition-all ${qrMode === 'staff' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:bg-white/50'}`}
+                                >
+                                    MỞ MÁY ĐIỂM DANH PHỤ
+                                </button>
+                            </div>
+
                             <div>
                                 <h4 className="font-bold text-slate-900 line-clamp-1">{showQRModal.name}</h4>
                                 <p className="text-xs text-slate-500 font-medium">{showQRModal.location || 'Tại trường'}</p>
                             </div>
 
-                            <div className="grid grid-cols-2 gap-3">
+                            <div className="grid grid-cols-2 gap-2">
                                 <button
                                     onClick={() => {
-                                        const url = `${window.location.origin}/self-checkin/${showQRModal.id}`;
+                                        const url = qrMode === 'self'
+                                            ? `${window.location.origin}/self-checkin/${showQRModal.id}`
+                                            : `${window.location.origin}/checkin/${showQRModal.id}?token=EDUCHECK_STAFF`;
                                         navigator.clipboard.writeText(url);
-                                        setNotification({ type: 'success', message: 'Đã sao chép liên kết tự điểm danh!' });
+                                        setNotification({ type: 'success', message: 'Đã sao chép liên kết!' });
                                         setTimeout(() => setNotification(null), 3000);
                                     }}
-                                    className="px-4 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all flex items-center justify-center gap-2"
+                                    className="px-3 py-2.5 bg-slate-100 text-slate-700 rounded-xl font-bold text-[10px] hover:bg-slate-200 transition-all flex items-center justify-center gap-1.5"
                                 >
-                                    {Icons.copy} Link SV
+                                    {Icons.copy} Copy Link
                                 </button>
                                 <button
                                     onClick={() => {
                                         const checkinUrl = `${window.location.origin}/checkin/${showQRModal.id}`;
                                         window.open(checkinUrl, '_blank');
                                     }}
-                                    className="px-4 py-3 bg-indigo-600 text-white rounded-xl font-bold text-xs hover:bg-indigo-700 transition-all flex items-center justify-center gap-2 shadow-lg shadow-indigo-100"
+                                    className="px-3 py-2.5 bg-indigo-600 text-white rounded-xl font-bold text-[10px] hover:bg-indigo-700 transition-all flex items-center justify-center gap-1.5 shadow-lg shadow-indigo-100"
                                 >
                                     {Icons.calendar} Máy chính
                                 </button>
                             </div>
 
-                            <p className="text-[10px] text-slate-400 font-medium">Học sinh quét mã để tự điểm danh bằng điện thoại</p>
+                            <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
+                                {qrMode === 'self'
+                                    ? 'Học sinh quét mã để tự điểm danh bằng điện thoại cá nhân (Cần GPS)'
+                                    : 'Quét để mở máy điểm danh phụ trên điện thoại/máy tính khác (Không cần đăng nhập)'}
+                            </p>
                         </div>
                     </div>
                 </div>

@@ -81,10 +81,9 @@ const ClassicTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfi
 
                     <div className="w-full flex justify-between items-end mt-auto px-12">
                         <div className="text-center">
-                            <p className="mb-2 italic">
+                            <p className="font-bold">
                                 <Editable val={labels.datePrefix} k="datePrefix" />
                             </p>
-                            <p className="font-bold">{data.issuedDate}</p>
                         </div>
 
                         {customConfig?.visibility?.qr !== false && (

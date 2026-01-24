@@ -109,10 +109,7 @@ const LuxuryTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                             <Editable val={labels.entryNo} k="entryNo" />
                         </p>
                         <p className="text-sm font-bold">
-                            <span className="italic font-normal mr-1">
-                                <Editable val={labels.datePrefix} k="datePrefix" />
-                            </span>
-                            {data.issuedDate}
+                            <Editable val={labels.datePrefix} k="datePrefix" />
                         </p>
                     </div>
 

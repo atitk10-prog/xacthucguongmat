@@ -243,7 +243,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         loadConfig();
 
         // Try to process offline queue on mount
-        dataService.processOfflineQueue();
+        dataService.syncOfflineData();
     }, []);
 
     // Global Keyboard Listener for HID Scanners
@@ -310,9 +310,11 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     for (const user of response.data) {
                         if (user.face_descriptor) {
                             try {
-                                const descriptor = new Float32Array(JSON.parse(user.face_descriptor));
-                                faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
-                                count++;
+                                const descriptor = faceService.stringToDescriptor(user.face_descriptor);
+                                if (descriptor.length > 0) {
+                                    faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
+                                    count++;
+                                }
                             } catch (e) { console.warn('Invalid descriptor for', user.full_name); }
                         }
                     }
@@ -837,23 +839,73 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     </button>
 
                     {/* Back Button */}
-                    {/* Face Frame */}
-                    <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 border-2 rounded-3xl transition-all duration-300 ${stabilityProgress >= 100
-                        ? 'border-emerald-400 shadow-[0_0_30px_rgba(52,211,153,0.5)] scale-105'
+                    {/* Scan Effects Overlay */}
+                    {checkinMode === 'face' && stream && (
+                        <div className="absolute inset-0 pointer-events-none z-10 overflow-hidden">
+                            {/* Scanner Line */}
+                            <div className="absolute top-0 left-0 w-full h-[2px] bg-indigo-500 shadow-[0_0_15px_rgba(99,102,241,0.8)] animate-scanner"></div>
+
+                            {/* Corner Borders */}
+                            <div className="absolute top-8 left-8 w-12 h-12 border-t-4 border-l-4 border-indigo-500/50 rounded-tl-2xl"></div>
+                            <div className="absolute top-8 right-8 w-12 h-12 border-t-4 border-r-4 border-indigo-500/50 rounded-tr-2xl"></div>
+                            <div className="absolute bottom-8 left-8 w-12 h-12 border-b-4 border-l-4 border-indigo-500/50 rounded-bl-2xl"></div>
+                            <div className="absolute bottom-8 right-8 w-12 h-12 border-b-4 border-r-4 border-indigo-500/50 rounded-br-2xl"></div>
+                        </div>
+                    )}
+
+                    {/* Face Frame Upgrade */}
+                    <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-72 h-72 border-2 rounded-[32px] transition-all duration-300 z-20 ${stabilityProgress >= 100
+                        ? 'border-emerald-400 shadow-[0_0_50px_rgba(52,211,153,0.3)] scale-105'
                         : faceDetected
-                            ? 'border-white/50'
-                            : 'border-white/10'
+                            ? 'border-indigo-500 shadow-[0_0_20px_rgba(99,102,241,0.2)]'
+                            : 'border-white/20'
                         }`}>
+
+                        {/* Interior Scan Effect */}
+                        {faceDetected && !isProcessing && stabilityProgress < 100 && (
+                            <div className="absolute inset-0 bg-indigo-500/5 animate-pulse rounded-[30px]"></div>
+                        )}
+
+                        {/* Stability Ring */}
+                        {faceDetected && stabilityProgress > 0 && stabilityProgress < 100 && (
+                            <div className="absolute -inset-4 border-2 border-indigo-500/20 rounded-[40px] animate-reverse-spin"></div>
+                        )}
+
                         {/* Center guide */}
                         {!faceDetected && (
-                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white/10">
-                                <UserCheck className="w-24 h-24" strokeWidth={1} />
+                            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 text-white/5">
+                                <UserCheck className="w-32 h-32" strokeWidth={0.5} />
                             </div>
                         )}
 
-                        {/* Progress Border (Optional, simple version) */}
-                        <div className="absolute bottom-0 left-0 h-1 bg-emerald-500 transition-all duration-200" style={{ width: `${stabilityProgress}%` }}></div>
+                        {/* Loading State in Frame */}
+                        {isProcessing && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-indigo-600/20 rounded-[30px] backdrop-blur-[2px]">
+                                <div className="w-12 h-12 border-4 border-white/30 border-t-white rounded-full animate-spin"></div>
+                            </div>
+                        )}
                     </div>
+
+                    <style dangerouslySetInnerHTML={{
+                        __html: `
+                    @keyframes scanner {
+                        0% { top: 10%; opacity: 0; }
+                        10% { opacity: 1; }
+                        90% { opacity: 1; }
+                        100% { top: 90%; opacity: 0; }
+                    }
+                    .animate-scanner {
+                        animation: scanner 3s linear infinite;
+                    }
+                    @keyframes reverse-spin {
+                        from { transform: rotate(360deg); }
+                        to { transform: rotate(0deg); }
+                    }
+                    .animate-reverse-spin {
+                        animation: reverse-spin 10s linear infinite;
+                    }
+                `
+                    }} />
                 </div>
             </div>
 
@@ -867,17 +919,17 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     : 'bg-slate-800/50 border-white/10'
                     }`}>
 
-                    <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-white/80 font-bold flex items-center gap-2 text-sm uppercase tracking-wider">
-                            <Clock className="w-4 h-4 text-indigo-400" />
+                    <div className="flex items-center justify-between mb-4 gap-2">
+                        <h3 className="text-white/80 font-bold flex items-center gap-2 text-xs sm:text-sm uppercase tracking-wider truncate flex-1">
+                            <Clock className="w-4 h-4 text-indigo-400 flex-shrink-0" />
                             Trạng thái hiện tại
                         </h3>
                         {/* System Ready Indicator */}
-                        <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold ${systemReady
+                        <div className={`flex items-center gap-2 px-2 sm:px-3 py-1 rounded-full text-[10px] sm:text-xs font-bold flex-shrink-0 ${systemReady
                             ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
                             : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'
                             }`}>
-                            <div className={`w-2 h-2 rounded-full ${systemReady ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></div>
+                            <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${systemReady ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></div>
                             {systemReady ? 'Sẵn sàng' : 'Đang tải...'}
                         </div>
                     </div>
@@ -895,7 +947,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                             </div>
 
                             {/* Status Badge */}
-                            <div className={`px-4 py-3 rounded-xl border flex items-center gap-3 ${slotStatus === 'on_time'
+                            <div className={`px-3 sm:px-4 py-2 sm:py-3 rounded-xl border flex items-center gap-2 sm:gap-3 ${slotStatus === 'on_time'
                                 ? 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400'
                                 : 'bg-amber-500/20 border-amber-500/50 text-amber-400'
                                 }`}>
@@ -908,11 +960,11 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                                         <AlertTriangle className="w-5 h-5" />
                                     </div>
                                 )}
-                                <div>
-                                    <p className="font-bold text-lg leading-tight">
+                                <div className="min-w-0">
+                                    <p className="font-bold text-base sm:text-lg leading-tight truncate">
                                         {slotStatus === 'on_time' ? 'Đúng Giờ' : 'Đi Muộn'}
                                     </p>
-                                    <p className="text-xs opacity-80">
+                                    <p className="text-[10px] sm:text-xs opacity-80 truncate">
                                         {slotStatus === 'on_time' ? 'Check-in hợp lệ' : 'Sẽ bị trừ điểm'}
                                     </p>
                                 </div>
@@ -931,7 +983,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
 
                 {/* Recent Use */}
-                < div className="flex-1 bg-slate-800/50 backdrop-blur-md p-5 rounded-3xl border border-white/10 shadow-xl overflow-hidden flex flex-col" >
+                <div className="flex-1 bg-slate-800/50 backdrop-blur-md p-5 rounded-3xl border border-white/10 shadow-xl overflow-hidden flex flex-col" >
                     <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2 text-sm uppercase tracking-wider">
                         <History className="w-4 h-4 text-emerald-400" />
                         Vừa Check-in
@@ -949,8 +1001,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                                         {item.name.charAt(0)}
                                     </div>
                                     <div className="flex-1 min-w-0">
-                                        <p className="text-white font-bold truncate">{item.name}</p>
-                                        <p className="text-indigo-300 text-xs flex items-center gap-1">
+                                        <p className="text-white font-bold truncate text-sm sm:text-base">{item.name}</p>
+                                        <p className="text-indigo-300 text-[10px] sm:text-xs flex items-center gap-1 truncate">
                                             {item.type} • {item.time}
                                         </p>
                                     </div>
@@ -1058,7 +1110,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     </div>
                 )
             }
-        </div >
+        </div>
     );
 };
 

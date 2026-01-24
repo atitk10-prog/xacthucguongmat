@@ -6,7 +6,7 @@ import { generateSingleExportPDF, generateBatchPDF, getTemplateComponent } from 
 import {
     Loader2, Landmark, Sparkles, Cpu, Crown, Upload, Image as ImageIcon, LayoutTemplate,
     Rocket, Eye, Archive, Download, CheckCircle, AlertCircle, Award, Settings2, Edit3, ChevronDown,
-    Palette, Type, Users
+    Palette, Type, Users, Search, ChevronLeft, ChevronRight
 } from 'lucide-react';
 
 import { ToastProvider, useToast } from '../ui/Toast';
@@ -47,6 +47,14 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
     const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
     const [activeTab, setActiveTab] = useState<'design' | 'content' | 'recipients'>('design'); // UI Tab State
     const [savedPresets, setSavedPresets] = useState<any[]>([]); // Presets
+
+    // Pagination/Search States
+    const [recipientSearch, setRecipientSearch] = useState('');
+    const [recipientPage, setRecipientPage] = useState(1);
+    const recipientsPerPage = 20;
+
+    const [recentCertsPage, setRecentCertsPage] = useState(1);
+    const recentCertsPerPage = 6;
 
     // Load presets on mount
     useEffect(() => {
@@ -123,11 +131,23 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
             title: 'Certificate',
             presentedTo: 'Trao tặng cho',
             eventPrefix: 'Đã tham gia sự kiện',
-            datePrefix: 'Ngày cấp:',
+            datePrefix: 'Ngày cấp',
             signature: 'Ban Tổ Chức',
             entryNo: 'Vào sổ số: ______'
         }
     });
+    useEffect(() => {
+        if (formData.issuedDate) {
+            setCustomConfig(prev => ({
+                ...prev,
+                labels: {
+                    ...prev.labels,
+                    datePrefix: `Ngày cấp: ${formData.issuedDate}`
+                }
+            }));
+        }
+    }, [formData.issuedDate]);
+
     useEffect(() => {
         loadData();
     }, []);
@@ -762,32 +782,87 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                     <button type="button" onClick={() => setRecipientSource('event')} className={`flex-1 py-1.5 text-xs font-bold rounded border ${recipientSource === 'event' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white'}`}>Theo Sự kiện</button>
                                                 </div>
 
-                                                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white max-h-60 flex flex-col">
+                                                <div className="relative mb-3">
+                                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Tìm kiếm người nhận..."
+                                                        value={recipientSearch}
+                                                        onChange={(e) => {
+                                                            setRecipientSearch(e.target.value);
+                                                            setRecipientPage(1);
+                                                        }}
+                                                        className="w-full pl-9 pr-4 py-2 bg-slate-100 border-none rounded-xl text-xs focus:ring-2 focus:ring-indigo-500"
+                                                    />
+                                                </div>
+
+                                                <div className="border border-slate-200 rounded-xl overflow-hidden bg-white max-h-[400px] flex flex-col">
                                                     {/* Toolbar */}
-                                                    <div className="p-2 border-b border-slate-100 bg-slate-50 flex gap-2">
-                                                        <button type="button" onClick={() => setSelectedUserIds((recipientSource === 'users' ? users : eventParticipants).map((u: any) => u.id || u.user_id))} className="text-[10px] font-bold text-indigo-600 hover:bg-slate-200 px-2 py-1 rounded">Chọn tất cả</button>
-                                                        <button type="button" onClick={() => setSelectedUserIds([])} className="text-[10px] font-bold text-slate-500 hover:bg-slate-200 px-2 py-1 rounded">Bỏ chọn</button>
+                                                    <div className="p-2 border-b border-slate-100 bg-slate-50 flex justify-between items-center text-[10px] font-bold">
+                                                        <div className="flex gap-2">
+                                                            <button type="button" onClick={() => setSelectedUserIds((recipientSource === 'users' ? users : eventParticipants).map((u: any) => u.id || u.user_id))} className="text-indigo-600 hover:bg-slate-200 px-2 py-1 rounded">Chọn tất cả</button>
+                                                            <button type="button" onClick={() => setSelectedUserIds([])} className="text-slate-500 hover:bg-slate-200 px-2 py-1 rounded">Bỏ chọn</button>
+                                                        </div>
+                                                        <span className="text-slate-400">Đã chọn: {selectedUserIds.length}</span>
                                                     </div>
+
                                                     <div className="overflow-y-auto p-1 space-y-0.5 flex-1">
-                                                        {(recipientSource === 'users' ? users : eventParticipants).map((u: any) => {
-                                                            const uid = u.id || u.user_id;
-                                                            return (
-                                                                <label key={uid} className="flex items-center gap-2 p-2 hover:bg-slate-50 rounded cursor-pointer">
-                                                                    <input
-                                                                        type="checkbox"
-                                                                        checked={selectedUserIds.includes(uid)}
-                                                                        onChange={(e) => {
-                                                                            if (e.target.checked) setSelectedUserIds(prev => [...prev, uid]);
-                                                                            else setSelectedUserIds(prev => prev.filter(id => id !== uid));
-                                                                        }}
-                                                                        className="rounded text-indigo-600 w-4 h-4"
-                                                                    />
-                                                                    <span className="text-xs font-medium truncate">{u.full_name}</span>
-                                                                </label>
+                                                        {(() => {
+                                                            const filtered = (recipientSource === 'users' ? users : eventParticipants).filter((u: any) =>
+                                                                u.full_name?.toLowerCase().includes(recipientSearch.toLowerCase()) ||
+                                                                u.student_code?.toLowerCase().includes(recipientSearch.toLowerCase())
                                                             );
-                                                        })}
+                                                            const totalRecipientPages = Math.ceil(filtered.length / recipientsPerPage);
+                                                            const displayRecipients = filtered.slice((recipientPage - 1) * recipientsPerPage, recipientPage * recipientsPerPage);
+
+                                                            return (
+                                                                <>
+                                                                    {displayRecipients.map((u: any) => {
+                                                                        const uid = u.id || u.user_id;
+                                                                        return (
+                                                                            <label key={uid} className="flex items-center gap-2 p-2 hover:bg-indigo-50/50 rounded-lg cursor-pointer transition-colors">
+                                                                                <input
+                                                                                    type="checkbox"
+                                                                                    checked={selectedUserIds.includes(uid)}
+                                                                                    onChange={(e) => {
+                                                                                        if (e.target.checked) setSelectedUserIds(prev => [...prev, uid]);
+                                                                                        else setSelectedUserIds(prev => prev.filter(id => id !== uid));
+                                                                                    }}
+                                                                                    className="rounded text-indigo-600 w-4 h-4"
+                                                                                />
+                                                                                <div className="min-w-0">
+                                                                                    <p className="text-xs font-bold text-slate-700 truncate">{u.full_name}</p>
+                                                                                    <p className="text-[10px] text-slate-400">{u.student_code || 'No Code'}</p>
+                                                                                </div>
+                                                                            </label>
+                                                                        );
+                                                                    })}
+
+                                                                    {totalRecipientPages > 1 && (
+                                                                        <div className="flex items-center justify-between p-2 sticky bottom-0 bg-white border-t border-slate-100">
+                                                                            <button
+                                                                                type="button"
+                                                                                disabled={recipientPage === 1}
+                                                                                onClick={() => setRecipientPage(p => p - 1)}
+                                                                                className="p-1 hover:bg-slate-100 rounded disabled:opacity-30"
+                                                                            >
+                                                                                <ChevronLeft className="w-4 h-4" />
+                                                                            </button>
+                                                                            <span className="text-[10px] text-slate-500 font-bold">Trang {recipientPage}/{totalRecipientPages}</span>
+                                                                            <button
+                                                                                type="button"
+                                                                                disabled={recipientPage === totalRecipientPages}
+                                                                                onClick={() => setRecipientPage(p => p + 1)}
+                                                                                className="p-1 hover:bg-slate-100 rounded disabled:opacity-30"
+                                                                            >
+                                                                                <ChevronRight className="w-4 h-4" />
+                                                                            </button>
+                                                                        </div>
+                                                                    )}
+                                                                </>
+                                                            );
+                                                        })()}
                                                     </div>
-                                                    <div className="p-1.5 bg-slate-50 text-[10px] text-center font-bold text-slate-500 border-t">Đã chọn: {selectedUserIds.length}</div>
                                                 </div>
                                             </div>
                                         </div>
@@ -858,40 +933,70 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                 Đã cấp gần đây
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                {certificates.slice(-6).reverse().map(cert => (
-                                    <div key={cert.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all group">
-                                        <div className="min-w-0">
-                                            <p className="font-bold text-slate-900 truncate">{cert.title}</p>
-                                            <p className="text-xs text-slate-500 truncate">{users.find(u => u.id === cert.user_id)?.full_name}</p>
-                                        </div>
-                                        <div className="flex gap-2">
-                                            <button
-                                                onClick={() => handleSinglePDFExport(cert)}
-                                                className="p-2 bg-white rounded-lg shadow-sm text-indigo-600 hover:bg-indigo-50 transition-colors border border-slate-100"
-                                                title="Tải PDF"
-                                            >
-                                                <Download className="w-4 h-4" />
-                                            </button>
-                                            <button
-                                                onClick={async () => {
-                                                    if (window.confirm('Bạn có chắc chắn muốn xóa chứng nhận này?')) {
-                                                        const res = await dataService.deleteCertificate(cert.id);
-                                                        if (res.success) {
-                                                            setCertificates(prev => prev.filter(c => c.id !== cert.id));
-                                                            toastSuccess('Đã xóa chứng nhận');
-                                                        } else {
-                                                            toastError(res.error || 'Lỗi xóa');
-                                                        }
-                                                    }
-                                                }}
-                                                className="p-2 bg-white rounded-lg shadow-sm text-red-600 hover:bg-red-50 transition-colors border border-slate-100"
-                                                title="Xóa"
-                                            >
-                                                <Archive className="w-4 h-4" />
-                                            </button>
-                                        </div>
-                                    </div>
-                                ))}
+                                {(() => {
+                                    const sorted = [...certificates].reverse();
+                                    const totalCertPages = Math.ceil(sorted.length / recentCertsPerPage);
+                                    const displayCerts = sorted.slice((recentCertsPage - 1) * recentCertsPerPage, recentCertsPage * recentCertsPerPage);
+
+                                    return (
+                                        <>
+                                            {displayCerts.map(cert => (
+                                                <div key={cert.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all group">
+                                                    <div className="min-w-0">
+                                                        <p className="font-bold text-slate-900 truncate">{cert.title}</p>
+                                                        <p className="text-xs text-slate-500 truncate">{users.find(u => u.id === cert.user_id)?.full_name}</p>
+                                                    </div>
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={() => handleSinglePDFExport(cert)}
+                                                            className="p-2 bg-white rounded-lg shadow-sm text-indigo-600 hover:bg-indigo-50 transition-colors border border-slate-100"
+                                                            title="Tải PDF"
+                                                        >
+                                                            <Download className="w-4 h-4" />
+                                                        </button>
+                                                        <button
+                                                            onClick={async () => {
+                                                                if (window.confirm('Bạn có chắc chắn muốn xóa chứng nhận này?')) {
+                                                                    const res = await dataService.deleteCertificate(cert.id);
+                                                                    if (res.success) {
+                                                                        setCertificates(prev => prev.filter(c => c.id !== cert.id));
+                                                                        toastSuccess('Đã xóa chứng nhận');
+                                                                    } else {
+                                                                        toastError(res.error || 'Lỗi xóa');
+                                                                    }
+                                                                }
+                                                            }}
+                                                            className="p-2 bg-white rounded-lg shadow-sm text-red-600 hover:bg-red-50 transition-colors border border-slate-100"
+                                                            title="Xóa"
+                                                        >
+                                                            <Archive className="w-4 h-4" />
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            ))}
+
+                                            {totalCertPages > 1 && (
+                                                <div className="col-span-1 md:col-span-2 flex items-center justify-center gap-4 mt-4 py-2 border-t border-slate-50">
+                                                    <button
+                                                        disabled={recentCertsPage === 1}
+                                                        onClick={() => setRecentCertsPage(p => p - 1)}
+                                                        className="p-2 hover:bg-slate-100 rounded-lg disabled:opacity-30"
+                                                    >
+                                                        <ChevronLeft className="w-5 h-5" />
+                                                    </button>
+                                                    <span className="text-xs font-bold text-slate-500">Trang {recentCertsPage}/{totalCertPages}</span>
+                                                    <button
+                                                        disabled={recentCertsPage === totalCertPages}
+                                                        onClick={() => setRecentCertsPage(p => p + 1)}
+                                                        className="p-2 hover:bg-slate-100 rounded-lg disabled:opacity-30"
+                                                    >
+                                                        <ChevronRight className="w-5 h-5" />
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </>
+                                    );
+                                })()}
                             </div>
                         </div>
                     </div>

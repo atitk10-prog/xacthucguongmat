@@ -7,6 +7,7 @@ import { AlertTriangle, CheckCircle, XCircle } from 'lucide-react';
 interface ExitPermissionProps {
     currentUser?: User;
     onBack?: () => void;
+    teacherPermissions: any[];
 }
 
 interface PermissionRequest {
@@ -85,7 +86,19 @@ const CustomTimePicker = ({ value, onChange, className = '' }: { value: string, 
 };
 
 
-const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) => {
+const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack, teacherPermissions }) => {
+    // Permission checks
+    const modulePerm = teacherPermissions?.find(p => p.module_id === 'boarding');
+    const isTeacher = currentUser?.role === 'teacher';
+    const isAdmin = currentUser?.role === 'admin';
+
+    // canAccessAdminView: can see the 'Management' tab
+    const canAccessAdminView = isAdmin || (isTeacher && modulePerm?.is_enabled);
+    // canEdit: can approve/reject/edit
+    const canEditPermission = isAdmin || (isTeacher && modulePerm?.is_enabled && modulePerm?.can_edit);
+    // canDelete: can delete records
+    const canDeletePermission = isAdmin || (isTeacher && modulePerm?.is_enabled && modulePerm?.can_delete);
+
     const { success: toastSuccess, error: toastError } = useToast();
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
@@ -93,9 +106,8 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
     const [allRequests, setAllRequests] = useState<PermissionRequest[]>([]);
     const [allPendingRequests, setAllPendingRequests] = useState<PermissionRequest[]>([]);
 
-    // Admin mode
-    const isAdmin = currentUser?.role === 'admin' || currentUser?.role === 'teacher';
-    const [viewMode, setViewMode] = useState<'student' | 'admin'>(isAdmin ? 'admin' : 'student');
+    // View mode determined by role and access rights
+    const [viewMode, setViewMode] = useState<'student' | 'admin'>(canAccessAdminView ? 'admin' : 'student');
     const [adminTab, setAdminTab] = useState<'pending' | 'history'>('pending');
     const [showRejectModal, setShowRejectModal] = useState<string | null>(null);
     const [rejectionReason, setRejectionReason] = useState('');
@@ -367,7 +379,7 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
                         <Icons.FileText className="w-8 h-8 text-indigo-600" />
                         Xin phép ra ngoài
                     </h2>
-                    {isAdmin ? (
+                    {canAccessAdminView ? (
                         <div className="flex bg-slate-100 p-1 rounded-lg mt-2 w-fit">
                             <button
                                 onClick={() => setViewMode('student')}
@@ -381,7 +393,7 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
                             >
                                 Quản lý ({allPendingRequests.length})
                             </button>
-                            {isAdmin && viewMode === 'admin' && (
+                            {canAccessAdminView && viewMode === 'admin' && (
                                 <button
                                     onClick={() => { loadAdminData(); toastSuccess('Đã làm mới dữ liệu'); }}
                                     className="ml-2 p-1 rounded-md text-slate-400 hover:text-indigo-600 hover:bg-white transition-all"
@@ -437,32 +449,36 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
                                 ) : (
                                     allPendingRequests.map(req => (
                                         <div key={req.id} className="bg-slate-50 rounded-2xl p-4 border border-slate-100 relative group">
-                                            <button
-                                                onClick={() => setShowDeleteConfirm(req.id)}
-                                                className="absolute top-2 right-2 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                                                title="Xóa đơn"
-                                            >
-                                                <Icons.Trash className="w-4 h-4" />
-                                            </button>
+                                            {canDeletePermission && (
+                                                <button
+                                                    onClick={() => setShowDeleteConfirm(req.id)}
+                                                    className="absolute top-2 right-2 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
+                                                    title="Xóa đơn"
+                                                >
+                                                    <Icons.Trash className="w-4 h-4" />
+                                                </button>
+                                            )}
                                             <div className="flex justify-between items-start mb-3">
                                                 <div>
                                                     <p className="font-bold text-slate-900 text-lg">{req.user?.full_name}</p>
                                                     <p className="text-sm text-indigo-600 font-medium">{req.user?.organization} - {req.user?.student_code}</p>
                                                 </div>
-                                                <div className="flex gap-2">
-                                                    <button
-                                                        onClick={() => setShowRejectModal(req.id)}
-                                                        className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 font-bold text-sm hover:bg-red-200"
-                                                    >
-                                                        Từ chối
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleApprove(req.id)}
-                                                        className="px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-sm hover:bg-emerald-200"
-                                                    >
-                                                        Duyệt
-                                                    </button>
-                                                </div>
+                                                {canEditPermission && (
+                                                    <div className="flex gap-2">
+                                                        <button
+                                                            onClick={() => setShowRejectModal(req.id)}
+                                                            className="px-3 py-1.5 rounded-lg bg-red-100 text-red-700 font-bold text-sm hover:bg-red-200"
+                                                        >
+                                                            Từ chối
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleApprove(req.id)}
+                                                            className="px-3 py-1.5 rounded-lg bg-emerald-100 text-emerald-700 font-bold text-sm hover:bg-emerald-200"
+                                                        >
+                                                            Duyệt
+                                                        </button>
+                                                    </div>
+                                                )}
                                             </div>
                                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mt-4 border-t border-slate-200 pt-4">
                                                 <div className="space-y-2">
@@ -495,13 +511,15 @@ const ExitPermission: React.FC<ExitPermissionProps> = ({ currentUser, onBack }) 
                                         const badge = getStatusBadge(req.status);
                                         return (
                                             <div key={req.id} className="bg-slate-50 rounded-2xl p-4 border border-slate-100 relative group">
-                                                <button
-                                                    onClick={() => setShowDeleteConfirm(req.id)}
-                                                    className="absolute top-2 right-2 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all"
-                                                    title="Xóa đơn"
-                                                >
-                                                    <Icons.Trash className="w-4 h-4" />
-                                                </button>
+                                                {canDeletePermission && (
+                                                    <button
+                                                        onClick={() => setShowDeleteConfirm(req.id)}
+                                                        className={`absolute top-2 right-2 p-1.5 rounded-lg text-slate-300 hover:text-red-500 hover:bg-red-50 opacity-0 group-hover:opacity-100 transition-all`}
+                                                        title="Xóa đơn"
+                                                    >
+                                                        <Icons.Trash className="w-4 h-4" />
+                                                    </button>
+                                                )}
                                                 <div className="flex justify-between items-start mb-3">
                                                     <div>
                                                         <p className="font-bold text-slate-800">{req.user?.full_name}</p>

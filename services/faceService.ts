@@ -222,8 +222,14 @@ export const faceMatcher = new FaceMatcherService();
 export function base64ToImage(base64: string): Promise<HTMLImageElement> {
     return new Promise((resolve, reject) => {
         const img = new Image();
+        if (base64.startsWith('http')) {
+            img.crossOrigin = 'anonymous';
+        }
         img.onload = () => resolve(img);
-        img.onerror = reject;
+        img.onerror = (e) => {
+            console.error('❌ [base64ToImage] Failed to load image:', base64.substring(0, 100) + '...');
+            reject(new Error('Failed to load image'));
+        };
         img.src = (base64.startsWith('data:') || base64.startsWith('http')) ? base64 : `data:image/jpeg;base64,${base64}`;
     });
 }

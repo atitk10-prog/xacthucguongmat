@@ -58,7 +58,7 @@ export interface User {
 
 // Event types
 export type EventType = string; // Allow custom event types
-export type CheckinMethod = 'qr' | 'qr_face' | 'link';
+export type CheckinMethod = 'qr' | 'face' | 'both';
 export type EventStatus = 'draft' | 'active' | 'completed';
 
 export interface Event {
@@ -116,6 +116,7 @@ export interface EventParticipant {
   created_at?: string;
   user_id?: string; // Link to system user
   student_code?: string; // Added field
+  qr_code?: string; // Added field
   face_descriptor?: string; // Cache field for faster check-in
 }
 
@@ -256,4 +257,16 @@ export interface AppState {
   currentView: EduCheckView;
   auth: AuthState;
   selectedEventId?: string;
+}
+
+export interface PointLog {
+  id: string;
+  user_id: string;
+  points: number;
+  reason: string;
+  type: string;
+  event_id?: string;
+  created_by?: string;
+  created_at: string;
+  user?: User; // Joined user data
 }

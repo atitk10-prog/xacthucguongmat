@@ -1,10 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { dataService } from '../../services/dataService';
+import { supabase } from '../../services/supabaseClient';
+import { utils, writeFile } from 'xlsx';
 import {
     LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
     XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid, BarChart, Bar
 } from 'recharts';
-import { TrendingUp, TrendingDown, Award, AlertCircle, Calendar, Filter, Users, ArrowRight } from 'lucide-react';
+import { TrendingUp, TrendingDown, Award, AlertCircle, Calendar, Filter, Users, ArrowRight, Download, Loader2, X, Settings2 } from 'lucide-react';
+import { useToast } from '../ui/Toast';
 
 const PointStatistics: React.FC = () => {
     const [range, setRange] = useState<'day' | 'week' | 'month'>('day');
@@ -13,6 +16,17 @@ const PointStatistics: React.FC = () => {
     const [showDetail, setShowDetail] = useState(false);
     const [detailedLogs, setDetailedLogs] = useState<any[]>([]);
     const [isDetailLoading, setIsDetailLoading] = useState(false);
+    const { success, error: toastError } = useToast();
+
+    // Advanced Export Modal State
+    const [showExportModal, setShowExportModal] = useState(false);
+    const [exportDateRange, setExportDateRange] = useState<'today' | 'week' | 'month' | 'custom'>('week');
+    const [exportStartDate, setExportStartDate] = useState('');
+    const [exportEndDate, setExportEndDate] = useState('');
+    const [exportType, setExportType] = useState<'all' | 'positive' | 'negative'>('all');
+    const [exportTarget, setExportTarget] = useState<'all' | 'class'>('all');
+    const [exportTargetClass, setExportTargetClass] = useState('');
+    const [isExporting, setIsExporting] = useState(false);
 
     useEffect(() => {
         loadStats();
@@ -38,6 +52,151 @@ const PointStatistics: React.FC = () => {
         const res = await dataService.getDetailedPointLogs({ range, limit: 100 });
         if (res.success) setDetailedLogs(res.data || []);
         setIsDetailLoading(false);
+    };
+
+    // Advanced Export with filters
+    const handleExportDetailed = async () => {
+        setIsExporting(true);
+        try {
+            // Calculate date range
+            let startDate: Date;
+            let endDate: Date = new Date();
+
+            if (exportDateRange === 'today') {
+                startDate = new Date();
+                startDate.setHours(0, 0, 0, 0);
+            } else if (exportDateRange === 'week') {
+                startDate = new Date();
+                startDate.setDate(startDate.getDate() - 7);
+            } else if (exportDateRange === 'month') {
+                startDate = new Date();
+                startDate.setMonth(startDate.getMonth() - 1);
+            } else {
+                startDate = exportStartDate ? new Date(exportStartDate) : new Date();
+                endDate = exportEndDate ? new Date(exportEndDate) : new Date();
+            }
+
+            // Fetch point logs
+            let query = supabase
+                .from('point_logs')
+                .select('id, user_id, points, reason, type, created_at, created_by, event_id')
+                .gte('created_at', startDate.toISOString())
+                .lte('created_at', endDate.toISOString())
+                .order('created_at', { ascending: false });
+
+            // Filter by point type
+            if (exportType === 'positive') {
+                query = query.gt('points', 0);
+            } else if (exportType === 'negative') {
+                query = query.lt('points', 0);
+            }
+
+            const { data: logs, error } = await query;
+            if (error) throw error;
+
+            // Fetch user, event info for mapping
+            const userIds = [...new Set((logs || []).map(l => l.user_id))];
+            const creatorIds = [...new Set((logs || []).filter(l => l.created_by).map(l => l.created_by))];
+            const allUserIds = [...new Set([...userIds, ...creatorIds])];
+            const eventIds = [...new Set((logs || []).filter(l => l.event_id).map(l => l.event_id))];
+
+            const [{ data: users }, { data: events }] = await Promise.all([
+                supabase.from('users').select('id, full_name, organization').in('id', allUserIds),
+                supabase.from('events').select('id, name').in('id', eventIds)
+            ]);
+
+            const userMap: Record<string, { name: string; org: string }> = {};
+            users?.forEach(u => {
+                userMap[u.id] = { name: u.full_name, org: u.organization || '' };
+            });
+
+            const eventMap: Record<string, string> = {};
+            events?.forEach(e => {
+                eventMap[e.id] = e.name;
+            });
+
+            // Filter by class if needed
+            let filteredLogs = logs || [];
+            if (exportTarget === 'class' && exportTargetClass) {
+                filteredLogs = filteredLogs.filter(l => userMap[l.user_id]?.org === exportTargetClass);
+            }
+
+            // --- DATA PREPARATION FOR 5 SHEETS ---
+
+            // Helper to build standard row
+            const buildStandardRow = (log: any) => ({
+                'Ngày giờ': new Date(log.created_at).toLocaleString('vi-VN'),
+                'Họ và tên': userMap[log.user_id]?.name || 'N/A',
+                'Lớp': userMap[log.user_id]?.org || 'N/A',
+                'Nội dung': log.reason || '',
+                'Số điểm': log.points,
+                'Loại': log.points > 0 ? 'Thành tích' : 'Vi phạm',
+                'Sự kiện': eventMap[log.event_id || ''] || 'N/A',
+                'Người thực hiện': (log.created_by && userMap[log.created_by]) ? userMap[log.created_by].name : 'Hệ thống (Tự động)'
+            });
+
+            // 1. Sheet Tat Ca
+            const dataAll = filteredLogs.map(buildStandardRow);
+
+            // 2. Sheet Khen Thuong
+            const dataPositive = filteredLogs.filter(l => l.points > 0).map(buildStandardRow);
+
+            // 3. Sheet Vi Pham
+            const dataNegative = filteredLogs.filter(l => l.points < 0).map(buildStandardRow);
+
+            // 4. Sheet Theo Lop
+            const classStats: Record<string, any> = {};
+            filteredLogs.forEach(l => {
+                const org = userMap[l.user_id]?.org || 'Chưa phân lớp';
+                if (!classStats[org]) classStats[org] = { 'Lớp': org, 'Tổng điểm cộng': 0, 'Tổng điểm trừ': 0, 'Hiệu số': 0, 'Số lượt': 0 };
+                if (l.points > 0) classStats[org]['Tổng điểm cộng'] += l.points;
+                else classStats[org]['Tổng điểm trừ'] += Math.abs(l.points);
+                classStats[org]['Hiệu số'] += l.points;
+                classStats[org]['Số lượt']++;
+            });
+            const dataByClass = Object.values(classStats).sort((a, b) => b['Hiệu số'] - a['Hiệu số']);
+
+            // 5. Sheet Theo Su Kien
+            const eventStats: Record<string, any> = {};
+            filteredLogs.forEach(l => {
+                const eventName = eventMap[l.event_id || ''] || (l.type.includes('boarding_') ? 'Nội trú' : 'Ghi nhận thủ công');
+                if (!eventStats[eventName]) eventStats[eventName] = { 'Tên Sự kiện/Hoạt động': eventName, 'Tổng điểm phát ra': 0, 'Số lượt tham gia': 0 };
+                eventStats[eventName]['Tổng điểm phát ra'] += Math.abs(l.points);
+                eventStats[eventName]['Số lượt tham gia']++;
+            });
+            const dataByEvent = Object.values(eventStats).sort((a, b) => b['Tổng điểm phát ra'] - a['Tổng điểm phát ra']);
+
+            const wb = utils.book_new();
+
+            // Add sheets in order
+            const sheets = [
+                { name: 'TongHop', data: dataAll },
+                { name: 'KhenThuong', data: dataPositive },
+                { name: 'ViPham', data: dataNegative },
+                { name: 'BaoCao_TheoLop', data: dataByClass },
+                { name: 'BaoCao_TheoSuKien', data: dataByEvent }
+            ];
+
+            sheets.forEach(s => {
+                const ws = utils.json_to_sheet(s.data);
+                // Set default column widths for standard sheets
+                if (s.data.length > 0 && s.data[0]['Họ và tên']) {
+                    ws['!cols'] = [{ wch: 20 }, { wch: 25 }, { wch: 10 }, { wch: 40 }, { wch: 10 }, { wch: 12 }, { wch: 25 }, { wch: 20 }];
+                }
+                utils.book_append_sheet(wb, ws, s.name);
+            });
+
+            const rangeName = exportDateRange === 'today' ? 'HomNay' : exportDateRange === 'week' ? '7Ngay' : exportDateRange === 'month' ? '30Ngay' : 'TuyChon';
+            writeFile(wb, `BaoCaoDiem_${rangeName}_${new Date().getTime()}.xlsx`);
+
+            success(`Đã xuất báo cáo đa sheet với ${dataAll.length} bản ghi!`);
+            setShowExportModal(false);
+        } catch (err) {
+            console.error('Export failed:', err);
+            toastError('Lỗi xuất báo cáo chi tiết');
+        } finally {
+            setIsExporting(false);
+        }
     };
 
     const getTypeLabel = (type: string) => {
@@ -81,19 +240,28 @@ const PointStatistics: React.FC = () => {
                     <p className="text-slate-500 font-medium mt-1 ml-14">Phân tích biến động và hành vi</p>
                 </div>
 
-                <div className="flex bg-slate-100 p-1 rounded-xl w-full md:w-auto">
-                    {(['day', 'week', 'month'] as const).map((r) => (
-                        <button
-                            key={r}
-                            onClick={() => setRange(r)}
-                            className={`flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm transition-all ${range === r
-                                ? 'bg-white text-indigo-600 shadow-sm'
-                                : 'text-slate-500 hover:text-slate-700'
-                                }`}
-                        >
-                            {r === 'day' ? 'Hôm nay' : r === 'week' ? '7 ngày' : '30 ngày'}
-                        </button>
-                    ))}
+                <div className="flex gap-2 items-center flex-wrap w-full md:w-auto">
+                    <div className="flex bg-slate-100 p-1 rounded-xl flex-1 md:flex-none">
+                        {(['day', 'week', 'month'] as const).map((r) => (
+                            <button
+                                key={r}
+                                onClick={() => setRange(r)}
+                                className={`flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm transition-all ${range === r
+                                    ? 'bg-white text-indigo-600 shadow-sm'
+                                    : 'text-slate-500 hover:text-slate-700'
+                                    }`}
+                            >
+                                {r === 'day' ? 'Hôm nay' : r === 'week' ? '7 ngày' : '30 ngày'}
+                            </button>
+                        ))}
+                    </div>
+                    <button
+                        onClick={() => setShowExportModal(true)}
+                        className="px-4 py-2 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 flex items-center gap-2 shadow-lg shadow-purple-200 text-sm"
+                    >
+                        <Download className="w-4 h-4" />
+                        <span className="hidden md:inline">Xuất Excel</span>
+                    </button>
                 </div>
             </div>
 
@@ -317,6 +485,120 @@ const PointStatistics: React.FC = () => {
                             <p className="text-xs text-slate-400">Hiển thị tối đa 100 giao dịch gần nhất</p>
                             <button onClick={() => setShowDetail(false)} className="px-6 py-2 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition-all">
                                 Đóng
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Advanced Export Modal */}
+            {showExportModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-3xl w-full max-w-lg shadow-2xl overflow-hidden animate-slide-up">
+                        <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-purple-50/50">
+                            <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 bg-purple-600 rounded-xl flex items-center justify-center text-white">
+                                    <Download className="w-5 h-5" />
+                                </div>
+                                <div>
+                                    <h3 className="font-black text-slate-800">Xuất Báo Cáo Chi Tiết</h3>
+                                    <p className="text-xs text-slate-500 font-medium">Tùy chọn lọc theo ngày, tuần, tháng</p>
+                                </div>
+                            </div>
+                            <button onClick={() => setShowExportModal(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                                <X className="w-5 h-5 text-slate-400" />
+                            </button>
+                        </div>
+
+                        <div className="p-6 space-y-5">
+                            {/* Date Range */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-black text-slate-400 uppercase ml-1">Khoảng thời gian</label>
+                                <div className="grid grid-cols-4 gap-2">
+                                    {(['today', 'week', 'month', 'custom'] as const).map(r => (
+                                        <button
+                                            key={r}
+                                            onClick={() => setExportDateRange(r)}
+                                            className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${exportDateRange === r ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                        >
+                                            {r === 'today' ? 'Hôm nay' : r === 'week' ? 'Tuần' : r === 'month' ? 'Tháng' : 'Tùy chọn'}
+                                        </button>
+                                    ))}
+                                </div>
+                                {exportDateRange === 'custom' && (
+                                    <div className="grid grid-cols-2 gap-3 mt-3">
+                                        <input
+                                            type="date"
+                                            value={exportStartDate}
+                                            onChange={e => setExportStartDate(e.target.value)}
+                                            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm"
+                                        />
+                                        <input
+                                            type="date"
+                                            value={exportEndDate}
+                                            onChange={e => setExportEndDate(e.target.value)}
+                                            className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm"
+                                        />
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Report Type */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-black text-slate-400 uppercase ml-1">Loại dữ liệu</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {(['all', 'positive', 'negative'] as const).map(type => (
+                                        <button
+                                            key={type}
+                                            onClick={() => setExportType(type)}
+                                            className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${exportType === type ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                        >
+                                            {type === 'all' ? 'Tất cả' : type === 'positive' ? 'Thành tích (+)' : 'Vi phạm (-)'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Target */}
+                            <div className="space-y-2">
+                                <label className="text-xs font-black text-slate-400 uppercase ml-1">Phạm vi</label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {(['all', 'class'] as const).map(target => (
+                                        <button
+                                            key={target}
+                                            onClick={() => setExportTarget(target)}
+                                            className={`px-3 py-2 rounded-xl text-xs font-bold transition-all ${exportTarget === target ? 'bg-purple-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                                        >
+                                            {target === 'all' ? 'Toàn trường' : 'Theo lớp'}
+                                        </button>
+                                    ))}
+                                </div>
+                                {exportTarget === 'class' && (
+                                    <input
+                                        type="text"
+                                        placeholder="Nhập tên lớp (VD: 10A1)"
+                                        value={exportTargetClass}
+                                        onChange={e => setExportTargetClass(e.target.value)}
+                                        className="w-full mt-2 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm"
+                                    />
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-3">
+                            <button
+                                onClick={() => setShowExportModal(false)}
+                                className="flex-1 px-6 py-3 bg-white border border-slate-200 text-slate-600 rounded-2xl font-bold hover:bg-slate-100 transition-all"
+                            >
+                                Hủy
+                            </button>
+                            <button
+                                onClick={handleExportDetailed}
+                                disabled={isExporting}
+                                className="flex-[2] px-6 py-3 bg-purple-600 text-white rounded-2xl font-black hover:bg-purple-700 transition-all shadow-lg shadow-purple-100 flex items-center justify-center gap-2 disabled:opacity-50"
+                            >
+                                {isExporting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Download className="w-5 h-5" />}
+                                Xuất Excel
                             </button>
                         </div>
                     </div>

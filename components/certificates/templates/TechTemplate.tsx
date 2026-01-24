@@ -72,8 +72,8 @@ const TechTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig, 
 
                 <div className="w-full flex justify-between items-end mt-auto px-8">
                     <div className="text-left font-mono text-xs text-slate-500">
-                        <p><Editable val={labels.entryNo} k="entryNo" />: {data.verifyCode}</p>
-                        <p><Editable val={labels.datePrefix} k="datePrefix" />: {data.issuedDate}</p>
+                        <p><Editable val={labels.entryNo} k="entryNo" /></p>
+                        <p><Editable val={labels.datePrefix} k="datePrefix" /></p>
                         <p>HASH: {Math.random().toString(36).substring(7)}...</p>
                     </div>
 

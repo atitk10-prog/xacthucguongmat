@@ -57,9 +57,11 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                     for (const user of response.data) {
                         if (user.face_descriptor) {
                             try {
-                                const descriptor = new Float32Array(JSON.parse(user.face_descriptor));
-                                faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
-                                count++;
+                                const descriptor = faceService.stringToDescriptor(user.face_descriptor);
+                                if (descriptor.length > 0) {
+                                    faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
+                                    count++;
+                                }
                             } catch (e) { console.warn('Invalid descriptor for', user.full_name); }
                         }
                     }

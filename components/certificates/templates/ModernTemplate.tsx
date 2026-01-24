@@ -2,7 +2,28 @@ import React from 'react';
 import { CertificateTemplateProps } from './types';
 import { Award, Calendar, CheckCircle, Star } from 'lucide-react';
 
-const ModernTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig }) => {
+const ModernTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig, isEditable = false, onLabelChange }) => {
+    const Editable = ({ val, k, className, style }: { val: string, k: string, className?: string, style?: React.CSSProperties }) => {
+        if (!isEditable || !onLabelChange) return <span className={className} style={style}>{val}</span>;
+        return (
+            <span
+                contentEditable
+                suppressContentEditableWarning
+                className={`${className} outline-none cursor-text hover:bg-black/5 focus:bg-white/50 rounded px-1 transition-colors min-w-[20px] inline-block`}
+                style={style}
+                onBlur={(e) => onLabelChange(k, e.currentTarget.textContent || val)}
+            >{val}</span>
+        );
+    };
+
+    const labels = {
+        title: customConfig?.labels?.title || 'Giấy Chứng Nhận',
+        presentedTo: customConfig?.labels?.presentedTo || 'Được trao tặng cho',
+        eventPrefix: customConfig?.labels?.eventPrefix || 'Đã hoàn thành xuất sắc nhiệm vụ và yêu cầu của sự kiện',
+        datePrefix: customConfig?.labels?.datePrefix || 'Ngày cấp',
+        signature: customConfig?.labels?.signature || 'EduCheck AI'
+    };
+
     const config = {
         participation: { color: 'text-blue-600', border: 'border-blue-600', bg: 'bg-blue-50', icon: Award },
         completion: { color: 'text-emerald-600', border: 'border-emerald-600', bg: 'bg-emerald-50', icon: CheckCircle },
@@ -32,30 +53,30 @@ const ModernTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                 </div>
 
                 <h1 className={`text-5xl font-black mb-2 uppercase tracking-wide text-slate-800`}>
-                    Giấy Chứng Nhận
+                    <Editable val={labels.title} k="title" />
                 </h1>
 
                 <div className={`h-1 w-24 ${config.bg.replace('bg-', 'bg-')} mb-8`}></div>
 
-                <p className="text-slate-500 text-lg uppercase tracking-widest mb-4">Được trao tặng cho</p>
+                <p className="text-slate-500 text-lg uppercase tracking-widest mb-4">
+                    <Editable val={labels.presentedTo} k="presentedTo" />
+                </p>
 
                 <h2 className={`text-4xl font-bold ${config.color} mb-2 italic font-serif`}>
                     {data.recipientName}
                 </h2>
 
-                <p className="text-slate-600 text-lg max-w-2xl mx-auto leading-relaxed mb-8">
-                    Đã hoàn thành xuất sắc nhiệm vụ và yêu cầu của sự kiện
-                    <br />
+                <div className="text-slate-600 text-lg max-w-2xl mx-auto leading-relaxed mb-8">
+                    <p><Editable val={labels.eventPrefix} k="eventPrefix" /></p>
                     <span className="font-bold text-slate-900 text-xl block mt-2">{data.eventName}</span>
-                </p>
+                </div>
 
                 {/* Footer */}
                 <div className="w-full flex justify-between items-end mt-auto px-12 pb-4">
                     <div className="text-left">
-                        <p className="text-slate-400 text-xs mb-1 uppercase tracking-wider">Ngày cấp</p>
                         <div className="flex items-center gap-2 text-slate-700 font-bold">
                             <Calendar className="w-4 h-4" />
-                            {data.issuedDate}
+                            <Editable val={labels.datePrefix} k="datePrefix" />
                         </div>
                     </div>
 

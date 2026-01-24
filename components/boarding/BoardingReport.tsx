@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
-import { BoardingTimeSlot } from '../../types';
+import { BoardingTimeSlot, User } from '../../types';
 import { Icons, useToast } from '../ui';
 import {
     Calendar, Download, Filter, ChevronLeft, ChevronRight,
@@ -28,9 +28,16 @@ interface CheckinRecord {
 
 interface BoardingReportProps {
     onBack?: () => void;
+    currentUser: User;
+    teacherPermissions: any[];
 }
 
-const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
+const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, teacherPermissions }) => {
+    // Permission checks
+    const modulePerm = teacherPermissions?.find(p => p.module_id === 'boarding');
+    const isAdmin = currentUser.role === 'admin';
+    const canEdit = isAdmin || (modulePerm?.is_enabled && modulePerm?.can_edit);
+
     const { success: toastSuccess, error: toastError } = useToast();
     const [checkins, setCheckins] = useState<CheckinRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -504,26 +511,30 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack }) => {
                     </p>
                 </div>
                 <div className="flex gap-2">
-                    <button
-                        onClick={() => {
-                            setProcessResult(null);
-                            setShowAbsentModal(true);
-                        }}
-                        className="px-4 py-2 bg-red-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-red-700 transition-colors shadow-sm"
-                    >
-                        <MinusCircle className="w-4 h-4" />
-                        Xử lý vắng
-                    </button>
-                    <button
-                        onClick={() => {
-                            setLateProcessResult(null);
-                            setShowLateModal(true);
-                        }}
-                        className="px-4 py-2 bg-amber-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-amber-700 transition-colors shadow-sm"
-                    >
-                        <Clock className="w-4 h-4" />
-                        Xử lý đi muộn
-                    </button>
+                    {canEdit && (
+                        <>
+                            <button
+                                onClick={() => {
+                                    setProcessResult(null);
+                                    setShowAbsentModal(true);
+                                }}
+                                className="px-4 py-2 bg-red-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-red-700 transition-colors shadow-sm"
+                            >
+                                <MinusCircle className="w-4 h-4" />
+                                Xử lý vắng
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setLateProcessResult(null);
+                                    setShowLateModal(true);
+                                }}
+                                className="px-4 py-2 bg-amber-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-amber-700 transition-colors shadow-sm"
+                            >
+                                <Clock className="w-4 h-4" />
+                                Xử lý đi muộn
+                            </button>
+                        </>
+                    )}
                     <button
                         onClick={exportToExcel}
                         className="px-4 py-2 bg-emerald-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-emerald-700 transition-colors shadow-sm"

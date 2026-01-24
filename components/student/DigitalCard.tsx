@@ -48,7 +48,7 @@ export default function DigitalCard() {
                 {/* FRONT SIDE */}
                 <div className="absolute inset-0 backface-hidden rounded-2xl shadow-2xl overflow-hidden">
                     {/* Background & Overlay */}
-                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-700 via-blue-800 to-blue-900 text-white p-6 flex flex-col justify-between">
+                    <div className="absolute inset-0 bg-gradient-to-br from-indigo-700 via-blue-800 to-blue-900 text-white p-5 flex flex-col justify-between">
                         <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
 
                         {/* Front Header */}
@@ -66,7 +66,7 @@ export default function DigitalCard() {
                         </div>
 
                         {/* Front Main Content */}
-                        <div className="flex gap-4 items-center mt-2 z-10">
+                        <div className="flex gap-4 items-center mt-1 z-10">
                             <div className="w-20 h-24 bg-white/20 rounded-xl border border-white/30 overflow-hidden shadow-inner flex-shrink-0">
                                 {user.avatar_url ? (
                                     <img src={user.avatar_url} className="w-full h-full object-cover" alt="Avatar" />

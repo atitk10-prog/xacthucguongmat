@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Home, QrCode, FileText, Award, User as UserIcon, LogOut } from 'lucide-react';
+import { Home, QrCode, FileText, Award, User as UserIcon, LogOut, BookOpen } from 'lucide-react';
 import { User } from '../../types';
 import StudentDashboard from '@/components/student/StudentDashboard';
 import DigitalCard from '@/components/student/DigitalCard';
@@ -7,6 +7,7 @@ import LeaveRequestManager from '@/components/student/LeaveRequestManager';
 import MyCertificates from '@/components/student/MyCertificates';
 import StudentProfile from '@/components/student/StudentProfile';
 import StudentLeaderboard from '@/components/student/StudentLeaderboard';
+import StudentRules from '@/components/student/StudentRules';
 // Re-trigger build and check imports
 
 interface StudentLayoutProps {
@@ -14,7 +15,7 @@ interface StudentLayoutProps {
     onLogout: () => void;
 }
 
-export type StudentTab = 'dashboard' | 'card' | 'requests' | 'certificates' | 'profile' | 'ranking';
+export type StudentTab = 'dashboard' | 'card' | 'requests' | 'certificates' | 'profile' | 'ranking' | 'rules';
 
 export default function StudentLayout({ currentUser, onLogout }: StudentLayoutProps) {
     const [activeTab, setActiveTab] = useState<StudentTab>('dashboard');
@@ -22,8 +23,8 @@ export default function StudentLayout({ currentUser, onLogout }: StudentLayoutPr
     const navItems: { id: StudentTab; icon: React.ReactNode; label: string }[] = [
         { id: 'dashboard', icon: <Home size={24} />, label: 'Trang chủ' },
         { id: 'card', icon: <QrCode size={24} />, label: 'Thẻ' },
+        { id: 'rules', icon: <BookOpen size={24} />, label: 'Nội quy' },
         { id: 'requests', icon: <FileText size={24} />, label: 'Đơn từ' },
-        { id: 'certificates', icon: <Award size={24} />, label: 'Chứng nhận' },
         { id: 'profile', icon: <UserIcon size={24} />, label: 'Cá nhân' },
     ];
 
@@ -67,6 +68,7 @@ export default function StudentLayout({ currentUser, onLogout }: StudentLayoutPr
                     {activeTab === 'certificates' && <MyCertificates user={currentUser} />}
                     {activeTab === 'profile' && <StudentProfile user={currentUser} />}
                     {activeTab === 'ranking' && <StudentLeaderboard user={currentUser} />}
+                    {activeTab === 'rules' && <StudentRules />}
                 </div>
             </div>
 

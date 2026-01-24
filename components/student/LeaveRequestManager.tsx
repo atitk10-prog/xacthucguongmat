@@ -41,6 +41,26 @@ export default function LeaveRequestManager() {
         setLoading(false);
     };
 
+    // Helper: Convert Date object to 'YYYY-MM-DDTHH:mm' (Local time string) for input
+    const toLocalInputString = (dateStr: string) => {
+        if (!dateStr) return '';
+        const d = new Date(dateStr);
+        // Getting local parts manually to avoid TZ issues
+        const pad = (n: number) => n.toString().padStart(2, '0');
+        const year = d.getFullYear();
+        const month = pad(d.getMonth() + 1);
+        const day = pad(d.getDate());
+        const hours = pad(d.getHours());
+        const minutes = pad(d.getMinutes());
+        return `${year}-${month}-${day}T${hours}:${minutes}`;
+    };
+
+    // Helper: Convert local input string 'YYYY-MM-DDTHH:mm' to ISO UTC string for DB
+    const toUTCString = (localStr: string) => {
+        if (!localStr) return '';
+        return new Date(localStr).toISOString();
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!user) return;
@@ -53,9 +73,14 @@ export default function LeaveRequestManager() {
         setIsSubmitting(true);
 
         try {
+            // Convert local input time to UTC before sending
             const payload = {
                 user_id: user.id,
-                ...formData
+                destination: formData.destination,
+                reason: formData.reason,
+                parent_contact: formData.parent_contact,
+                exit_time: toUTCString(formData.exit_time),
+                return_time: toUTCString(formData.return_time)
             };
 
             const res = isEditing && editingId
@@ -88,8 +113,8 @@ export default function LeaveRequestManager() {
         setFormData({
             destination: req.destination,
             reason: req.reason,
-            exit_time: req.exit_time.substring(0, 16), // Format for datetime-local
-            return_time: req.return_time.substring(0, 16),
+            exit_time: toLocalInputString(req.exit_time), // Convert UTC DB time to Local Input
+            return_time: toLocalInputString(req.return_time),
             parent_contact: req.parent_contact || ''
         });
         setEditingId(req.id);

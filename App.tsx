@@ -17,6 +17,7 @@ import FaceIDManagement from './components/settings/FaceIDManagement';
 import PointManagement from './components/settings/PointManagement';
 import PointStatistics from './components/reports/PointStatistics';
 import StudentLayout from './components/student/StudentLayout'; // Import StudentLayout
+import AdminProfile from './components/profile/AdminProfile';
 import SelfCheckinPage from './components/checkin/SelfCheckinPage';
 import { Icons } from './components/ui';
 import { dataService } from './services/dataService';
@@ -28,7 +29,10 @@ type AppView =
   | 'boarding' | 'rooms' | 'exit-permission' | 'boarding-config' | 'boarding-run'
   | 'reports' | 'event-report' | 'ranking' | 'points-stats'
   | 'users' | 'certificates' | 'cards' | 'faceid'
-  | 'settings' | 'points' | 'self-checkin';
+  | 'settings' | 'points' | 'self-checkin' | 'profile-admin' | 'help' | 'permissions';
+
+import HelpCenter from './components/HelpCenter';
+import PermissionSettings from './components/settings/PermissionSettings';
 
 interface MenuItem {
   id: string;
@@ -48,18 +52,57 @@ const App: React.FC = () => {
   const [allUsers, setAllUsers] = useState<User[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [boardingTab, setBoardingTab] = useState<'dashboard' | 'config' | 'rooms' | 'exit' | 'report'>('dashboard');
+  const [teacherPermissions, setTeacherPermissions] = useState<any[]>([]);
   const toast = useToast();
 
   useEffect(() => {
+    let permSub: any;
+
     const initApp = async () => {
       const storedUser = dataService.getStoredUser();
+
+      // Load initial permissions
+      const loadPerms = async () => {
+        const permRes = await dataService.getTeacherPermissions();
+        if (permRes.success && permRes.data) {
+          setTeacherPermissions(permRes.data);
+        }
+      };
+
+      await loadPerms();
+
+      // Set up REALTIME listener for permissions
+      permSub = dataService.subscribeToTeacherPermissions((payload) => {
+        console.log('📡 [Permissions] Realtime update from DB:', payload.new);
+        setTeacherPermissions(prev => prev.map(p =>
+          p.module_id === payload.new.module_id ? payload.new : p
+        ));
+      });
 
       // Check for Check-in URL parsing FIRST
       const path = window.location.pathname;
 
       if (path === '/boarding-run') {
-        if (storedUser && dataService.isAuthenticated()) {
-          setCurrentUser(storedUser);
+        const urlParams = new URLSearchParams(window.location.search);
+        const staffToken = urlParams.get('token');
+
+        if (staffToken === 'EDUCHECK_STAFF' || (storedUser && dataService.isAuthenticated())) {
+          if (staffToken === 'EDUCHECK_STAFF' && !storedUser) {
+            setCurrentUser({
+              id: 'guest_boarding_staff',
+              full_name: 'Máy điểm danh Nội trú',
+              role: 'teacher',
+              email: 'guest@educheck.local',
+              avatar_url: '',
+              status: 'active',
+              student_code: 'GUEST',
+              organization: 'Cán bộ hỗ trợ',
+              created_at: new Date().toISOString(),
+              total_points: 0
+            });
+          } else {
+            setCurrentUser(storedUser);
+          }
           setView('boarding-run' as AppView);
           setIsLoading(false);
           return;
@@ -84,11 +127,44 @@ const App: React.FC = () => {
       }
 
       if (path.startsWith('/checkin/')) {
-        const eventId = path.split('/')[2];
-        if (eventId) {
-          // It's a check-in link, verify user logged in or allow simplified check-in access?
-          // For now assume must be logged in as per existing logic, but we route to checkin view
+        const parts = path.split('/');
+        const eventId = parts[2];
+        const urlParams = new URLSearchParams(window.location.search);
+        const staffToken = urlParams.get('token');
 
+        if (eventId) {
+          // If has staff token, we allow guest access
+          if (staffToken === 'EDUCHECK_STAFF') {
+            // Mock a guest staff user
+            const guestUser: User = {
+              id: 'guest_staff_' + eventId,
+              full_name: 'Máy điểm danh phụ',
+              role: 'teacher',
+              email: 'guest@educheck.local',
+              avatar_url: '',
+              status: 'active',
+              student_code: 'GUEST',
+              organization: 'Cán bộ hỗ trợ',
+              created_at: new Date().toISOString(),
+              total_points: 0
+            };
+
+            // Fetch event details
+            try {
+              const res = await dataService.getEvent(eventId);
+              if (res.success && res.data) {
+                setCurrentUser(guestUser);
+                setSelectedEvent(res.data);
+                setView('checkin');
+                setIsLoading(false);
+                return;
+              }
+            } catch (e) {
+              console.error('Guest access failed:', e);
+            }
+          }
+
+          // Regular logged-in check
           if (storedUser && dataService.isAuthenticated()) {
             setCurrentUser(storedUser);
 
@@ -99,7 +175,6 @@ const App: React.FC = () => {
                 setSelectedEvent(res.data);
                 setView('checkin');
               } else {
-                // Event not found, go to dashboard
                 setView('dashboard');
               }
             } catch (error) {
@@ -108,7 +183,7 @@ const App: React.FC = () => {
 
             loadUsers();
             setIsLoading(false);
-            return; // Exit early to skip default dashboard routing
+            return;
           }
         }
       }
@@ -123,6 +198,17 @@ const App: React.FC = () => {
     };
 
     initApp();
+
+    // Register Service Worker for Push Notifications
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then(registration => {
+          console.log('[App] Service Worker registered:', registration.scope);
+        })
+        .catch(error => {
+          console.warn('[App] Service Worker registration failed:', error);
+        });
+    }
   }, []);
 
   useEffect(() => {
@@ -293,17 +379,62 @@ const App: React.FC = () => {
       { id: 'certificates', icon: <Icons.Certificates className="w-5 h-5" />, label: 'Chứng nhận' },
       { id: 'cards', icon: <Icons.Cards className="w-5 h-5" />, label: 'Tạo thẻ' },
       { id: 'faceid', icon: <Icons.User className="w-5 h-5" />, label: 'Quản lý Face ID' },
+      { id: 'permissions', icon: <Icons.Shield className="w-5 h-5" />, label: 'Phân quyền' },
       { id: 'settings', icon: <Icons.Settings className="w-5 h-5" />, label: 'Cấu hình' },
     ];
 
+    const helpItems: MenuItem[] = [
+      { id: 'divider-help', icon: null, label: 'HỖ TRỢ', type: 'divider' },
+      { id: 'help', icon: <Icons.Info className="w-5 h-5" />, label: 'Hướng dẫn' },
+    ];
+
     if (currentUser.role === 'admin') {
-      return [...baseItems, ...boardingItems, ...reportItems, ...adminItems];
+      return [...baseItems, ...boardingItems, ...reportItems, ...adminItems, ...helpItems];
     } else if (currentUser.role === 'teacher') {
-      return [...baseItems, ...boardingItems, ...reportItems];
+      // DYNAMIC FILTERING FOR TEACHERS
+      const enabledModules = teacherPermissions
+        .filter(p => p.is_enabled)
+        .map(p => p.module_id);
+
+      // Map menu IDs to Permission IDs
+      const hasPermission = (id: string) => {
+        if (id === 'events') return enabledModules.includes('events');
+        if (id === 'boarding-config') return enabledModules.includes('boarding');
+        if (id === 'ranking' || id === 'event-report' || id === 'points-stats') return enabledModules.includes('reports');
+        if (id === 'help') return enabledModules.includes('help');
+        return enabledModules.includes(id);
+      };
+
+      const filteredBase = baseItems.filter(item =>
+        item.id === 'dashboard' || hasPermission(item.id)
+      );
+
+      const filteredBoarding = boardingItems.filter(item =>
+        item.type === 'divider' || hasPermission(item.id)
+      );
+
+      const filteredReports = reportItems.filter(item =>
+        item.type === 'divider' || hasPermission(item.id)
+      );
+
+      const filteredAdmin = adminItems.filter(item =>
+        item.type === 'divider' || hasPermission(item.id)
+      );
+
+      // Combine if groups have visible items (avoid empty dividers)
+      const finalMenu: MenuItem[] = [...filteredBase];
+      if (filteredBoarding.length > 1) finalMenu.push(...filteredBoarding);
+      if (filteredReports.length > 1) finalMenu.push(...filteredReports);
+      if (filteredAdmin.length > 1) finalMenu.push(...filteredAdmin);
+      finalMenu.push(...helpItems);
+
+      return finalMenu;
+
     } else {
-      return baseItems;
+      return [...baseItems, ...helpItems];
     }
   };
+
 
   const menuItems = getMenuItems();
 
@@ -364,6 +495,9 @@ const App: React.FC = () => {
               <button
                 key={item.id}
                 onClick={() => {
+                  if (item.id === 'boarding-config') {
+                    setBoardingTab('dashboard');
+                  }
                   setView(item.id as AppView);
                   setMobileMenuOpen(false); // Close on mobile after click
                 }}
@@ -386,9 +520,9 @@ const App: React.FC = () => {
               <span className="text-white font-black text-sm">{currentUser.full_name.charAt(0)}</span>
             </div>
             {sidebarOpen && (
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm truncate text-white">{currentUser.full_name}</p>
-                <p className="text-xs text-slate-400 capitalize">{currentUser.role}</p>
+              <div className="flex-1 min-w-0 cursor-pointer" onClick={() => setView('profile-admin')}>
+                <p className="font-semibold text-sm truncate text-white hover:text-indigo-200 transition-colors">{currentUser.full_name}</p>
+                <p className="text-xs text-slate-400 capitalize">{currentUser.role === 'admin' ? 'Quản trị viên' : 'Giáo viên'}</p>
               </div>
             )}
           </div>
@@ -420,8 +554,10 @@ const App: React.FC = () => {
             </div>
             <span className="font-black text-slate-800 tracking-tight">EduCheck</span>
           </div>
-          <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center">
-            <span className="text-xs font-bold text-slate-600">{currentUser.full_name.charAt(0)}</span>
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center">
+              <span className="text-xs font-bold text-slate-600">{currentUser.full_name.charAt(0)}</span>
+            </div>
           </div>
         </header>
 
@@ -433,11 +569,26 @@ const App: React.FC = () => {
               pendingCount={pendingCount}
               setPendingCount={setPendingCount}
               setBoardingTab={setBoardingTab}
+              teacherPermissions={teacherPermissions}
             />
           )}
-          {view === 'events' && <EventList onSelectEvent={handleSelectEvent} onCreateEvent={handleCreateEvent} onEditEvent={handleEditEvent} />}
+          {view === 'events' && (
+            <EventList
+              onSelectEvent={handleSelectEvent}
+              onCreateEvent={handleCreateEvent}
+              onEditEvent={handleEditEvent}
+              currentUser={currentUser!}
+              teacherPermissions={teacherPermissions}
+            />
+          )}
           {view === 'ranking' && <RankingBoard />}
-          {view === 'boarding-config' && <BoardingConfigPage currentUser={currentUser} initialTab={boardingTab} />}
+          {view === 'boarding-config' && (
+            <BoardingConfigPage
+              currentUser={currentUser}
+              initialTab={boardingTab}
+              teacherPermissions={teacherPermissions}
+            />
+          )}
           {view === 'event-report' && <EventReport />}
           {view === 'users' && <UserManagement />}
           {view === 'points' && <PointManagement />}
@@ -447,8 +598,25 @@ const App: React.FC = () => {
           {view === 'faceid' && <FaceIDManagement />}
           {view === 'reports' && <EventReport />}
           {view === 'points-stats' && <PointStatistics />}
+          {view === 'profile-admin' && <AdminProfile user={currentUser} />}
+          {view === 'help' && <HelpCenter />}
+          {view === 'permissions' && <PermissionSettings />}
         </div>
       </main>
+
+      {/* Floating Help Button */}
+      <div className="fixed bottom-6 right-6 z-[100]">
+        <button
+          onClick={() => setView('help')}
+          className="w-14 h-14 bg-indigo-600 text-white rounded-full shadow-2xl flex items-center justify-center hover:bg-indigo-700 hover:scale-110 active:scale-95 transition-all group"
+          title="Trung tâm Trợ giúp"
+        >
+          <Icons.Info className="w-7 h-7 group-hover:rotate-12 transition-transform" />
+          {pendingCount === 0 && (
+            <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white animate-pulse"></span>
+          )}
+        </button>
+      </div>
     </div>
   );
 };
@@ -460,13 +628,20 @@ const DashboardView: React.FC<{
   pendingCount: number;
   setPendingCount: (count: number) => void;
   setBoardingTab: (tab: any) => void;
-}> = ({ setView, currentUser, pendingCount, setPendingCount, setBoardingTab }) => {
+  teacherPermissions: any[];
+}> = ({ setView, currentUser, pendingCount, setPendingCount, setBoardingTab, teacherPermissions }) => {
   const [stats, setStats] = useState<{
     totalUsers: number;
     totalEvents: number;
     totalCheckins: number;
     todayCheckins: number;
   } | null>(null);
+
+  const hasPermission = (moduleId: string) => {
+    if (currentUser.role === 'admin') return true;
+    const perm = teacherPermissions.find(p => p.module_id === moduleId);
+    return perm ? perm.is_enabled : false;
+  };
 
   useEffect(() => {
     const loadStats = async () => {
@@ -524,9 +699,9 @@ const DashboardView: React.FC<{
       <div className="bg-white rounded-2xl p-5 md:p-6 shadow-sm border border-slate-100">
         <h3 className="text-lg font-black text-slate-900 mb-4">Thao tác nhanh</h3>
         <div className="grid grid-cols-1 sm:flex sm:flex-wrap gap-2 md:gap-3">
-          <QuickButton icon={<Icons.Events className="w-5 h-5" />} label="Quản lý sự kiện" onClick={() => setView('events')} color="indigo" />
-          <QuickButton icon={<Icons.Boarding className="w-5 h-5" />} label="Quản lý Nội trú" onClick={() => setView('boarding-config')} color="emerald" />
-          <QuickButton icon={<Icons.Ranking className="w-5 h-5" />} label="Bảng xếp hạng" onClick={() => setView('ranking')} color="purple" />
+          {hasPermission('events') && <QuickButton icon={<Icons.Events className="w-5 h-5" />} label="Quản lý sự kiện" onClick={() => setView('events')} color="indigo" />}
+          {hasPermission('boarding') && <QuickButton icon={<Icons.Boarding className="w-5 h-5" />} label="Quản lý Nội trú" onClick={() => { setBoardingTab('dashboard'); setView('boarding-config'); }} color="emerald" />}
+          {hasPermission('reports') && <QuickButton icon={<Icons.Ranking className="w-5 h-5" />} label="Bảng xếp hạng" onClick={() => setView('ranking')} color="purple" />}
           {currentUser.role === 'admin' && (
             <>
               <QuickButton icon={<Icons.Users className="w-5 h-5" />} label="Quản lý người dùng" onClick={() => setView('users')} color="pink" />
@@ -538,11 +713,11 @@ const DashboardView: React.FC<{
 
       {/* Feature Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        <FeatureCard icon={<Icons.Boarding className="w-6 h-6" />} title="Nội trú" desc="Quản lý tổng hợp" onClick={() => setView('boarding-config')} />
-        <FeatureCard icon={<Icons.Reports className="w-6 h-6" />} title="Báo cáo" desc="Thống kê check-in" onClick={() => setView('event-report')} />
-        <FeatureCard icon={<Icons.Certificates className="w-6 h-6" />} title="Chứng nhận" desc="Tạo giấy chứng nhận" onClick={() => setView('certificates')} />
-        <FeatureCard icon={<Icons.Cards className="w-6 h-6" />} title="Tạo thẻ" desc="Thẻ QR học sinh" onClick={() => setView('cards')} />
-        <FeatureCard icon={<Icons.Settings className="w-6 h-6" />} title="Cấu hình" desc="Thiết lập hệ thống" onClick={() => setView('settings')} />
+        {hasPermission('boarding') && <FeatureCard icon={<Icons.Boarding className="w-6 h-6" />} title="Nội trú" desc="Quản lý tổng hợp" onClick={() => { setBoardingTab('dashboard'); setView('boarding-config'); }} />}
+        {hasPermission('reports') && <FeatureCard icon={<Icons.Reports className="w-6 h-6" />} title="Báo cáo" desc="Thống kê check-in" onClick={() => setView('event-report')} />}
+        {hasPermission('certificates') && <FeatureCard icon={<Icons.Certificates className="w-6 h-6" />} title="Chứng nhận" desc="Tạo giấy chứng nhận" onClick={() => setView('certificates')} />}
+        {hasPermission('cards') && <FeatureCard icon={<Icons.Cards className="w-6 h-6" />} title="Tạo thẻ" desc="Thẻ QR học sinh" onClick={() => setView('cards')} />}
+        {hasPermission('settings') && <FeatureCard icon={<Icons.Settings className="w-6 h-6" />} title="Cấu hình" desc="Thiết lập hệ thống" onClick={() => setView('settings')} />}
       </div>
     </div>
   );

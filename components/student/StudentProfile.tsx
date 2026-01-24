@@ -5,6 +5,55 @@ import { dataService } from '../../services/dataService'; // Import dataService
 import { supabase } from '../../services/supabaseClient'; // Import supabase for query
 import { useToast } from '../../components/ui/Toast'; // Import useToast
 
+// Helper: Compress Image (from UserManagement)
+const compressImage = (file: File): Promise<File> => {
+    return new Promise((resolve, reject) => {
+        const maxWidth = 1000;
+        const maxHeight = 1000;
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target?.result as string;
+            img.onload = () => {
+                let width = img.width;
+                let height = img.height;
+
+                if (width > maxWidth || height > maxHeight) {
+                    if (width > height) {
+                        height *= maxWidth / width;
+                        width = maxWidth;
+                    } else {
+                        width *= maxHeight / height;
+                        height = maxHeight;
+                    }
+                }
+
+                const canvas = document.createElement('canvas');
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx?.drawImage(img, 0, 0, width, height);
+
+                canvas.toBlob((blob) => {
+                    if (blob) {
+                        const newName = file.name.replace(/\.[^/.]+$/, "") + ".jpg";
+                        const newFile = new File([blob], newName, {
+                            type: 'image/jpeg',
+                            lastModified: Date.now(),
+                        });
+                        resolve(newFile);
+                    } else {
+                        reject(new Error('Canvas to Blob failed'));
+                    }
+                }, 'image/jpeg', 0.85);
+            };
+            img.onerror = (error) => reject(error);
+        };
+        reader.onerror = (error) => reject(error);
+    });
+};
+
 interface StudentProfileProps {
     user: UserType;
 }
@@ -57,6 +106,24 @@ export default function StudentProfile({ user: initialUser }: StudentProfileProp
     const [showPass, setShowPass] = useState({ old: false, new: false, confirm: false });
 
     const [loading, setLoading] = useState(false);
+    const [faceStatus, setFaceStatus] = useState<'none' | 'processing' | 'success' | 'failed'>('none');
+
+    // Subscribe to Face ID computation updates
+    useEffect(() => {
+        const unsubscribe = dataService.onFaceComputeComplete((userId, result) => {
+            if (userId === user.id) {
+                if (result.success) {
+                    setFaceStatus('success');
+                    toastSuccess('Phân tích khuôn mặt thành công!');
+                } else {
+                    setFaceStatus('failed');
+                    toastError('Không thể nhận diện khuôn mặt: ' + (result.error || 'Lỗi không xác định'));
+                }
+            }
+        });
+
+        return () => unsubscribe();
+    }, [user.id]);
 
     useEffect(() => {
         // Fetch Room Name
@@ -159,12 +226,37 @@ export default function StudentProfile({ user: initialUser }: StudentProfileProp
         const file = e.target.files?.[0];
         if (!file) return;
 
-        // Simple Base64 conversion
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            setFormData(prev => ({ ...prev, avatar_url: reader.result as string }));
-        };
-        reader.readAsDataURL(file);
+        setLoading(true);
+        try {
+            // 0. Compress Image
+            const compressedFile = await compressImage(file);
+
+            // 1. Upload to Supabase Storage
+            const fileExt = 'jpg'; // Forced by compression
+            const fileName = `${user.id}_${Date.now()}.${fileExt}`;
+            const filePath = `avatars/${fileName}`;
+
+            const { error: uploadError } = await supabase.storage
+                .from('avatars')
+                .upload(filePath, compressedFile);
+
+            if (uploadError) throw uploadError;
+
+            // 2. Get Public URL
+            const { data: urlData } = supabase.storage.from('avatars').getPublicUrl(filePath);
+            const publicUrl = urlData.publicUrl;
+
+            // 3. Update local state
+            setFormData(prev => ({ ...prev, avatar_url: publicUrl }));
+            setFaceStatus('processing');
+
+            toastSuccess('Đã tải ảnh lên! Đang phân tích khuôn mặt...');
+        } catch (error: any) {
+            console.error('Error uploading image:', error);
+            toastError('Lỗi tải ảnh: ' + error.message);
+        } finally {
+            setLoading(false);
+        }
     };
 
 
@@ -208,7 +300,27 @@ export default function StudentProfile({ user: initialUser }: StudentProfileProp
                     </div>
                 </div>
                 <h3 className="text-2xl font-bold text-gray-900 relative z-10">{user.full_name}</h3>
-                <span className="bg-blue-100 text-blue-700 text-xs px-3 py-1 rounded-full mt-2 font-bold relative z-10">Học sinh Nội trú</span>
+                <div className="flex flex-col items-center gap-2 mt-2 relative z-10">
+                    <span className="bg-blue-100 text-blue-700 text-xs px-3 py-1 rounded-full font-bold">Học sinh Nội trú</span>
+
+                    {/* Face ID Status Badge */}
+                    {faceStatus === 'processing' && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full animate-pulse">
+                            <RotateCw size={10} className="animate-spin" />
+                            ĐANG PHÂN TÍCH FACE ID...
+                        </div>
+                    )}
+                    {faceStatus === 'success' && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                            ✓ FACE ID ĐÃ SẴN SÀNG
+                        </div>
+                    )}
+                    {faceStatus === 'failed' && (
+                        <div className="flex items-center gap-1.5 text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full">
+                            ⚠ CHƯA CÓ FACE ID (VUI LÒNG THỬ ẢNH KHÁC)
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* Details List */}

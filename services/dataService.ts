@@ -4,7 +4,7 @@
  */
 
 import { supabase, isSupabaseConfigured } from './supabaseClient';
-import { User, Event, EventCheckin, EventParticipant, BoardingConfig, BoardingTimeSlot, Certificate } from '../types';
+import { User, Event, EventCheckin, EventParticipant, BoardingConfig, BoardingTimeSlot, Certificate, PointLog } from '../types';
 import { faceService, descriptorToString, base64ToImage } from './faceService';
 
 // =====================================================
@@ -15,6 +15,75 @@ interface CacheItem<T> {
     timestamp: number;
     ttl: number;
 }
+
+// =====================================================
+// OFFLINE ENGINE
+// =====================================================
+interface OfflineRecord {
+    id: string;
+    type: 'checkin' | 'point_log' | 'attendance';
+    data: any;
+    timestamp: number;
+}
+
+const OFFLINE_QUEUE_KEY = 'educheck_offline_queue';
+
+function getOfflineQueue(): OfflineRecord[] {
+    const stored = localStorage.getItem(OFFLINE_QUEUE_KEY);
+    return stored ? JSON.parse(stored) : [];
+}
+
+function addToOfflineQueue(record: Omit<OfflineRecord, 'id' | 'timestamp'>): void {
+    const queue = getOfflineQueue();
+    queue.push({
+        ...record,
+        id: `offline_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+        timestamp: Date.now()
+    });
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
+    console.log(`📦 [Offline] Added record to queue. Current size: ${queue.length}`);
+}
+
+async function syncOfflineData(): Promise<{ success: number; failed: number }> {
+    if (!navigator.onLine) return { success: 0, failed: 0 };
+
+    const queue = getOfflineQueue();
+    if (queue.length === 0) return { success: 0, failed: 0 };
+
+    console.log(`🔄 [Offline] Syncing ${queue.length} records...`);
+    let successCount = 0;
+    let failedCount = 0;
+    const remainingQueue: OfflineRecord[] = [];
+
+    for (const record of queue) {
+        try {
+            let res: any;
+            if (record.type === 'checkin') {
+                res = await checkin(record.data);
+            } else if (record.type === 'point_log') {
+                res = await addPoints(record.data.userId, record.data.points, record.data.reason, record.data.type, record.data.eventId);
+            }
+
+            if (res.success) successCount++;
+            else remainingQueue.push(record);
+        } catch (e) {
+            failedCount++;
+            remainingQueue.push(record);
+        }
+    }
+
+    localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(remainingQueue));
+    return { success: successCount, failed: failedCount };
+}
+
+// Listen for network changes
+if (typeof window !== 'undefined') {
+    window.addEventListener('online', () => {
+        console.log('🌐 [Network] Back online. Triggering sync...');
+        syncOfflineData();
+    });
+}
+
 
 const cache = new Map<string, CacheItem<unknown>>();
 
@@ -249,8 +318,8 @@ async function computeAndSaveFaceDescriptor(
             error: result.error
         });
 
-        // Auto-clear status after 10 seconds
-        setTimeout(() => pendingFaceComputes.delete(userId), 10000);
+        // Auto-clear status after 30 seconds (longer for user to see)
+        setTimeout(() => pendingFaceComputes.delete(userId), 30000);
 
         // Notify callback
         options?.onComplete?.(result);
@@ -260,6 +329,9 @@ async function computeAndSaveFaceDescriptor(
 
         return result;
     };
+
+    // Small delay to ensure DB/Storage is settled
+    await new Promise(resolve => setTimeout(resolve, 800));
 
     // Skip if no avatar
     if (!avatarUrl || avatarUrl.trim() === '') {
@@ -288,31 +360,32 @@ async function computeAndSaveFaceDescriptor(
             // Handle different URL types
             let img: HTMLImageElement;
 
-            if (avatarUrl.startsWith('http://') || avatarUrl.startsWith('https://')) {
-                // For HTTP URLs, we need to handle CORS
-                try {
-                    img = await base64ToImage(avatarUrl);
-                } catch (corsError) {
-                    console.log(`🔄 [FaceCompute] Direct load failed, trying fetch...`);
-                    const response = await fetch(avatarUrl);
-                    const blob = await response.blob();
-                    const blobUrl = URL.createObjectURL(blob);
-                    img = await base64ToImage(blobUrl);
-                    URL.revokeObjectURL(blobUrl);
-                }
-            } else {
-                // Base64 or data URL
+            console.log(`📸 [FaceCompute] Attempting to load image from: ${avatarUrl.substring(0, 100)}...`);
+
+            try {
                 img = await base64ToImage(avatarUrl);
+                console.log(`✅ [FaceCompute] Image loaded successfully (${img.width}x${img.height})`);
+            } catch (loadError: any) {
+                console.warn(`🔄 [FaceCompute] Direct load failed, trying with cache buster:`, loadError.message);
+                // Try adding a cache buster if it's a URL
+                if (avatarUrl.startsWith('http')) {
+                    const separator = avatarUrl.includes('?') ? '&' : '?';
+                    const proxiedUrl = `${avatarUrl}${separator}t=${Date.now()}`;
+                    img = await base64ToImage(proxiedUrl);
+                    console.log(`✅ [FaceCompute] Image loaded with cache buster`);
+                } else {
+                    throw loadError;
+                }
             }
 
-            console.log(`🔄 [FaceCompute] Image loaded (${img.width}x${img.height}), detecting face...`);
+            console.log(`🔄 [FaceCompute] Analyzing image for faces...`);
 
             // Detect face
             const descriptor = await faceService.getFaceDescriptor(img);
 
             if (descriptor) {
                 const descriptorStr = descriptorToString(descriptor);
-                console.log(`🔄 [FaceCompute] Face detected! Saving to database...`);
+                console.log(`✅ [FaceCompute] Face detected (length: ${descriptor.length}). Saving to database...`);
 
                 // Save to database
                 const { error } = await supabase
@@ -325,6 +398,22 @@ async function computeAndSaveFaceDescriptor(
                     return notifyResult({ success: false, error: 'Lỗi lưu vào database: ' + error.message });
                 } else {
                     console.log(`✅ [FaceCompute] SUCCESS! Face descriptor saved for user ${userId}`);
+
+                    // Update in-memory matcher with the correct name
+                    try {
+                        const { data: userData } = await supabase
+                            .from('users')
+                            .select('full_name')
+                            .eq('id', userId)
+                            .single();
+
+                        const userName = userData?.full_name || 'Học sinh';
+                        faceService.faceMatcher.addFace(userId, descriptor, userName);
+                        console.log(`📡 [FaceCompute] Matcher updated for: ${userName}`);
+                    } catch (e) {
+                        faceService.faceMatcher.addFace(userId, descriptor, 'Học sinh');
+                    }
+
                     return notifyResult({ success: true });
                 }
             } else {
@@ -348,6 +437,71 @@ async function computeAndSaveFaceDescriptor(
     }
 
     return notifyResult({ success: false, error: 'Đã thử ' + (maxRetries + 1) + ' lần nhưng không thành công' });
+}
+
+/**
+ * Background task to compute face descriptor for an event participant and save it
+ */
+async function computeAndSaveParticipantFaceDescriptor(
+    participantId: string,
+    avatarUrl: string,
+    retryCount = 0,
+    options?: { onComplete?: (result: { success: boolean; error?: string }) => void }
+): Promise<ApiResponse<void>> {
+    const notifyResult = (result: { success: boolean; error?: string }) => {
+        options?.onComplete?.(result);
+        faceComputeListeners.forEach(listener => listener(`participant_${participantId}`, result));
+        return result;
+    };
+
+    try {
+        if (!avatarUrl || avatarUrl.trim() === '') return notifyResult({ success: false, error: 'Không có ảnh' });
+
+        await new Promise(resolve => setTimeout(resolve, 800));
+
+        let img: HTMLImageElement;
+        console.log(`📸 [ParticipantFaceCompute] Loading: ${avatarUrl.substring(0, 100)}...`);
+
+        try {
+            img = await base64ToImage(avatarUrl);
+        } catch (loadError: any) {
+            if (avatarUrl.startsWith('http')) {
+                const separator = avatarUrl.includes('?') ? '&' : '?';
+                img = await base64ToImage(`${avatarUrl}${separator}t=${Date.now()}`);
+            } else throw loadError;
+        }
+
+        console.log(`🔄 [ParticipantFaceCompute] Analyzing...`);
+        const descriptor = await faceService.getFaceDescriptor(img);
+
+        if (descriptor) {
+            const { error } = await supabase
+                .from('event_participants')
+                .update({ face_descriptor: descriptorToString(descriptor) })
+                .eq('id', participantId);
+
+            if (error) return notifyResult({ success: false, error: error.message });
+
+            console.log(`✅ [ParticipantFaceCompute] SUCCESS for ${participantId}`);
+
+            // Sync with memory
+            try {
+                const { data: pData } = await supabase.from('event_participants').select('full_name').eq('id', participantId).single();
+                faceService.faceMatcher.addFace(participantId, descriptor, pData?.full_name || 'Người tham gia');
+            } catch (e) { }
+
+            return notifyResult({ success: true });
+        } else {
+            return notifyResult({ success: false, error: 'Không tìm thấy khuôn mặt' });
+        }
+    } catch (e: any) {
+        console.error(`❌ [ParticipantFaceCompute] Error:`, e.message);
+        if (retryCount < 2) {
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            return computeAndSaveParticipantFaceDescriptor(participantId, avatarUrl, retryCount + 1, options);
+        }
+        return notifyResult({ success: false, error: e.message });
+    }
 }
 
 /**
@@ -539,10 +693,16 @@ async function createUser(userData: Partial<User> & { password?: string }): Prom
         }
 
         const { password, ...rest } = userData; // Separate password
+
+        // Convert empty strings to null for UUID/Foreign Key fields
+        const sanitizedRest = { ...rest };
+        if (sanitizedRest.room_id === '') sanitizedRest.room_id = null;
+        if (sanitizedRest.class_id === '') sanitizedRest.class_id = null;
+
         const { data, error } = await supabase
             .from('users')
             .insert({
-                ...rest,
+                ...sanitizedRest,
                 total_points: (userData as any).total_points ?? startPoints,
                 password_hash: password // Map to password_hash
             })
@@ -590,6 +750,12 @@ async function updateUser(id: string, userData: Partial<User> & { password?: str
             }
         });
 
+        // Force clear face_descriptor if avatar_url is being updated but face_descriptor is NOT explicitly provided
+        // This prevents "stale" face recognition if the new portrait analysis fails or is still pending
+        if (userData.avatar_url && !userData.face_descriptor) {
+            updatePayload.face_descriptor = null;
+        }
+
         // Only update password_hash if password is provided
         if (password) {
             updatePayload.password_hash = password;
@@ -605,8 +771,13 @@ async function updateUser(id: string, userData: Partial<User> & { password?: str
         if (error) return { success: false, error: error.message };
 
         // Auto re-compute face descriptor if avatar changed (runs in background)
-        // Only if face_descriptor is not explicitly provided in the update
-        if (userData.avatar_url && !userData.face_descriptor) {
+        // If avatar_url is provided, we ALWAYS re-compute to ensure Face ID matches the new image
+        if (userData.avatar_url) {
+            console.log(`📸 [updateUser] Avatar changed for user ${id}, clearing old Face ID and triggering re-computation...`);
+
+            // Proactively remove from in-memory matcher
+            faceService.faceMatcher.removeFace(id);
+
             computeAndSaveFaceDescriptor(id, userData.avatar_url)
                 .catch(e => console.warn('Background face compute failed:', e));
         }
@@ -955,10 +1126,11 @@ async function getEventParticipants(eventId: string): Promise<ApiResponse<EventP
         const { data, error } = await supabase
             .from('event_participants')
             .select(`
-                id, event_id, full_name, avatar_url, birth_date, organization, face_descriptor, user_id,
+                id, event_id, full_name, avatar_url, birth_date, organization, address, student_code, qr_code, face_descriptor, user_id,
                 user:users!user_id (
                     face_descriptor,
-                    avatar_url
+                    avatar_url,
+                    student_code
                 )
             `) // Join with users to get the latest face_descriptor
             .eq('event_id', eventId)
@@ -1034,6 +1206,8 @@ async function saveEventParticipants(
                 birth_date: p.birth_date || null,
                 organization: p.organization || null,
                 address: p.address || null,
+                student_code: p.student_code || null,
+                qr_code: p.qr_code || null,
                 user_id: p.user_id || null, // Include user_id
                 face_descriptor: p.face_descriptor || null // Save face descriptor
             }));
@@ -1059,6 +1233,8 @@ async function saveEventParticipants(
                         birth_date: p.birth_date,
                         organization: p.organization,
                         address: p.address,
+                        student_code: p.student_code,
+                        qr_code: p.qr_code,
                         user_id: p.user_id, // Include user_id
                         face_descriptor: p.face_descriptor // Update face descriptor
                     })
@@ -1099,6 +1275,25 @@ async function saveEventParticipants(
             })).then(() => console.log('Synced participant data to users table'))
                 .catch(err => console.error('Error syncing participant data:', err));
         }
+
+        // For participants without explicit qr_code, update them to use their ID
+        const setQrCodes = savedParticipants.filter(p => !p.qr_code).map(p =>
+            supabase.from('event_participants').update({ qr_code: p.id }).eq('id', p.id)
+        );
+        if (setQrCodes.length > 0) await Promise.all(setQrCodes);
+
+        // Auto re-compute face descriptors for participants with avatars
+        participants.forEach(p => {
+            const savedP = savedParticipants.find(sp => sp.id === p.id || sp.full_name === p.full_name);
+            if (savedP && p.avatar_url) {
+                // If avatar changed or descriptor missing, compute it
+                if (p.avatar_url !== savedP.avatar_url || !savedP.face_descriptor) {
+                    console.log(`📸 [saveEventParticipants] Triggering Face ID compute for participant ${savedP.full_name}`);
+                    computeAndSaveParticipantFaceDescriptor(savedP.id, p.avatar_url)
+                        .catch(e => console.warn('Background participant face compute failed:', e));
+                }
+            }
+        });
 
         return { success: true, data: savedParticipants };
     } catch (err) {
@@ -1389,7 +1584,7 @@ async function boardingCheckin(
                 await addPoints(
                     userId,
                     -latePoints,
-                    `Điểm danh muộn ${slotName} ngày ${displayDate} (ID: ${slotId})`,
+                    `Điểm danh muộn ${slotName} ngày ${displayDate}`,
                     'boarding_late'
                 );
             }
@@ -1732,58 +1927,53 @@ async function initSystem(): Promise<ApiResponse<void>> {
 // =====================================================
 // POINTS API
 // =====================================================
-interface PointLog {
-    id: string;
-    user_id: string;
-    points: number;
-    reason: string;
-    created_at: string;
-    user?: User;
-}
+
 
 async function getPointLogs(userId?: string): Promise<ApiResponse<PointLog[]>> {
     try {
-        // Now fetching from notifications table (type: 'points') to unify storage
-        let query = supabase
-            .from('notifications')
+        const { data, error } = await supabase
+            .from('point_logs')
             .select('*')
-            .eq('type', 'points')
             .order('created_at', { ascending: false })
             .limit(100);
 
         if (userId) {
-            query = query.eq('user_id', userId);
-        }
+            // Client-side filtering if userId arg provided (or could enable RLS lookup)
+            // But usually we want querying by DB. 
+            // Re-adding filter:
+            const { data: userLogs, error: userError } = await supabase
+                .from('point_logs')
+                .select('*')
+                .eq('user_id', userId)
+                .order('created_at', { ascending: false })
+                .limit(100);
 
-        const { data, error } = await query;
+            if (userError) throw userError;
+            return { success: true, data: userLogs };
+        }
 
         if (error) {
             console.error('getPointLogs error:', error);
             return { success: false, error: error.message };
         }
 
-        // Map notification records to PointLog format for backward compatibility
-        const logs: PointLog[] = (data || []).map(n => ({
-            id: n.id,
-            user_id: n.user_id,
-            points: n.metadata?.points || 0,
-            reason: n.message,
-            type: n.metadata?.type || 'manual', // or other types stored in metadata
-            created_at: n.created_at,
-            created_by: n.metadata?.created_by || ''
-        }));
-
-        return { success: true, data: logs };
+        return { success: true, data: data };
     } catch (err: any) {
+        // Fallback or error handling
         return { success: false, error: err.message || 'Lỗi tải lịch sử điểm' };
     }
 }
 
 async function addPoints(userId: string, points: number, reason: string, type: string = 'manual', eventId?: string): Promise<ApiResponse<void>> {
+    // Offline support
+    if (typeof window !== 'undefined' && !navigator.onLine) {
+        addToOfflineQueue({ type: 'point_log', data: { userId, points, reason, type, eventId } });
+        return { success: true, message: 'Đã lưu offline (Chờ đồng bộ khi có mạng)' };
+    }
     try {
         const user = getStoredUser();
-        // Don't fail the whole operation if no logged-in user (e.g. automated check-in machine)
-        const creatorId = user?.id || userId; // Fallback to student ID as creator if system-triggered
+        // Automated actions should have null creator if it's the student themselves or no one logged in
+        const creatorId = (user && user.id !== userId) ? user.id : null;
 
         console.log(`[Points] Updating ${points} points for user ${userId}. Reason: ${reason}, Type: ${type}`);
 
@@ -1848,25 +2038,6 @@ async function addPoints(userId: string, points: number, reason: string, type: s
         if (logError) {
             console.error('Point Log insertion failed:', logError);
             // Don't throw here, prioritize the user update and notification
-        }
-
-        const { error: notifError } = await supabase.from('notifications').insert({
-            user_id: userId,
-            type: 'points',
-            title: notifTitle,
-            message: notifMessage,
-            is_read: false,
-            metadata: {
-                points,
-                reason: reason,
-                created_by: creatorId,
-                type: finalType,
-                event_id: eventId
-            }
-        });
-
-        if (notifError) {
-            console.error('Notification creation failed:', notifError);
         }
 
         return { success: true, message: `Đã ${points >= 0 ? 'cộng' : 'trừ'} ${Math.abs(points)} điểm` };
@@ -2346,7 +2517,7 @@ async function createCertificate(certData: Partial<Certificate>): Promise<ApiRes
                 event_id: certData.event_id,
                 type: certData.type || 'participation',
                 title: certData.title || 'Chứng nhận tham gia',
-                issued_date: new Date().toISOString(),
+                issued_date: certData.issued_date || new Date().toISOString(),
                 template_id: certData.template_id || 'modern',
                 metadata: certData.metadata || {}
             })
@@ -2370,7 +2541,7 @@ async function createCertificatesBulk(certsData: Partial<Certificate>[]): Promis
                 event_id: c.event_id,
                 type: c.type || 'participation',
                 title: c.title || 'Chứng nhận tham gia',
-                issued_date: new Date().toISOString(),
+                issued_date: c.issued_date || new Date().toISOString(),
                 template_id: c.template_id || 'modern',
                 metadata: c.metadata || {}
             })))
@@ -2544,24 +2715,7 @@ async function approveRejectExitPermission(
         const updatedRecord = data && data.length > 0 ? data[0] : null;
         if (!updatedRecord) return { success: false, error: 'Không tìm thấy đơn hoặc không có quyền duyệt' };
 
-        // --- ADD SYSTEM NOTIFICATION ---
-        try {
-            const notifTitle = action === 'approved' ? 'Đơn xin phép được DUYỆT' : 'Đơn xin phép bị TỪ CHỐI';
-            const notifMessage = action === 'approved'
-                ? `Đơn xin nghỉ ngày ${new Date(updatedRecord.exit_time).toLocaleDateString('vi-VN')} của bạn đã được phê duyệt.`
-                : `Đơn xin nghỉ ngày ${new Date(updatedRecord.exit_time).toLocaleDateString('vi-VN')} đã bị từ chối.${rejectionReason ? ' Lý do: ' + rejectionReason : ''}`;
 
-            await supabase.from('notifications').insert({
-                user_id: updatedRecord.user_id,
-                type: action, // 'approved' or 'rejected'
-                title: notifTitle,
-                message: notifMessage,
-                is_read: false,
-                metadata: { permission_id: id, status: action }
-            });
-        } catch (notifErr) {
-            console.error('Failed to create exit permission notification:', notifErr);
-        }
 
         return {
             success: true,
@@ -2654,80 +2808,56 @@ async function updateBoardingConfig(config: BoardingConfig): Promise<ApiResponse
     }
 }
 
-const OFFLINE_QUEUE_KEY = 'boarding_offline_queue';
-
-interface OfflineCheckin {
-    userId: string;
-    checkinType: CheckinType;
-    status?: 'on_time' | 'late';
-    timestamp: string;
-}
-
-function addToOfflineQueue(data: OfflineCheckin) {
+// System Permissions API
+async function getTeacherPermissions(): Promise<ApiResponse<any[]>> {
     try {
-        const queueRaw = localStorage.getItem(OFFLINE_QUEUE_KEY);
-        const queue: OfflineCheckin[] = queueRaw ? JSON.parse(queueRaw) : [];
-        queue.push(data);
-        localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(queue));
-        console.log('Saved to offline queue:', data);
-    } catch (e) {
-        console.error('Failed to save to offline queue', e);
+        const { data, error } = await supabase.from('teacher_permissions').select('*').order('module_id');
+        if (error) throw error;
+        return { success: true, data };
+    } catch (err: any) {
+        return { success: false, error: err.message };
     }
 }
 
-async function processOfflineQueue(): Promise<void> {
-    const queueRaw = localStorage.getItem(OFFLINE_QUEUE_KEY);
-    if (!queueRaw) return;
-
-    try {
-        const queue: OfflineCheckin[] = JSON.parse(queueRaw);
-        if (queue.length === 0) return;
-
-        console.log(`Processing ${queue.length} offline checkins...`);
-
-        const failedQueue: OfflineCheckin[] = [];
-
-        for (const item of queue) {
-            // We use the timestamp from the offline record to ensure accuracy
-            // But detailed boardingCheckin logic relies on "today", so day shift might be tricky.
-            // For now, we assume simple resync.
-
-            // Note: Ideally, boardingCheckin should accept an explicit timestamp. 
-            // We will modify boardingCheckin slightly to handle this if needed, 
-            // or just rely on server time (but set the correct column based on type).
-
-            // Re-using boardingCheckin but suppressing errors is risky.
-            // Let's copy logic:
-            try {
-                // Warning: This uses CURRENT time for checkin if we don't pass timestamp.
-                // We heavily rely on 'checkinType' to put it in the right column.
-                // The 'status' is preserved.
-                const result = await boardingCheckin(item.userId, item.checkinType, item.status);
-                if (!result.success) {
-                    console.warn(`Failed to sync item ${item.userId}, keeping in queue.`);
-                    failedQueue.push(item);
-                }
-            } catch (err) {
-                failedQueue.push(item);
+/**
+ * Lắng nghe thay đổi phân quyền thời gian thực
+ */
+function subscribeToTeacherPermissions(callback: (payload: any) => void) {
+    return supabase
+        .channel('public:teacher_permissions')
+        .on(
+            'postgres_changes',
+            {
+                event: 'UPDATE',
+                schema: 'public',
+                table: 'teacher_permissions'
+            },
+            (payload) => {
+                callback(payload);
             }
-        }
+        )
+        .subscribe();
+}
 
-        if (failedQueue.length > 0) {
-            localStorage.setItem(OFFLINE_QUEUE_KEY, JSON.stringify(failedQueue));
-        } else {
-            localStorage.removeItem(OFFLINE_QUEUE_KEY);
-            console.log('Offline queue processed successfully');
-        }
+async function updateTeacherPermission(moduleId: string, updates: any): Promise<ApiResponse<void>> {
+    try {
+        console.log(`[Permissions] Invoking RPC for module ${moduleId}:`, updates);
 
-    } catch (e) {
-        console.error('Error processing offline queue', e);
+        // Use RPC to bypass RLS UPDATE lock
+        const { error } = await supabase.rpc('update_teacher_module_permission', {
+            target_id: moduleId,
+            updates: updates
+        });
+
+        if (error) throw error;
+
+        return { success: true, message: 'Cập nhật phân quyền thành công' };
+    } catch (err: any) {
+        console.error('[Permissions] RPC Update failed:', err);
+        return { success: false, error: err.message || 'Lỗi lưu dữ liệu' };
     }
 }
 
-// Ensure queue is processed on load
-if (typeof window !== 'undefined') {
-    setTimeout(processOfflineQueue, 5000); // Wait 5s then sync
-}
 
 // =====================================================
 // EXPORT DATA SERVICE
@@ -2770,6 +2900,7 @@ export const dataService = {
     uploadParticipantAvatarWithFaceID, // NEW: Auto-compute face ID when uploading avatar
     saveEventParticipants,
     deleteEventParticipant,
+    computeAndSaveParticipantFaceDescriptor,
 
     // Rooms
     getRooms,
@@ -2784,7 +2915,10 @@ export const dataService = {
     getBoardingCheckins,
     getBoardingConfig,
     updateBoardingConfig,
-    processOfflineQueue,
+    syncOfflineData,
+    getTeacherPermissions,
+    subscribeToTeacherPermissions,
+    updateTeacherPermission,
 
     // Boarding Time Slots - Khung giờ linh hoạt
     getTimeSlots,

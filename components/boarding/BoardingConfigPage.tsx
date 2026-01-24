@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import QRCode from 'qrcode';
 import { dataService } from '../../services/dataService';
 import { User, BoardingConfig, BoardingTimeSlot } from '../../types';
 import { faceService } from '../../services/faceService';
@@ -89,8 +90,18 @@ const CustomTimePicker = ({ value, onChange, className = '' }: { value: string, 
 
 // --- 1. Config Tab Component (Original BoardingConfigPage content) ---
 
-const BoardingConfigTab: React.FC = () => {
+const BoardingConfigTab: React.FC<{
+    currentUser: User;
+    teacherPermissions: any[]
+}> = ({ currentUser, teacherPermissions }) => {
     const { success: toastSuccess, error: toastError } = useToast();
+
+    // Determine permissions
+    const modulePerm = teacherPermissions?.find(p => p.module_id === 'boarding');
+    const isAdmin = currentUser.role === 'admin';
+    const canEdit = isAdmin || (modulePerm?.is_enabled && modulePerm?.can_edit);
+    const canDelete = isAdmin || (modulePerm?.is_enabled && modulePerm?.can_delete);
+
     const [config, setConfig] = useState<BoardingConfig>({
         morning_curfew: '07:00',
         noon_curfew: '12:30',
@@ -124,6 +135,7 @@ const BoardingConfigTab: React.FC = () => {
     const [batchProgress, setBatchProgress] = useState({ current: 0, total: 0, name: '' });
     const [batchResult, setBatchResult] = useState<{ success: number; failed: number; total: number } | null>(null);
     const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+    const [showQRModal, setShowQRModal] = useState(false);
 
     const handleBatchComputeFaceID = async () => {
         setShowBatchModal(true);
@@ -358,33 +370,45 @@ const BoardingConfigTab: React.FC = () => {
 
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-            <div className="flex items-center justify-between">
-                <div>
-                    <h2 className="text-2xl font-black text-slate-900">Cấu hình & Danh sách</h2>
-                    <p className="text-slate-500">Thiết lập giờ giới nghiêm và quản lý học sinh nội trú</p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div className="min-w-0">
+                    <h2 className="text-xl sm:text-2xl font-black text-slate-900 truncate">Cấu hình & Danh sách</h2>
+                    <p className="text-slate-500 text-sm sm:text-base truncate">Thiết lập giờ giới nghiêm và quản lý học sinh nội trú</p>
                 </div>
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap sm:flex-nowrap">
+                    {canEdit && (
+                        <Button
+                            onClick={handleBatchComputeFaceID}
+                            icon={<Icons.User className="w-4 h-4" />}
+                            variant="secondary"
+                        >
+                            <span className="hidden sm:inline">Batch Compute</span>
+                            <span className="sm:hidden text-xs">Batch</span>
+                        </Button>
+                    )}
                     <Button
-                        onClick={handleBatchComputeFaceID}
-                        icon={<Icons.User className="w-4 h-4" />}
-                        variant="secondary"
-                    >
-                        Batch Compute Face ID
-                    </Button>
-                    <Button
-                        onClick={() => window.open('/boarding-run', '_blank')}
+                        onClick={() => setShowQRModal(true)}
                         icon={<Icons.CheckIn className="w-4 h-4" />}
                         variant="secondary"
                     >
-                        Mở Check-in (Tab mới)
+                        Mã QR
                     </Button>
                     <Button
-                        onClick={handleSave}
-                        isLoading={isSaving}
-                        icon={<Icons.Save className="w-4 h-4" />}
+                        onClick={() => window.open('/boarding-run', '_blank')}
+                        icon={<Icons.ExternalLink className="w-4 h-4" />}
+                        variant="secondary"
                     >
-                        Lưu Cấu hình
+                        Máy chủ
                     </Button>
+                    {canEdit && (
+                        <Button
+                            onClick={handleSave}
+                            isLoading={isSaving}
+                            icon={<Icons.Save className="w-4 h-4" />}
+                        >
+                            Lưu
+                        </Button>
+                    )}
                 </div>
             </div>
 
@@ -397,15 +421,17 @@ const BoardingConfigTab: React.FC = () => {
                                 <Icons.Settings className="w-5 h-5 text-indigo-600" />
                                 Khung giờ Check-in
                             </h3>
-                            <button
-                                onClick={() => {
-                                    setEditingSlot({ name: '', start_time: '06:00', end_time: '07:00', is_active: true, order_index: timeSlots.length + 1 });
-                                    setShowSlotModal(true);
-                                }}
-                                className="text-sm text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1"
-                            >
-                                <Icons.Plus className="w-4 h-4" /> Thêm mới
-                            </button>
+                            {canEdit && (
+                                <button
+                                    onClick={() => {
+                                        setEditingSlot({ name: '', start_time: '06:00', end_time: '07:00', is_active: true, order_index: timeSlots.length + 1 });
+                                        setShowSlotModal(true);
+                                    }}
+                                    className="text-sm text-indigo-600 hover:text-indigo-700 font-bold flex items-center gap-1"
+                                >
+                                    <Icons.Plus className="w-4 h-4" /> Thêm mới
+                                </button>
+                            )}
                         </div>
 
                         <div className="space-y-3">
@@ -437,17 +463,19 @@ const BoardingConfigTab: React.FC = () => {
                                             <span className="text-xs text-slate-400 ml-2">(trễ sau giờ này)</span>
                                         </div>
                                         <div className="flex gap-1">
-                                            <button
-                                                onClick={() => {
-                                                    setEditingSlot(slot);
-                                                    setShowSlotModal(true);
-                                                }}
-                                                className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-100 transition-colors"
-                                                title="Sửa khung giờ"
-                                            >
-                                                <Icons.Edit className="w-4 h-4" />
-                                            </button>
-                                            {!['Buổi Sáng', 'Buổi Trưa', 'Buổi Tối'].includes(slot.name) && (
+                                            {canEdit && (
+                                                <button
+                                                    onClick={() => {
+                                                        setEditingSlot(slot);
+                                                        setShowSlotModal(true);
+                                                    }}
+                                                    className="p-1.5 rounded-lg text-indigo-600 hover:bg-indigo-100 transition-colors"
+                                                    title="Sửa khung giờ"
+                                                >
+                                                    <Icons.Edit className="w-4 h-4" />
+                                                </button>
+                                            )}
+                                            {canDelete && !['Buổi Sáng', 'Buổi Trưa', 'Buổi Tối'].includes(slot.name) && (
                                                 <button
                                                     onClick={async () => {
                                                         if (!confirm(`Xóa khung giờ "${slot.name}"?`)) return;
@@ -524,9 +552,9 @@ const BoardingConfigTab: React.FC = () => {
                                                             </div>
                                                         )}
                                                     </div>
-                                                    <div>
-                                                        <span className="font-bold text-slate-900 text-sm block">{student.full_name}</span>
-                                                        <span className="text-xs text-slate-500">{student.email || 'Chưa có email'}</span>
+                                                    <div className="min-w-0">
+                                                        <span className="font-bold text-slate-900 text-sm block truncate">{student.full_name}</span>
+                                                        <span className="text-[10px] sm:text-xs text-slate-500 truncate block">{student.email || 'Chưa có email'}</span>
                                                     </div>
 
                                                 </div>
@@ -550,27 +578,33 @@ const BoardingConfigTab: React.FC = () => {
                                             </td>
                                             <td className="px-4 py-3">
                                                 <div className="flex items-center justify-end gap-1">
-                                                    <button
-                                                        onClick={() => openFaceModal(student)}
-                                                        className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded"
-                                                        title="Cập nhật Face ID"
-                                                    >
-                                                        <Icons.User className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => openEditModal(student)}
-                                                        className="p-1.5 text-slate-600 hover:bg-slate-100 rounded"
-                                                        title="Sửa thông tin"
-                                                    >
-                                                        <Icons.Edit className="w-4 h-4" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => handleDeleteUser(student)}
-                                                        className="p-1.5 text-red-600 hover:bg-red-50 rounded"
-                                                        title="Xóa"
-                                                    >
-                                                        <Icons.Trash className="w-4 h-4" />
-                                                    </button>
+                                                    {canEdit && (
+                                                        <>
+                                                            <button
+                                                                onClick={() => openFaceModal(student)}
+                                                                className="p-1.5 text-indigo-600 hover:bg-indigo-50 rounded"
+                                                                title="Cập nhật Face ID"
+                                                            >
+                                                                <Icons.User className="w-4 h-4" />
+                                                            </button>
+                                                            <button
+                                                                onClick={() => openEditModal(student)}
+                                                                className="p-1.5 text-slate-600 hover:bg-slate-100 rounded"
+                                                                title="Sửa thông tin"
+                                                            >
+                                                                <Icons.Edit className="w-4 h-4" />
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                    {canDelete && (
+                                                        <button
+                                                            onClick={() => handleDeleteUser(student)}
+                                                            className="p-1.5 text-red-600 hover:bg-red-50 rounded"
+                                                            title="Xóa"
+                                                        >
+                                                            <Icons.Trash className="w-4 h-4" />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </td>
                                         </tr>
@@ -900,12 +934,81 @@ const BoardingConfigTab: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            {/* QR Quick Modal */}
+            {showQRModal && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in zoom-in-95">
+                    <div className="bg-white rounded-[2.5rem] p-8 max-w-sm w-full text-center relative overflow-hidden shadow-2xl">
+                        {/* Background Decoration */}
+                        <div className="absolute top-0 right-0 w-32 h-32 bg-indigo-50 rounded-full -mr-16 -mt-16 -z-10"></div>
+                        <div className="absolute bottom-0 left-0 w-32 h-32 bg-emerald-50 rounded-full -ml-16 -mb-16 -z-10"></div>
+
+                        <div className="flex justify-between items-center mb-6">
+                            <h3 className="text-xl font-black text-slate-900">Mã QR Nội trú</h3>
+                            <button onClick={() => setShowQRModal(false)} className="p-2 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100">
+                                <Icons.X className="w-5 h-5" />
+                            </button>
+                        </div>
+
+                        <div className="bg-white p-4 rounded-3xl border-2 border-slate-100 shadow-xl inline-block mb-6 relative group">
+                            <QRImage url={`${window.location.origin}/boarding-run?token=EDUCHECK_STAFF`} />
+                            <div className="absolute inset-0 bg-white/10 backdrop-blur-[1px] opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded-2xl">
+                                <span className="px-3 py-1 bg-slate-900 text-white text-[10px] font-bold rounded-lg truncate">Mã dành cho cán bộ</span>
+                            </div>
+                        </div>
+
+                        <div className="space-y-4">
+                            <div>
+                                <h4 className="font-bold text-slate-900">Điểm danh Nội trú</h4>
+                                <p className="text-xs text-slate-500 font-medium">Truy cập nhanh không cần đăng nhập</p>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2">
+                                <button
+                                    onClick={() => {
+                                        const url = `${window.location.origin}/boarding-run?token=EDUCHECK_STAFF`;
+                                        navigator.clipboard.writeText(url);
+                                        toastSuccess('Đã sao chép liên kết!');
+                                    }}
+                                    className="px-4 py-3 bg-slate-100 text-slate-700 rounded-xl font-bold text-xs hover:bg-slate-200 transition-all flex items-center justify-center gap-2"
+                                >
+                                    <Icons.Copy className="w-4 h-4" /> Sao chép liên kết
+                                </button>
+                            </div>
+
+                            <p className="text-[10px] text-slate-400 font-medium leading-relaxed">
+                                Quét để mở máy điểm danh phụ trên điện thoại/máy tính khác của cán bộ quản lý (Không cần đăng nhập tài khoản chính)
+                            </p>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
 
+// Helper component for QR image generation
+const QRImage = ({ url }: { url: string }) => {
+    const [qrData, setQrData] = React.useState('');
+    const [isLoading, setIsLoading] = React.useState(true);
+
+    React.useEffect(() => {
+        QRCode.toDataURL(url, { margin: 1, width: 250 }, (err: any, data: string) => {
+            if (!err) setQrData(data);
+            setIsLoading(false);
+        });
+    }, [url]);
+
+    if (isLoading) return <div className="w-[200px] h-[200px] bg-slate-100 animate-pulse rounded-lg flex items-center justify-center text-[10px] text-slate-400 font-bold uppercase tracking-widest">Đang tạo...</div>;
+    return <img src={qrData} alt="QR Code" className="w-[200px] h-[200px] object-contain" />;
+};
+
 // --- Main Manager Component with Tabs ---
-const BoardingManager: React.FC<{ currentUser: User, initialTab?: 'dashboard' | 'config' | 'rooms' | 'exit' | 'report' }> = ({ currentUser, initialTab }) => {
+const BoardingManager: React.FC<{
+    currentUser: User,
+    initialTab?: 'dashboard' | 'config' | 'rooms' | 'exit' | 'report',
+    teacherPermissions: any[]
+}> = ({ currentUser, initialTab, teacherPermissions }) => {
     const [activeTab, setActiveTab] = useState<'dashboard' | 'config' | 'rooms' | 'exit' | 'report'>(initialTab || 'dashboard');
 
     useEffect(() => {
@@ -944,10 +1047,10 @@ const BoardingManager: React.FC<{ currentUser: User, initialTab?: 'dashboard' | 
             {/* Content Area */}
             <div className="min-h-[600px]">
                 {activeTab === 'dashboard' && <BoardingDashboard onNavigate={(tab) => setActiveTab(tab as any)} />}
-                {activeTab === 'config' && <BoardingConfigTab />}
-                {activeTab === 'rooms' && <RoomManagement />}
-                {activeTab === 'exit' && <ExitPermission currentUser={currentUser} />}
-                {activeTab === 'report' && <BoardingReport />}
+                {activeTab === 'config' && <BoardingConfigTab currentUser={currentUser} teacherPermissions={teacherPermissions} />}
+                {activeTab === 'rooms' && <RoomManagement currentUser={currentUser} teacherPermissions={teacherPermissions} />}
+                {activeTab === 'exit' && <ExitPermission currentUser={currentUser} teacherPermissions={teacherPermissions} />}
+                {activeTab === 'report' && <BoardingReport currentUser={currentUser} teacherPermissions={teacherPermissions} />}
             </div>
         </div>
     );

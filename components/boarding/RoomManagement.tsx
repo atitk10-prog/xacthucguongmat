@@ -14,9 +14,17 @@ interface Room {
 
 interface RoomManagementProps {
     onBack?: () => void;
+    currentUser: User;
+    teacherPermissions: any[];
 }
 
-const RoomManagement: React.FC<RoomManagementProps> = ({ onBack }) => {
+const RoomManagement: React.FC<RoomManagementProps> = ({ onBack, currentUser, teacherPermissions }) => {
+    // Permission checks
+    const modulePerm = teacherPermissions?.find(p => p.module_id === 'boarding');
+    const isAdmin = currentUser.role === 'admin';
+    const canEdit = isAdmin || (modulePerm?.is_enabled && modulePerm?.can_edit);
+    const canDelete = isAdmin || (modulePerm?.is_enabled && modulePerm?.can_delete);
+
     const { error: toastError, success: toastSuccess } = useToast();
     const [rooms, setRooms] = useState<Room[]>([]);
     const [students, setStudents] = useState<User[]>([]);
@@ -241,13 +249,15 @@ const RoomManagement: React.FC<RoomManagementProps> = ({ onBack }) => {
                     <h2 className="text-2xl font-black text-slate-900">Quản lý Phòng Nội trú</h2>
                     <p className="text-slate-500 font-medium mt-1">Thêm, sửa, xóa phòng và gán học sinh</p>
                 </div>
-                <button
-                    onClick={handleAddRoom}
-                    className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-700 transition-colors shadow-lg"
-                >
-                    <Plus className="w-5 h-5" />
-                    Thêm Phòng
-                </button>
+                {canEdit && (
+                    <button
+                        onClick={handleAddRoom}
+                        className="px-4 py-2.5 bg-indigo-600 text-white rounded-xl font-bold flex items-center gap-2 hover:bg-indigo-700 transition-colors shadow-lg"
+                    >
+                        <Plus className="w-5 h-5" />
+                        Thêm Phòng
+                    </button>
+                )}
             </div>
 
             {/* Stats */}
@@ -317,13 +327,15 @@ const RoomManagement: React.FC<RoomManagementProps> = ({ onBack }) => {
                             >
                                 Khu {zone} <span className="text-xs opacity-70">({zoneRoomCount})</span>
                             </button>
-                            <button
-                                onClick={(e) => openZoneEditModal(e, zone)}
-                                className={`absolute right-1 p-1 rounded-lg hover:bg-white/20 transition-colors ${selectedZone === zone ? 'text-white' : 'text-slate-400 group-hover:text-indigo-600'}`}
-                                title="Sửa tên khu"
-                            >
-                                <Edit className="w-3.5 h-3.5" />
-                            </button>
+                            {canEdit && (
+                                <button
+                                    onClick={(e) => openZoneEditModal(e, zone)}
+                                    className={`absolute right-1 p-1 rounded-lg hover:bg-white/20 transition-colors ${selectedZone === zone ? 'text-white' : 'text-slate-400 group-hover:text-indigo-600'}`}
+                                    title="Sửa tên khu"
+                                >
+                                    <Edit className="w-3.5 h-3.5" />
+                                </button>
+                            )}
                         </div>
                     );
                 })}
@@ -356,27 +368,33 @@ const RoomManagement: React.FC<RoomManagementProps> = ({ onBack }) => {
                                         <span className="text-lg font-black text-indigo-600">{room.name}</span>
                                     </div>
                                     <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); handleOpenAssignModal(room); }}
-                                            className="p-2 hover:bg-emerald-50 rounded-lg text-slate-500 hover:text-emerald-600"
-                                            title="Thêm học sinh"
-                                        >
-                                            <UserPlus className="w-4 h-4" />
-                                        </button>
-                                        <button
-                                            onClick={(e) => handleEditRoom(room, e)}
-                                            className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-indigo-600"
-                                            title="Sửa phòng"
-                                        >
-                                            <Edit2 className="w-4 h-4" />
-                                        </button>
-                                        <button
-                                            onClick={(e) => { e.stopPropagation(); setDeleteConfirm(room); }}
-                                            className="p-2 hover:bg-red-50 rounded-lg text-slate-500 hover:text-red-600"
-                                            title="Xóa phòng"
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
+                                        {canEdit && (
+                                            <>
+                                                <button
+                                                    onClick={(e) => { e.stopPropagation(); handleOpenAssignModal(room); }}
+                                                    className="p-1.5 hover:bg-emerald-50 rounded-lg text-slate-400 hover:text-emerald-600"
+                                                    title="Thêm học sinh"
+                                                >
+                                                    <UserPlus className="w-3.5 h-3.5" />
+                                                </button>
+                                                <button
+                                                    onClick={(e) => handleEditRoom(room, e)}
+                                                    className="p-1.5 hover:bg-slate-100 rounded-lg text-slate-400 hover:text-indigo-600"
+                                                    title="Sửa phòng"
+                                                >
+                                                    <Edit2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            </>
+                                        )}
+                                        {canDelete && (
+                                            <button
+                                                onClick={(e) => { e.stopPropagation(); setDeleteConfirm(room); }}
+                                                className="p-1.5 hover:bg-red-50 rounded-lg text-slate-400 hover:text-red-600"
+                                                title="Xóa phòng"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
 
@@ -430,13 +448,15 @@ const RoomManagement: React.FC<RoomManagementProps> = ({ onBack }) => {
                                 </div>
                             </div>
                             <div className="flex gap-2">
-                                <button
-                                    onClick={() => handleOpenAssignModal(selectedRoom)}
-                                    className="px-3 py-2 bg-emerald-600 text-white rounded-xl font-bold text-sm flex items-center gap-1 hover:bg-emerald-700"
-                                >
-                                    <UserPlus className="w-4 h-4" />
-                                    Thêm HS
-                                </button>
+                                {canEdit && (
+                                    <button
+                                        onClick={() => handleOpenAssignModal(selectedRoom)}
+                                        className="px-3 py-2 bg-emerald-600 text-white rounded-xl font-bold text-sm flex items-center gap-1 hover:bg-emerald-700"
+                                    >
+                                        <UserPlus className="w-4 h-4" />
+                                        Thêm HS
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => setSelectedRoom(null)}
                                     className="w-10 h-10 rounded-xl hover:bg-slate-100 flex items-center justify-center"
@@ -471,13 +491,15 @@ const RoomManagement: React.FC<RoomManagementProps> = ({ onBack }) => {
                                                 <p className="font-bold text-slate-900">{student.full_name}</p>
                                                 <p className="text-sm text-slate-500">{student.organization || student.student_code}</p>
                                             </div>
-                                            <button
-                                                onClick={() => handleRemoveStudent(student)}
-                                                className="p-2 hover:bg-red-100 rounded-lg text-slate-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
-                                                title="Xóa khỏi phòng"
-                                            >
-                                                <UserMinus className="w-4 h-4" />
-                                            </button>
+                                            {canEdit && (
+                                                <button
+                                                    onClick={() => handleRemoveStudent(student)}
+                                                    className="p-2 hover:bg-red-100 rounded-lg text-slate-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                                                    title="Xóa khỏi phòng"
+                                                >
+                                                    <UserMinus className="w-4 h-4" />
+                                                </button>
+                                            )}
                                         </div>
                                     ))}
                                 </div>
