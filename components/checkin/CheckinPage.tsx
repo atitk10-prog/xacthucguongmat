@@ -1464,25 +1464,13 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 </div>
                             )}
 
-                            {/* Centered Scan Frame - Professional Fixed Unified Frame */}
+                            {/* Centered Scan Frame - Professional Fixed Unified Frame (Radar Only) */}
                             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
                                 <div className="w-full aspect-square max-w-[280px] md:max-w-[340px] relative">
-                                    {/* Radar Animation */}
-                                    <div className="absolute inset-0 overflow-hidden rounded-[40px] md:rounded-[50px] opacity-20 pointer-events-none">
+                                    {/* Radar Animation - Now the primary visual area */}
+                                    <div className="absolute inset-0 overflow-hidden rounded-[40px] md:rounded-[50px] opacity-25 pointer-events-none">
                                         <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
                                     </div>
-
-                                    {/* Main Frame Border - Dynamic Colors */}
-                                    <div className={`absolute inset-0 border-2 rounded-[40px] md:rounded-[50px] transition-all duration-300 ${isProcessing ? 'border-amber-500/50 shadow-[0_0_20px_rgba(245,158,11,0.2)]' : (recognizedPerson && faceDetected) ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.2)]' : faceDetected ? 'border-red-500/50 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'border-white/10'}`}></div>
-
-                                    {/* Corners - Top Left */}
-                                    <div className={`absolute -top-1 -left-1 w-12 h-12 border-t-4 border-l-4 rounded-tl-[32px] transition-colors duration-300 ${isProcessing ? 'border-amber-500' : (recognizedPerson && faceDetected) ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                                    {/* Corners - Top Right */}
-                                    <div className={`absolute -top-1 -right-1 w-12 h-12 border-t-4 border-r-4 rounded-tr-[32px] transition-colors duration-300 ${isProcessing ? 'border-amber-500' : (recognizedPerson && faceDetected) ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                                    {/* Corners - Bottom Left */}
-                                    <div className={`absolute -bottom-1 -left-1 w-12 h-12 border-b-4 border-l-4 rounded-bl-[32px] transition-colors duration-300 ${isProcessing ? 'border-amber-500' : (recognizedPerson && faceDetected) ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                                    {/* Corners - Bottom Right */}
-                                    <div className={`absolute -bottom-1 -right-1 w-12 h-12 border-b-4 border-r-4 rounded-br-[32px] transition-colors duration-300 ${isProcessing ? 'border-amber-500' : (recognizedPerson && faceDetected) ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
 
                                     {/* Animated scan line (Traditional) */}
                                     <div className="absolute inset-x-4 top-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-scan opacity-30"></div>
@@ -1557,8 +1545,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                 {/* Dynamic Face Tracking Box REMOVED - Using Fixed Unified Frame above */}
 
-                {/* Status badges - LEFT CORNER */}
-                <div className="absolute top-20 md:top-24 left-4 md:left-6 flex flex-col items-start gap-2.5 md:gap-4 z-[90] pointer-events-none">
+                {/* Status badges - LEFT CORNER - HIDDEN ON MOBILE */}
+                <div className="absolute top-20 md:top-24 left-4 md:left-6 flex-col items-start gap-2.5 md:gap-4 z-[90] pointer-events-none hidden md:flex">
                     {/* Status Badge */}
                     <div className={`px-4 md:px-5 py-1.5 md:py-2 rounded-2xl backdrop-blur-2xl text-white text-[9px] md:text-[11px] font-black shadow-2xl border border-white/10 transition-all duration-500 ${checkinMode === 'face' ? 'bg-indigo-600/40 text-indigo-100' : 'bg-emerald-600/40 text-emerald-100'}`}>
                         <div className="flex items-center gap-2 md:gap-2.5">
@@ -1574,9 +1562,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         </div>
                     )}
 
-                    {/* Face status badge - compact on mobile */}
+                    {/* Face status badge - compact on mobile - HIDDEN ON MOBILE */}
                     {checkinMode === 'face' && modelsReady && !showSuccessOverlay && (
-                        <div className={`px-4 py-2 rounded-2xl text-[10px] font-black flex items-center gap-2.5 transition-all border shadow-2xl backdrop-blur-xl ${multipleFaces ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse' :
+                        <div className={`px-4 py-2 rounded-2xl text-[10px] font-black items-center gap-2.5 transition-all border shadow-2xl backdrop-blur-xl hidden md:flex ${multipleFaces ? 'bg-red-500/20 text-red-400 border-red-500/30 animate-pulse' :
                             faceDetected ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-orange-500/20 text-orange-400 border-orange-500/30'
                             }`}>
                             {multipleFaces ? (

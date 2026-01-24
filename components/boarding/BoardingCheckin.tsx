@@ -549,25 +549,12 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-center items-center z-10">
                     {/* Professional Scan Frame */}
                     <div className="relative w-full aspect-square max-w-[260px] md:max-w-[320px]">
-                        {/* Radar Scan Animation inside the frame */}
-                        <div className="absolute inset-0 overflow-hidden rounded-[3rem] opacity-30">
+                        {/* Radar Scan Animation inside the frame - Primary Indicator */}
+                        <div className="absolute inset-0 overflow-hidden rounded-[3rem] opacity-40">
                             <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
                         </div>
 
-                        {/* Main Frame Border - Only show in Face mode or as requested */}
-                        {checkinMode === 'face' && (
-                            <div className={`absolute inset-0 border-2 rounded-[3.5rem] transition-all duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500/60 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : faceDetected ? 'border-red-500/60 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'border-white/10'}`}></div>
-                        )}
-
-                        {/* Corners - Only show in Face mode for a cleaner QR look */}
-                        {checkinMode === 'face' && (
-                            <>
-                                <div className={`absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 rounded-tl-[2rem] transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                                <div className={`absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 rounded-tr-[2rem] transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                                <div className={`absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 rounded-bl-[2rem] transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                                <div className={`absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 rounded-br-[2rem] transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                            </>
-                        )}
+                        {/* Physical borders and corners REMOVED as requested to avoid clutter */}
 
                         {/* Status Badge Over the Frame */}
                         <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-max">
