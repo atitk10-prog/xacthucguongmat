@@ -1125,6 +1125,15 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         }
     }, [event, currentUser, isProcessing, facesLoaded, recognizedPerson]);
 
+    const handleRetryCamera = () => {
+        setCameraError(null);
+        if (checkinMode === 'face') {
+            startFaceCamera();
+        } else {
+            switchCheckinMode('qr');
+        }
+    };
+
     if (cameraError) {
         return (
             <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex items-center justify-center p-4">
@@ -1136,9 +1145,14 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     </div>
                     <h2 className="text-2xl font-black text-slate-900 mb-2">Không thể truy cập camera</h2>
                     <p className="text-slate-500 mb-6">{cameraError}</p>
-                    <button onClick={onBack} className="px-6 py-3 bg-slate-100 text-slate-700 rounded-2xl font-bold hover:bg-slate-200">
-                        ← Quay lại
-                    </button>
+                    <div className="flex flex-col gap-3">
+                        <button onClick={handleRetryCamera} className="px-6 py-3 bg-indigo-600 text-white rounded-2xl font-bold hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200">
+                            🔄 Thử lại ngay
+                        </button>
+                        <button onClick={onBack} className="px-6 py-3 bg-slate-100 text-slate-700 rounded-2xl font-bold hover:bg-slate-200 transition-colors">
+                            ← Quay lại trang chính
+                        </button>
+                    </div>
                 </div>
             </div>
         );

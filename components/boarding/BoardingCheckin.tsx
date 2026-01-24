@@ -10,7 +10,7 @@ import {
     Camera, RefreshCw, UserCheck, AlertTriangle, CheckCircle,
     ArrowDown, ArrowUp, Clock, History, ChevronLeft, MapPin,
     Moon, Sun, Sunrise, Sunset, Settings, Save, X, QrCode, User as UserIcon,
-    FlipHorizontal2
+    FlipHorizontal2, RotateCcw, CameraOff
 } from 'lucide-react';
 
 interface BoardingCheckinProps {
@@ -46,6 +46,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
     // Results & Config
     const [result, setResult] = useState<{ success: boolean; message: string; data?: BoardingCheckinType; user?: User; status?: 'late' | 'on_time'; points?: number } | null>(null);
+    const [cameraError, setCameraError] = useState<string | null>(null);
     const [recentCheckins, setRecentCheckins] = useState<Array<{ name: string; time: string; type: string; status: string; image?: string; userId?: string }>>([]);
     const [showConfigModal, setShowConfigModal] = useState(false);
     const [configForm, setConfigForm] = useState<BoardingConfig>({
@@ -191,25 +192,20 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 await qrScannerService.startScanning(
                     'qr-reader',
                     (res) => { if (res.code) handleQRCheckin(res.code); },
-                    (err) => setGuidance('Lỗi camera: ' + err),
+                    (err) => { setGuidance('Lỗi camera: ' + err); setCameraError(err); },
                     facing
                 );
                 setQrScannerActive(true);
+                setCameraError(null);
                 setGuidance('Đưa mã QR vào khung hình...');
             } catch (err) {
                 console.error('QR scanner failed:', err);
                 setGuidance('Không thể mở camera QR. Thử lại...');
-                // Retry once after 1 second
-                setTimeout(async () => {
-                    try {
-                        await qrScannerService.startScanning('qr-reader', (res) => { if (res.code) handleQRCheckin(res.code); }, (err) => { }, facing);
-                        setQrScannerActive(true);
-                        setGuidance('Đưa mã QR vào khung hình...');
-                    } catch (e) { setGuidance('Camera không khả dụng'); }
-                }, 1000);
+                setCameraError('Thất bại khi khởi động camera QR.');
             }
         } else {
             setGuidance('Đang khởi động AI...');
+            setCameraError(null);
             // startFaceCamera will be triggered by useEffect
         }
     };
@@ -230,10 +226,12 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 videoRef.current.srcObject = s;
                 await videoRef.current.play();
             }
+            setCameraError(null);
             setGuidance('Đang tìm khuôn mặt...');
         } catch (e) {
             console.error('Face camera failed:', e);
-            setGuidance('Không thể mở camera. Kiểm tra quyền truy cập.');
+            setCameraError('Không thể mở camera. Kiểm tra quyền truy cập.');
+            setGuidance('Lỗi camera.');
         }
     };
 
@@ -242,6 +240,15 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             stream.getTracks().forEach(t => t.stop());
             setStream(null);
             if (videoRef.current) videoRef.current.srcObject = null;
+        }
+    };
+
+    const handleRetryCamera = () => {
+        setCameraError(null);
+        if (checkinMode === 'face') {
+            startFaceCamera();
+        } else {
+            switchCheckinMode('qr');
         }
     };
 
@@ -514,6 +521,22 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             </div>
 
             <div className="flex-1 lg:flex-[2] relative bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 min-h-[300px] md:min-h-[350px]">
+                {cameraError && (
+                    <div className="absolute inset-0 z-[150] bg-slate-900/95 flex flex-col items-center justify-center p-6 text-center">
+                        <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mb-4">
+                            <CameraOff className="w-8 h-8 text-red-500" />
+                        </div>
+                        <h3 className="text-white font-bold text-lg mb-2">Lỗi Camera</h3>
+                        <p className="text-slate-400 text-sm mb-6 max-w-[240px] leading-relaxed">{cameraError}</p>
+                        <button
+                            onClick={handleRetryCamera}
+                            className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-lg active:scale-95"
+                        >
+                            <RotateCcw className="w-4 h-4 animate-spin-once" />
+                            Thử lại ngay
+                        </button>
+                    </div>
+                )}
                 {checkinMode === 'face' ? <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" /> :
                     <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900">
                         <div id="qr-reader" className="w-full max-w-md"></div>
