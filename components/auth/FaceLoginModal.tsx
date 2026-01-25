@@ -217,53 +217,66 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 if (prog % 20 === 0) soundService.play('camera');
 
                 // Guidance for blink
-                if (prog > 30 && prog < 80 && !blinkDetected) {
-                    setGuidance('HÃY CHỚP MẮT ĐỂ CHIẾU XÁC');
+                if (prog > 30 && prog < 85 && !blinkDetected) {
+                    setGuidance('HÃY CHỚP MẮT ĐỂ XÁC MINH');
                 }
 
-                // Check for blink in background loop
-                checkBlink();
+                // Check for blink and face presence in background
+                checkBlinkAndPresence(interval);
 
                 if (prog >= 100) {
                     clearInterval(interval);
                     performRadarAuth();
                 }
-            }, 50);
+            }, 40);
         };
 
-        const checkBlink = async () => {
-            if (!videoRef.current || blinkDetected) return;
-            const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+        const checkBlinkAndPresence = async (interval: NodeJS.Timeout) => {
+            if (!videoRef.current) return;
+
+            const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
                 .withFaceLandmarks();
 
-            if (detections) {
-                const landmarks = detections.landmarks;
-                const leftEye = landmarks.getLeftEye();
-                const rightEye = landmarks.getRightEye();
-
-                // Eyes Aspect Ratio (EAR) simplified
-                const getEAR = (eye: faceapi.Point[]) => {
-                    const v1 = Math.abs(eye[1].y - eye[5].y);
-                    const v2 = Math.abs(eye[2].y - eye[4].y);
-                    const h = Math.abs(eye[0].x - eye[3].x);
-                    return (v1 + v2) / (2 * h);
-                };
-
-                const ear = (getEAR(leftEye) + getEAR(rightEye)) / 2;
-                const isOpen = ear > 0.25;
-
-                if (lastEyeOpenRef.current && !isOpen) {
-                    // Eye just closed
-                } else if (!lastEyeOpenRef.current && isOpen) {
-                    // Eye just opened - Blink detected!
-                    blinkCountRef.current += 1;
-                    if (blinkCountRef.current >= 1) {
-                        setBlinkDetected(true);
-                        soundService.play('success');
-                    }
-                }
-                lastEyeOpenRef.current = isOpen;
+            if (!detections) {
+                // FACE LOST DURING SCAN!
+                clearInterval(interval);
+                setIsScanning(false);
+                setScanProgress(0);
+                setGuidance('Quét thất bại: Mất dấu khuôn mặt');
+                soundService.play('error');
+                stableStartTimeRef.current = null;
+                setStabilityProgress(0);
+                return;
             }
+
+            if (blinkDetected) return;
+
+            const landmarks = detections.landmarks;
+            const leftEye = landmarks.getLeftEye();
+            const rightEye = landmarks.getRightEye();
+
+            // EAR Calculation
+            const getEAR = (eye: faceapi.Point[]) => {
+                const v1 = Math.abs(eye[1].y - eye[5].y);
+                const v2 = Math.abs(eye[2].y - eye[4].y);
+                const h = Math.abs(eye[0].x - eye[3].x);
+                return (v1 + v2) / (2 * h);
+            };
+
+            const ear = (getEAR(leftEye) + getEAR(rightEye)) / 2;
+            const isOpen = ear > 0.22; // Slightly more sensitive
+
+            if (lastEyeOpenRef.current && !isOpen) {
+                // Eye closing...
+            } else if (!lastEyeOpenRef.current && isOpen) {
+                // Eye opened - BLINK!
+                blinkCountRef.current += 1;
+                if (blinkCountRef.current >= 1) {
+                    setBlinkDetected(true);
+                    soundService.play('success');
+                }
+            }
+            lastEyeOpenRef.current = isOpen;
         };
 
         const performRadarAuth = async () => {
@@ -438,9 +451,15 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                                 {/* Radar Line */}
                                 {isScanning && (
                                     <div
-                                        className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_cyan] z-20"
-                                        style={{ top: `${scanProgress}%` }}
-                                    />
+                                        className="absolute left-0 right-0 h-10 bg-gradient-to-b from-cyan-400/30 via-cyan-400 to-transparent shadow-[0_5px_15px_rgba(34,211,238,0.5)] z-20 pointer-events-none"
+                                        style={{
+                                            top: `${scanProgress - 5}%`,
+                                            opacity: scanProgress > 5 && scanProgress < 95 ? 1 : 0,
+                                            transition: 'opacity 0.2s'
+                                        }}
+                                    >
+                                        <div className="w-full h-[2px] bg-cyan-300 shadow-[0_0_10px_#22d3ee]" />
+                                    </div>
                                 )}
 
                                 {/* Scanning Glow */}
@@ -546,7 +565,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
                         <button
                             onClick={onClose}
-                            className="inline-flex items-center gap-2 px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold transition-all backdrop-blur-sm border border-white/20"
+                            className="inline-flex items-center gap-2 px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold transition-all backdrop-blur-sm border border-white/20 active:scale-95"
                         >
                             <Mail className="w-5 h-5" />
                             Đăng nhập bằng Email
@@ -554,6 +573,17 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                     </div>
                 </div>
             )}
+
+            <style>{`
+                @keyframes pulse-ring {
+                    0% { transform: scale(0.95); opacity: 0.5; }
+                    50% { transform: scale(1.05); opacity: 0.8; }
+                    100% { transform: scale(0.95); opacity: 0.5; }
+                }
+                .scan-active {
+                    animation: pulse-ring 2s infinite ease-in-out;
+                }
+            `}</style>
         </div>
     );
 };
