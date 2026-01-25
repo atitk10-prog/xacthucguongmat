@@ -34,8 +34,6 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
     const [error, setError] = useState<string | null>(null);
 
     const [attempts, setAttempts] = useState(0);
-    const [isScanning, setIsScanning] = useState(false);
-    const [scanProgress, setScanProgress] = useState(0);
     const [lockoutTime, setLockoutTime] = useState<number | null>(null);
     const [isLowLight, setIsLowLight] = useState(false);
 
@@ -112,9 +110,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         }
     }, [isOpen, modelsReady, usersLoaded, stream]);
 
-    // Face Detection Loop
     useEffect(() => {
-        if (!isOpen || !modelsReady || !videoRef.current || loginSuccess || isScanning) return;
+        if (!isOpen || !modelsReady || !videoRef.current || loginSuccess) return;
 
         let animationId: number;
         const STABILITY_THRESHOLD = 300;
@@ -122,7 +119,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         const CONFIDENCE_THRESHOLD = 42;
 
         const loop = async () => {
-            if (!videoRef.current || videoRef.current.paused || videoRef.current.ended || loginSuccess || isScanning) {
+            if (!videoRef.current || videoRef.current.paused || videoRef.current.ended || loginSuccess) {
                 animationId = requestAnimationFrame(loop);
                 return;
             }
@@ -171,13 +168,12 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                         if (!stableStartTimeRef.current) stableStartTimeRef.current = now;
                         const duration = now - stableStartTimeRef.current;
 
-                        const progress = Math.min(100, (duration / 400) * 100);
+                        const progress = Math.min(100, Math.floor((duration / STABILITY_THRESHOLD) * 100));
                         setStabilityProgress(progress);
-                        setGuidance('Nhận diện...');
 
-                        if (duration >= 400) {
-                            // START RADAR SCAN
-                            startRadarProcess();
+                        if (progress >= 100) {
+                            // DIRECT AUTH - No Radar
+                            performRadarAuth();
                         }
                     }
                 } else {
@@ -197,60 +193,23 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             animationId = requestAnimationFrame(loop);
         };
 
-        const startRadarProcess = () => {
-            setIsScanning(true);
-            soundService.play('warning');
-
-            // Super fast radar progress (~0.6s)
-            let prog = 0;
-            const interval = setInterval(() => {
-                prog += 5; // Faster steps
-                setScanProgress(prog);
-
-                // Play radar sweep sound less frequently
-                if (prog % 40 === 0) soundService.play('camera');
-
-                // Guidance
-                if (prog > 30 && prog < 85) {
-                    setGuidance('ĐANG QUÉT...');
-                }
-
-                // Check presence once during fast scan
-                if (prog === 50) {
-                    checkPresence(interval);
-                }
-
-                if (prog >= 100) {
-                    clearInterval(interval);
-                    performRadarAuth();
-                }
-            }, 30); // Faster interval
-        };
-
-        const checkPresence = async (interval: NodeJS.Timeout) => {
+        const checkPresence = async () => {
             if (!videoRef.current) return;
 
-            // Minimal detection during radar
+            // Minimal detection
             const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }));
 
             if (!detections) {
-                // FACE LOST DURING SCAN!
-                clearInterval(interval);
-                setIsScanning(false);
-                setScanProgress(0);
-                setGuidance('Quét thất bại: Mất dấu khuôn mặt');
-                soundService.play('error');
+                setGuidance('Mất dấu khuôn mặt');
                 stableStartTimeRef.current = null;
                 setStabilityProgress(0);
-                return;
             }
         };
 
         const performRadarAuth = async () => {
-            if (!videoRef.current) return;
-
+            if (!videoRef.current || isProcessing) return;
+            setIsProcessing(true);
             setGuidance('Xác thực...');
-            // No delay for faster experience
 
             try {
                 // IMPORTANT: Final auth step uses full landmarks + descriptor for maximum accuracy
@@ -279,8 +238,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 handleFailure();
 
             } catch (e) {
-                console.error('Radar auth error', e);
-                setIsScanning(false);
+                console.error('Auth error', e);
+                setIsProcessing(false);
             }
         };
 
@@ -297,16 +256,15 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             }
 
             setTimeout(() => {
-                setIsScanning(false);
-                setScanProgress(0);
+                setIsProcessing(false);
                 stableStartTimeRef.current = null;
                 setStabilityProgress(0);
-            }, 1000); // Faster retry (1s instead of 3s)
+            }, 1000); // Faster retry
         };
 
         loop();
         return () => cancelAnimationFrame(animationId);
-    }, [isOpen, modelsReady, usersLoaded, loginSuccess, isScanning, attempts, lockoutTime]);
+    }, [isOpen, modelsReady, usersLoaded, loginSuccess, attempts, lockoutTime]);
 
     // Cleanup stream when modal closes
     useEffect(() => {
@@ -401,42 +359,26 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                             <div
                                 className={`w-48 h-64 rounded-[3rem] border-4 transition-all duration-300 relative ${faceDetected
-                                    ? (guidance.includes('Lại gần') || guidance.includes('Lùi lại'))
-                                        ? 'border-rose-500 shadow-[0_0_30px_rgba(244,63,94,0.4)]'
-                                        : stabilityProgress >= 100
-                                            ? 'border-emerald-400 shadow-[0_0_40px_rgba(52,211,153,0.5)]'
-                                            : 'border-emerald-500 shadow-[0_0_30px_rgba(16,185,129,0.4)]'
+                                    ? stabilityProgress >= 100 || isProcessing
+                                        ? 'border-emerald-400 shadow-[0_0_40px_rgba(52,211,153,0.5)]'
+                                        : 'border-emerald-500 shadow-[0_0_30px_rgba(16,185,129,0.4)]'
                                     : 'border-white/40'
                                     }`}
                             >
-                                {/* Radar Line */}
-                                {isScanning && (
-                                    <div
-                                        className="absolute left-0 right-0 h-10 bg-gradient-to-b from-cyan-400/30 via-cyan-400 to-transparent shadow-[0_5px_15px_rgba(34,211,238,0.5)] z-20 pointer-events-none"
-                                        style={{
-                                            top: `${scanProgress - 5}%`,
-                                            opacity: scanProgress > 5 && scanProgress < 95 ? 1 : 0,
-                                            transition: 'opacity 0.2s'
-                                        }}
-                                    >
-                                        <div className="w-full h-[2px] bg-cyan-300 shadow-[0_0_10px_#22d3ee]" />
-                                    </div>
+                                {/* Simple Inner Glow for Processing */}
+                                {isProcessing && (
+                                    <div className="absolute inset-0 bg-emerald-400/10 animate-pulse rounded-[3rem]" />
                                 )}
 
-                                {/* Scanning Glow */}
-                                {isScanning && (
-                                    <div className="absolute inset-0 bg-cyan-400/10 animate-pulse" />
-                                )}
-
-                                {/* Blink Hint */}
-                                {isScanning && (
+                                {/* Status Label */}
+                                {isProcessing && (
                                     <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-indigo-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg">
-                                        ĐANG PHÂN TÍCH...
+                                        ĐANG XỬ LÝ...
                                     </div>
                                 )}
 
                                 {/* Progress Ring */}
-                                {faceDetected && !isScanning && stabilityProgress > 0 && stabilityProgress < 100 && (
+                                {faceDetected && !isProcessing && stabilityProgress > 0 && stabilityProgress < 100 && (
                                     <svg className="absolute -inset-2 w-[calc(100%+16px)] h-[calc(100%+16px)]" viewBox="0 0 200 250">
                                         <ellipse
                                             cx="100"
