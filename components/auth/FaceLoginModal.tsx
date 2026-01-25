@@ -117,9 +117,9 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         if (!isOpen || !modelsReady || !videoRef.current || loginSuccess || isScanning) return;
 
         let animationId: number;
-        const STABILITY_THRESHOLD = 300; // Faster auth (0.3s)
-        const PROCESSING_THROTTLE = 60; // ~16 FPS for smoother tracking
-        const CONFIDENCE_THRESHOLD = 42; // More practical sensitivity
+        const STABILITY_THRESHOLD = 300;
+        const PROCESSING_THROTTLE = 120; // 8 FPS - Perfect balance for weak devices
+        const CONFIDENCE_THRESHOLD = 42;
 
         const loop = async () => {
             if (!videoRef.current || videoRef.current.paused || videoRef.current.ended || loginSuccess || isScanning) {
@@ -142,15 +142,14 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             lastProcessedTimeRef.current = now;
 
             try {
-                // Detect with landmarks for blink detection
-                const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
-                    .withFaceLandmarks();
+                // USE SIMPLEST DETECTION for weak devices (No Landmarks)
+                const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }));
 
                 const hasFace = !!detections;
                 setFaceDetected(hasFace);
 
                 if (hasFace && detections) {
-                    const box = detections.detection.box;
+                    const box = detections.box;
                     const videoWidth = videoRef.current.videoWidth;
                     const faceWidthRatio = box.width / videoWidth;
 
@@ -213,11 +212,13 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
                 // Guidance
                 if (prog > 30 && prog < 85) {
-                    setGuidance('ĐANG XÁC THỰC DANH TÍNH...');
+                    setGuidance('ĐANG XÁC THỰC...');
                 }
 
-                // Check for face presence in background
-                checkPresence(interval);
+                // Check presence LESS FREQUENTLY (Every 200ms)
+                if (prog % 8 === 0) {
+                    checkPresence(interval);
+                }
 
                 if (prog >= 100) {
                     clearInterval(interval);
@@ -229,8 +230,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         const checkPresence = async (interval: NodeJS.Timeout) => {
             if (!videoRef.current) return;
 
-            const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
-                .withFaceLandmarks();
+            // Minimal detection during radar
+            const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }));
 
             if (!detections) {
                 // FACE LOST DURING SCAN!
@@ -248,15 +249,18 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         const performRadarAuth = async () => {
             if (!videoRef.current) return;
 
-            setGuidance('Đang phân tích sinh trắc học...');
-            // Extra wait for drama
-            await new Promise(r => setTimeout(r, 500));
+            setGuidance('Đang phân tích...');
+            // Reduced wait for faster experience
+            await new Promise(r => setTimeout(r, 200));
 
             try {
-                const fullDetection = await faceService.getFaceDescriptor(videoRef.current);
+                // IMPORTANT: Final auth step uses full landmarks + descriptor for maximum accuracy
+                const fullDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+                    .withFaceLandmarks()
+                    .withFaceDescriptor();
 
-                if (fullDetection) {
-                    const match = faceService.faceMatcher.findMatch(fullDetection, CONFIDENCE_THRESHOLD);
+                if (fullDetection && fullDetection.descriptor) {
+                    const match = faceService.faceMatcher.findMatch(fullDetection.descriptor, CONFIDENCE_THRESHOLD);
 
                     if (match) {
                         const userRes = await dataService.getUser(match.userId);
