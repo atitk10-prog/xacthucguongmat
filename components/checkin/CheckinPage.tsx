@@ -539,7 +539,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
     // QR Check-in Handler
     const handleQRCheckin = async (studentCode: string) => {
-        if (isProcessing) return;
+        if (isProcessingRef.current || showSuccessOverlay) return;
 
         // Find participant by student_code, qr_code or ID (Robust comparison)
         const participant = participants.find(p => {
@@ -988,6 +988,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         }
 
         setIsProcessing(true);
+        isProcessingRef.current = true; // Immediate sync to prevent race conditions
         setNotification(null); // Clear previous notifications to avoid conflicts
 
         // OPTIMISTIC UPDATE: Add to cooldown immediately to prevent double-submit loop from rapid frames
@@ -1161,6 +1162,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             setIsProcessing(false);
         } finally {
             setIsProcessing(false);
+            isProcessingRef.current = false;
         }
     }, [event, currentUser, isProcessing, facesLoaded, recognizedPerson]);
 
@@ -1201,7 +1203,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex">
             {/* ========== LOADING OVERLAY ========== */}
             {(isLoadingModels || loadingFaces) && (
-                <div className="fixed inset-0 z-[200] bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex flex-col items-center justify-center">
+                <div className="fixed inset-0 z-[300] bg-gradient-to-br from-slate-900 via-indigo-900 to-slate-900 flex flex-col items-center justify-center">
                     <div className="text-center">
                         {/* Animated Logo */}
                         <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-3xl flex items-center justify-center mx-auto mb-8 animate-pulse shadow-2xl shadow-indigo-500/30">
@@ -1270,8 +1272,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             )}
 
             {/* Notification Toast - Hide Failure Toast on Mobile for cleaner view */}
-            {notification && (
-                <div className={`fixed top-24 md:top-6 right-1/2 translate-x-1/2 md:translate-x-0 md:right-6 z-[120] px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-slide-in 
+            {notification && !showSuccessOverlay && (
+                <div className={`fixed top-24 md:top-6 right-1/2 translate-x-1/2 md:translate-x-0 md:right-6 z-[150] px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-slide-in 
                     ${notification.type === 'error' ? 'hidden md:flex bg-red-500' :
                         notification.type === 'success' ? 'bg-emerald-500' : 'bg-amber-500'} text-white`}>
                     {notification.type === 'success' ? (
@@ -1290,7 +1292,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
             {/* Fullscreen Success Overlay */}
             {showSuccessOverlay && result?.success && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-600 animate-fade-in">
+                <div className="fixed inset-0 z-[200] flex items-center justify-center bg-gradient-to-br from-emerald-600 via-emerald-500 to-teal-600 animate-fade-in">
                     {/* Animated background particles */}
                     <div className="absolute inset-0 overflow-hidden">
                         {[...Array(20)].map((_, i) => (
