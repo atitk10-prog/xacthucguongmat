@@ -126,7 +126,6 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     // const [enableSuccessPopup, setEnableSuccessPopup] = useState(true); // REMOVED: Using event.enable_popup
     const [faceStableTime, setFaceStableTime] = useState(0);
     const [showSuccessOverlay, setShowSuccessOverlay] = useState(false);
-    // lastFaceDetectedTime removed (duplicate)
     const [multipleFaces, setMultipleFaces] = useState(false);
     const autoCheckInRef = useRef<boolean>(false);
     const facesLoadedRef = useRef<boolean>(false); // Ref for closure fix
@@ -152,10 +151,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     const [loadingProgress, setLoadingProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
     const [recognizedPerson, setRecognizedPerson] = useState<{ id: string; name: string; confidence: number } | null>(null);
 
-    // Dynamic Face Tracking Box State
-    const [faceBox, setFaceBox] = useState<{ x: number, y: number, width: number, height: number } | null>(null);
-
-    // QR Mode States
+    const [faceBox, setFaceBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+    const [isCloseEnough, setIsCloseEnough] = useState(false);
     const [checkinMode, setCheckinMode] = useState<'face' | 'qr'>('face');
     const [qrScannerActive, setQrScannerActive] = useState(false);
     const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('user');
@@ -709,78 +706,73 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 const detections = await faceService.detectFaces(videoRef.current);
 
                 // --- STRICT FACE SELECTION LOGIC ---
-                // Filter detections to get only the largest face (The main user)
-                // This eliminates background ghost faces
                 let primaryDetection = null;
-                let isFaceTooSmall = false;
-
                 if (detections.length > 0) {
-                    // Sort by box area (width * height) descending
-                    const sortedDetections = [...detections].sort((a, b) => {
-                        const areaA = a.detection.box.width * a.detection.box.height;
-                        const areaB = b.detection.box.width * b.detection.box.height;
-                        return areaB - areaA; // Largest first
-                    });
-
-                    // Only take the largest face
-                    primaryDetection = sortedDetections[0];
-
-                    // Check if the face is large enough (at least 25% of video width)
-                    if (primaryDetection && videoRef.current) {
-                        const faceWidth = primaryDetection.detection.box.width;
-                        const videoWidth = videoRef.current.videoWidth;
-                        const sizeRatio = faceWidth / videoWidth;
-
-                        // If face is too far (small), ignore it
-                        if (sizeRatio < 0.25) {
-                            isFaceTooSmall = true;
-                        }
-                    }
+                    // Always pick the largest face to track
+                    primaryDetection = [...detections].sort((a, b) =>
+                        (b.detection.box.width * b.detection.box.height) - (a.detection.box.width * a.detection.box.height)
+                    )[0];
                 }
 
-                // We proceed as if only 1 face exists (the largest one)
-                // This effectively ignores other smaller faces
-                const faceCount = (primaryDetection && !isFaceTooSmall) ? 1 : 0;
-
                 // Get box of the first face and update tracking state
-                if (primaryDetection && !isFaceTooSmall && primaryDetection.detection) {
+                if (primaryDetection && primaryDetection.detection) {
                     const box = primaryDetection.detection.box;
                     const videoEl = videoRef.current;
 
-                    // ... rest of the box drawing logic ...
-                    // (I'll keep the existing box logic but wrap it in the size check)
-
-                    // Get actual displayed dimensions to scale the box correctly
+                    // Calculate scale factors
                     const displayWidth = videoEl.clientWidth;
                     const displayHeight = videoEl.clientHeight;
                     const originalWidth = videoEl.videoWidth;
                     const originalHeight = videoEl.videoHeight;
-
-                    // Calculate scale factors (prevent divide by zero)
                     const scaleX = originalWidth > 0 ? displayWidth / originalWidth : 1;
                     const scaleY = originalHeight > 0 ? displayHeight / originalHeight : 1;
 
-                    // Scale the box dimensions
+                    // Scale and mirror coordinates
                     const scaledWidth = box.width * scaleX;
                     const scaledHeight = box.height * scaleY;
-                    const scaledX = box.x * scaleX;
-                    const scaledY = box.y * scaleY;
-
-                    // Correctly mirror the X coordinate
-                    const mirroredX = displayWidth - scaledX - scaledWidth;
+                    const mirroredX = displayWidth - (box.x * scaleX) - scaledWidth;
 
                     setFaceBox({
                         x: mirroredX,
-                        y: scaledY,
+                        y: box.y * scaleY,
                         width: scaledWidth,
                         height: scaledHeight
                     });
+
+                    // Check if the face is large enough (Proximity Check)
+                    const sizeRatio = (box.width / originalWidth);
+                    const sufficientSize = sizeRatio >= 0.25;
+                    setIsCloseEnough(sufficientSize);
+
+                    if (!sufficientSize) {
+                        setGuidance('Vui lòng lại gần hơn');
+                        setFaceStableTime(0);
+                        lastFaceDetectedTimeRef.current = null;
+                        setFaceDetected(false);
+                        faceDetectedRef.current = false;
+                    } else {
+                        // In proximity - proceed with stability check
+                        const singleFaceDetected = true;
+
+                        // Update face detected state
+                        if (singleFaceDetected !== faceDetectedRef.current) {
+                            if (singleFaceDetected && !faceDetectedRef.current) {
+                                setLastFaceDetectedTime(now);
+                                lastFaceDetectedTimeRef.current = now;
+                            }
+                            setFaceDetected(singleFaceDetected);
+                            faceDetectedRef.current = singleFaceDetected;
+                        }
+                    }
                 } else {
                     setFaceBox(null);
+                    setIsCloseEnough(false);
+                    setFaceDetected(false);
+                    faceDetectedRef.current = false;
                 }
 
-                setMultipleFaces(detections.length > 1); // Still warn if multiple faces exist physically
-                const singleFaceDetected = faceCount === 1;
+                setMultipleFaces(detections.length > 1);
+                const singleFaceDetected = faceDetectedRef.current;
 
                 // Update face detected state
                 if (singleFaceDetected !== faceDetectedRef.current) {
@@ -1350,89 +1342,89 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
             {/* Left Side - Camera & Check-in */}
             <div className="flex-1 relative h-screen">
-                {/* Header - Mobile Responsive */}
-                <div className="absolute top-0 left-0 right-0 z-[100] p-4 md:p-6 flex justify-between items-center bg-gradient-to-b from-black/80 via-black/40 to-transparent">
-                    <button onClick={onBack} className="group px-4 py-2.5 bg-white/5 backdrop-blur-xl text-white rounded-2xl font-bold text-xs md:text-sm hover:bg-white/10 flex items-center gap-2 transition-all border border-white/10 shadow-2xl">
-                        <ChevronLeft className="w-4 h-4 group-hover:-translate-x-1 transition-transform" />
-                        <span>Quay lại</span>
+                {/* Header - Compact & Responsive (Synced with Boarding) */}
+                <div className="absolute top-0 left-0 right-0 z-[100] h-11 md:h-14 flex justify-between items-center bg-slate-800/90 backdrop-blur-md border-b border-white/10 px-2 md:px-4">
+                    <button onClick={onBack} className="group p-1 md:p-1.5 text-white hover:bg-white/10 rounded-xl flex items-center gap-1.5 transition-all active:scale-95">
+                        <ChevronLeft className="w-5 h-5 group-hover:-translate-x-0.5 transition-transform" />
+                        <span className="text-xs md:text-sm font-bold hidden sm:inline">Quay lại</span>
                     </button>
 
-                    <div className="flex-1 flex justify-center items-center gap-3">
-                        {/* AI Signal Dot - Professional Sync from Boarding */}
-                        <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/5 backdrop-blur-md rounded-xl border border-white/10 shadow-xl">
-                            <div className={`w-2 h-2 rounded-full ${modelsReady && facesLoaded ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.6)]' : 'bg-slate-500 animate-pulse'} transition-all duration-500`} />
+                    <div className="flex-1 flex justify-center items-center gap-1.5 md:gap-3 px-2">
+                        {/* AI Signal Dot - Small Style */}
+                        <div className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/10">
+                            <div className={`w-2 h-2 rounded-full ${modelsReady && facesLoaded ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-500 animate-pulse'} transition-all`} />
                             <span className="text-[10px] font-black text-white/70 uppercase tracking-tighter hidden sm:inline">AI</span>
                         </div>
 
                         {!isOnline && (
-                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-2xl text-[10px] font-black animate-pulse">
-                                <AlertTriangle className="w-3.5 h-3.5" />
-                                OFFLINE
+                            <div className="flex items-center gap-1 px-1.5 py-1 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-lg text-[9px] font-black animate-pulse">
+                                <AlertTriangle className="w-3 h-3" />
+                                <span className="hidden xs:inline">OFFLINE</span>
                             </div>
                         )}
                         {pendingSyncCount > 0 && (
-                            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-2xl text-[10px] font-black">
-                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                {pendingSyncCount} CHỜ XỬ LÝ
+                            <div className="flex items-center gap-1 px-1.5 py-1 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-lg text-[9px] font-black">
+                                <RefreshCw className="w-3 h-3 animate-spin" />
+                                <span>{pendingSyncCount}</span>
+                                <span className="hidden sm:inline ml-0.5 uppercase tracking-tighter">Chờ xử lý</span>
                             </div>
                         )}
                     </div>
 
-                    <div className="flex items-center gap-2">
-                        {/* Hybrid Mode Toggle - PREMIUM STYLE - RESPONSIVE */}
+                    <div className="flex items-center gap-1 md:gap-2">
+                        {/* Hybrid Mode Toggle - COMPACT STYLE */}
                         {event && (event.checkin_method === 'both' || !event.checkin_method) && (
-                            <div className="bg-black/60 backdrop-blur-2xl p-1 md:p-1.5 rounded-full md:rounded-[22px] flex border border-white/10 shadow-2xl">
+                            <div className="bg-slate-700/50 p-0.5 md:p-1 rounded-lg md:rounded-xl flex gap-0.5">
                                 <button
                                     onClick={() => switchCheckinMode('face')}
-                                    className={`px-3 md:px-5 py-2 md:py-2.5 rounded-full md:rounded-[18px] text-[10px] md:text-[11px] font-black flex items-center gap-2 transition-all duration-500 ${checkinMode === 'face' ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white shadow-lg shadow-indigo-500/30' : 'text-white/40 hover:text-white/70'}`}
+                                    className={`px-2 md:px-3 py-1 rounded-md md:rounded-lg text-[10px] md:text-xs font-bold flex items-center gap-1.5 transition-all ${checkinMode === 'face' ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white/60'}`}
                                 >
-                                    <UserIcon className={`w-4 h-4 ${checkinMode === 'face' ? 'animate-pulse' : ''}`} />
-                                    <span className="hidden sm:inline">Face ID</span>
+                                    <UserIcon className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                                    <span className="hidden md:inline">Face</span>
                                 </button>
                                 <button
                                     onClick={() => switchCheckinMode('qr')}
-                                    className={`px-3 md:px-5 py-2 md:py-2.5 rounded-full md:rounded-[18px] text-[10px] md:text-[11px] font-black flex items-center gap-2 transition-all duration-500 ${checkinMode === 'qr' ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-lg shadow-emerald-500/30' : 'text-white/40 hover:text-white/70'}`}
+                                    className={`px-2 md:px-3 py-1 rounded-md md:rounded-lg text-[10px] md:text-xs font-bold flex items-center gap-1.5 transition-all ${checkinMode === 'qr' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white/60'}`}
                                 >
-                                    <QrCode className={`w-4 h-4 ${checkinMode === 'qr' ? 'animate-bounce' : ''}`} />
-                                    <span className="hidden sm:inline">Quét QR</span>
-                                    <span className="sm:hidden text-[9px]">QR</span>
+                                    <QrCode className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                                    <span className="hidden md:inline">QR</span>
                                 </button>
                             </div>
                         )}
 
-                        {/* Auto check-in toggle */}
+                        {/* Auto check-in toggle - Compact */}
                         {checkinMode === 'face' && (
                             <button
                                 onClick={() => setAutoCheckInMode(!autoCheckInMode)}
-                                className={`px-4 py-2.5 backdrop-blur-xl rounded-2xl font-black text-[11px] transition-all duration-300 flex items-center gap-2 border border-white/10 shadow-xl ${autoCheckInMode
-                                    ? 'bg-gradient-to-r from-emerald-500/20 to-teal-500/20 text-emerald-400 border-emerald-500/30'
-                                    : 'bg-white/5 text-white/40'
-                                    }`}
+                                className={`h-8 md:h-9 px-2.5 rounded-lg font-black text-[9px] md:text-[10px] transition-all flex items-center gap-1.5 border ${autoCheckInMode
+                                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                                    : 'bg-white/5 text-white/40 border-white/10'
+                                    } active:scale-95`}
                             >
-                                <div className={`w-2.5 h-2.5 rounded-full ${autoCheckInMode ? 'bg-emerald-400 animate-pulse shadow-[0_0_8px_rgba(52,211,153,0.8)]' : 'bg-white/20'}`} />
-                                <span>Tự động</span>
+                                <div className={`w-2 h-2 rounded-full ${autoCheckInMode ? 'bg-emerald-400 animate-pulse-subtle shadow-[0_0_8px_rgba(52,211,153,0.5)]' : 'bg-white/20'}`} />
+                                <span className="hidden xs:inline">TỰ ĐỘNG</span>
                             </button>
                         )}
 
                         {checkinMode === 'qr' && (
                             <button
                                 onClick={() => switchCheckinMode('qr', cameraFacing === 'user' ? 'environment' : 'user')}
-                                className="w-11 h-11 bg-white/5 backdrop-blur-xl text-white rounded-2xl flex items-center justify-center border border-white/10 hover:bg-white/10 shadow-xl transition-all active:scale-95"
+                                className="w-8 h-8 md:w-9 md:h-9 bg-white/5 text-white rounded-lg flex items-center justify-center border border-white/10 hover:bg-white/10 transition-all active:scale-95"
                             >
-                                <FlipHorizontal2 className="w-5 h-5" />
+                                <FlipHorizontal2 className="w-4 h-4" />
                             </button>
                         )}
 
-                        {/* Fullscreen Toggle */}
+                        {/* Fullscreen Toggle - Compact */}
                         <button
                             onClick={() => {
                                 if (!document.fullscreenElement) document.documentElement.requestFullscreen();
                                 else if (document.exitFullscreen) document.exitFullscreen();
                             }}
-                            className="w-11 h-11 bg-white/5 backdrop-blur-xl text-white rounded-2xl flex items-center justify-center border border-white/10 hover:bg-white/10 shadow-xl transition-all active:scale-95"
+                            className="w-8 h-8 md:w-9 md:h-9 bg-white/5 text-white rounded-lg flex items-center justify-center border border-white/10 hover:bg-white/10 transition-all active:scale-95"
                             title="Phóng to"
                         >
-                            <Maximize2 className="w-5 h-5" />
+                            <Maximize2 className="w-4 h-4" />
                         </button>
 
                         {event && (
@@ -1484,39 +1476,59 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
 
                             {/* Guidance Text - Below Header - Conditional Hide when Result/Notification exists to avoid clutter */}
-                            {/* Hide "already check-in" white bubble on mobile as per user request */}
+                            {/* Hide "already check-in" white bubble completely as per user request */}
                             {guidance && !showSuccessOverlay && !result && (
                                 <div className={`absolute top-24 md:top-28 left-1/2 -translate-x-1/2 z-30 px-5 py-2.5 rounded-2xl text-[11px] md:text-xs font-bold bg-black/70 text-white backdrop-blur-xl border border-white/20 shadow-2xl 
-                                    ${guidance.includes('check-in') ? 'hidden md:block' : ''}`}>
+                                    ${(guidance.includes('check-in') || guidance.includes('camera')) ? 'hidden' : ''}`}>
                                     {guidance}
                                 </div>
                             )}
 
-                            {/* Centered Scan Frame - Professional Fixed Unified Frame with Visible Border */}
-                            <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-                                <div className={`w-full aspect-square max-w-[280px] md:max-w-[340px] relative transition-all duration-500 ${faceDetected ? 'scale-[1.02]' : 'scale-100'}`}>
-                                    {/* Visible Guidance Border - Premium Bo góc lớn */}
-                                    <div className={`absolute inset-0 border-2 rounded-[40px] md:rounded-[50px] transition-all duration-500 ${multipleFaces ? 'border-red-500/50 shadow-[0_0_20px_rgba(239,68,68,0.3)]' :
-                                        faceDetected ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.3)]' :
-                                            'border-white/20 shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                            {/* Already Checked-in Warning - NEW TOP POSITION - Premium Style */}
+                            {faceDetected && facesLoaded && recognizedPerson && checkinCooldownsRef.current.has(recognizedPerson.id) &&
+                                (Date.now() - (checkinCooldownsRef.current.get(recognizedPerson.id) || 0) < COOLDOWN_PERIOD) && !showSuccessOverlay && !result && (
+                                    <div className="absolute top-24 md:top-28 left-1/2 -translate-x-1/2 z-[100] animate-scale-in">
+                                        <div className="px-6 py-3 bg-emerald-600/90 backdrop-blur-xl rounded-[20px] text-white shadow-[0_0_30px_rgba(16,185,129,0.4)] border-2 border-emerald-400/50 flex items-center gap-3">
+                                            <div className="bg-white/20 p-1.5 rounded-full">
+                                                <CheckCircle className="w-5 h-5 text-white" />
+                                            </div>
+                                            <div className="flex flex-col">
+                                                <span className="text-[14px] font-black uppercase tracking-tight leading-none mb-0.5">ĐÃ CHECK-IN THÀNH CÔNG</span>
+                                                <span className="text-[10px] text-emerald-100 font-bold opacity-80 uppercase tracking-widest">Vui lòng rời camera</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                            {/* Dynamic Scan Frame - Follows Face */}
+                            {faceBox && (
+                                <div
+                                    className="absolute pointer-events-none z-20 transition-all duration-75"
+                                    style={{
+                                        left: faceBox.x,
+                                        top: faceBox.y,
+                                        width: faceBox.width,
+                                        height: faceBox.height
+                                    }}
+                                >
+                                    <div className={`absolute inset-0 border-2 rounded-2xl md:rounded-[24px] transition-all duration-300 ${multipleFaces ? 'border-red-500/50 shadow-[0_0_20px_rgba(239,68,68,0.3)]' :
+                                        isCloseEnough ? 'border-emerald-500/60 shadow-[0_0_25px_rgba(16,185,129,0.4)]' :
+                                            'border-white/30 shadow-[0_0_15px_rgba(255,255,255,0.1)]'
                                         }`}>
 
-                                        {/* Corner Accents - Giúp người dùng tập trung vào giữa */}
-                                        <div className={`absolute -top-[2px] -left-[2px] w-12 h-12 border-t-4 border-l-4 rounded-tl-[40px] md:rounded-tl-[50px] transition-colors duration-500 ${multipleFaces ? 'border-red-500' : faceDetected ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
-                                        <div className={`absolute -top-[2px] -right-[2px] w-12 h-12 border-t-4 border-r-4 rounded-tr-[40px] md:rounded-tr-[50px] transition-colors duration-500 ${multipleFaces ? 'border-red-500' : faceDetected ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
-                                        <div className={`absolute -bottom-[2px] -left-[2px] w-12 h-12 border-b-4 border-l-4 rounded-bl-[40px] md:rounded-bl-[50px] transition-colors duration-500 ${multipleFaces ? 'border-red-500' : faceDetected ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
-                                        <div className={`absolute -bottom-[2px] -right-[2px] w-12 h-12 border-b-4 border-r-4 rounded-br-[40px] md:rounded-br-[50px] transition-colors duration-500 ${multipleFaces ? 'border-red-500' : faceDetected ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
-                                    </div>
+                                        {/* Corners - Dynamic Style */}
+                                        <div className={`absolute -top-[2px] -left-[2px] w-8 h-8 md:w-10 md:h-10 border-t-4 border-l-4 rounded-tl-2xl md:rounded-tl-[24px] transition-colors duration-300 ${multipleFaces ? 'border-red-500' : isCloseEnough ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                        <div className={`absolute -top-[2px] -right-[2px] w-8 h-8 md:w-10 md:h-10 border-t-4 border-r-4 rounded-tr-2xl md:rounded-tr-[24px] transition-colors duration-300 ${multipleFaces ? 'border-red-500' : isCloseEnough ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                        <div className={`absolute -bottom-[2px] -left-[2px] w-8 h-8 md:w-10 md:h-10 border-b-4 border-l-4 rounded-bl-2xl md:rounded-bl-[24px] transition-colors duration-300 ${multipleFaces ? 'border-red-500' : isCloseEnough ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                        <div className={`absolute -bottom-[2px] -right-[2px] w-8 h-8 md:w-10 md:h-10 border-b-4 border-r-4 rounded-br-2xl md:rounded-br-[24px] transition-colors duration-300 ${multipleFaces ? 'border-red-500' : isCloseEnough ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
 
-                                    {/* Radar Animation - Now inside the visual area */}
-                                    <div className="absolute inset-0 overflow-hidden rounded-[40px] md:rounded-[50px] opacity-25 pointer-events-none">
-                                        <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
+                                        {/* Radar Wave Effect inside dynamic box */}
+                                        <div className={`absolute inset-0 overflow-hidden rounded-2xl md:rounded-[24px] transition-opacity duration-500 ${isCloseEnough ? 'opacity-30' : 'opacity-10'}`}>
+                                            <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
+                                        </div>
                                     </div>
-
-                                    {/* Animated scan line (Traditional) */}
-                                    <div className={`absolute inset-x-10 top-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-scan opacity-30 ${faceDetected ? 'opacity-60' : ''}`}></div>
                                 </div>
-                            </div>
+                            )}
                             <canvas ref={canvasRef} className="hidden" />
                         </>
                     ) : (
@@ -1668,16 +1680,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                     )}
 
-                    {/* Already Checked-in Warning - Adjusted position to avoid overlap with profile card */}
-                    {faceDetected && facesLoaded && recognizedPerson && checkinCooldownsRef.current.has(recognizedPerson.id) &&
-                        (Date.now() - (checkinCooldownsRef.current.get(recognizedPerson.id) || 0) < COOLDOWN_PERIOD) && !showSuccessOverlay && !result && (
-                            <div className="px-5 py-2.5 bg-emerald-500/90 backdrop-blur-xl rounded-2xl text-white text-[11px] md:text-xs font-black flex items-center gap-2 animate-bounce-subtle border border-emerald-400/50 shadow-2xl">
-                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                                </svg>
-                                <span className="uppercase tracking-tight">Đã check-in! Vui lòng rời camera</span>
-                            </div>
-                        )}
+                    {/* Already Checked-in Warning REMOVED - Moved to top of viewport for better aesthetics */}
 
                     {/* Loading faces indicator */}
                     {loadingFaces && (

@@ -46,11 +46,11 @@ END $$;
 -- Update type constraint to include new types (safe for existing data)
 -- First, normalize any existing types that don't match the new constraint
 UPDATE notifications SET type = 'info' 
-WHERE type NOT IN ('info', 'success', 'warning', 'error', 'points', 'event', 'certificate', 'permission');
+WHERE type NOT IN ('info', 'success', 'warning', 'error', 'points', 'event', 'certificate', 'permission', 'request');
 
 ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
 ALTER TABLE notifications ADD CONSTRAINT notifications_type_check 
-  CHECK (type IN ('info', 'success', 'warning', 'error', 'points', 'event', 'certificate', 'permission'));
+  CHECK (type IN ('info', 'success', 'warning', 'error', 'points', 'event', 'certificate', 'permission', 'request'));
 
 -- Enable RLS
 ALTER TABLE push_subscriptions ENABLE ROW LEVEL SECURITY;

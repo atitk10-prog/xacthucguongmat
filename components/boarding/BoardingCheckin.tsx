@@ -26,6 +26,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     const lastProcessedTimeRef = useRef<number>(0);
     const recognizedPersonRef = useRef<{ id: string; name: string; confidence: number } | null>(null);
     const isProcessingRef = useRef(false);
+    const isDetectingRef = useRef(false);
+    const lastMatchingTimeRef = useRef<number>(0);
 
     // State
     const [stream, setStream] = useState<MediaStream | null>(null);
@@ -37,6 +39,9 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     const [detectedPerson, setDetectedPerson] = useState<{ name: string; confidence: number } | null>(null);
     const [guidance, setGuidance] = useState<string>('Đang tìm khuôn mặt...');
     const [stabilityProgress, setStabilityProgress] = useState(0);
+    const [faceBox, setFaceBox] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+    const [isCloseEnough, setIsCloseEnough] = useState(false);
+    const [multipleFaces, setMultipleFaces] = useState(false);
 
     // QR Check-in Mode
     const [checkinMode, setCheckinMode] = useState<'face' | 'qr'>('face');
@@ -426,253 +431,328 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     useEffect(() => {
         if (!modelsReady || !studentsLoaded || !videoRef.current || !systemReady) return;
         let aid: number;
+
         const loop = async () => {
-            if (!videoRef.current || videoRef.current.paused || isProcessingRef.current) {
+            if (!videoRef.current || videoRef.current.paused || isProcessingRef.current || isDetectingRef.current) {
                 if (isProcessingRef.current) { setGuidance('Đang xử lý...'); setStabilityProgress(0); }
-                aid = requestAnimationFrame(() => setTimeout(loop, 150)); return;
+                aid = requestAnimationFrame(() => setTimeout(loop, 200)); return;
             }
             const now = Date.now();
-            if (now - lastProcessedTimeRef.current < 60) { aid = requestAnimationFrame(loop); return; }
+            const throttleTime = (isOnline) ? 80 : 120;
+            if (now - lastProcessedTimeRef.current < throttleTime) { aid = requestAnimationFrame(loop); return; }
+
+            isDetectingRef.current = true;
             lastProcessedTimeRef.current = now;
             try {
                 const dets = await faceService.detectFaces(videoRef.current, true);
-                const p = dets.length > 0 ? dets[0] : null;
-                setFaceDetected(!!p);
-                if (p) {
-                    const ratio = p.detection.box.width / videoRef.current.videoWidth;
-                    if (ratio < 0.15) { setGuidance('Lại gần hơn'); setStabilityProgress(0); stableStartTimeRef.current = null; }
-                    else if (ratio > 0.6) { setGuidance('Lùi lại xa'); setStabilityProgress(0); stableStartTimeRef.current = null; }
-                    else {
-                        const m = faceService.faceMatcher.findMatch(p.descriptor, 45);
-                        if (m) {
-                            if (recognizedPersonRef.current?.id === m.userId) {
-                                if (!stableStartTimeRef.current) stableStartTimeRef.current = now;
-                                const dur = now - stableStartTimeRef.current;
-                                const prog = Math.min(100, (dur / 200) * 100);
-                                setStabilityProgress(prog); setGuidance(`Giữ yên... ${Math.round(prog)}%`);
-                                setDetectedPerson({ name: m.name, confidence: m.confidence });
-                                if (dur >= 200) {
-                                    const exp = checkinCooldownsRef.current.get(m.userId);
-                                    if (!exp || now > exp) handleAutoCheckin(m.userId, m.name, m.confidence);
-                                    else { setGuidance('Đã check-in'); setStabilityProgress(100); }
+
+                // Track all faces but pick the primary (largest) for check-in
+                let primaryDet = null;
+                if (dets.length > 0) {
+                    primaryDet = [...dets].sort((a, b) =>
+                        (b.detection.box.width * b.detection.box.height) - (a.detection.box.width * a.detection.box.height)
+                    )[0];
+                }
+
+                setMultipleFaces(dets.length > 1);
+
+                if (primaryDet && primaryDet.detection) {
+                    const box = primaryDet.detection.box;
+                    const videoEl = videoRef.current;
+                    const displayWidth = videoEl.clientWidth;
+                    const displayHeight = videoEl.clientHeight;
+                    const originalWidth = videoEl.videoWidth;
+                    const originalHeight = videoEl.videoHeight;
+
+                    const scaleX = displayWidth / originalWidth;
+                    const scaleY = displayHeight / originalHeight;
+
+                    const scaledWidth = box.width * scaleX;
+                    const scaledHeight = box.height * scaleY;
+                    const mirroredX = displayWidth - (box.x * scaleX) - scaledWidth;
+
+                    setFaceBox({
+                        x: mirroredX,
+                        y: box.y * scaleY,
+                        width: scaledWidth,
+                        height: scaledHeight
+                    });
+
+                    const ratio = box.width / originalWidth;
+                    const sufficientSize = ratio >= 0.25;
+                    setIsCloseEnough(sufficientSize);
+
+                    if (!sufficientSize) {
+                        setGuidance('Vui lòng lại gần hơn');
+                        setStabilityProgress(0);
+                        stableStartTimeRef.current = null;
+                        setFaceDetected(false);
+                        setDetectedPerson(null);
+                    } else {
+                        setFaceDetected(true);
+
+                        // THROTTLE Matching: Don't match every single frame, only every 100ms
+                        if (now - lastMatchingTimeRef.current > 100) {
+                            lastMatchingTimeRef.current = now;
+                            const m = faceService.faceMatcher.findMatch(primaryDet.descriptor, 45);
+                            if (m) {
+                                if (recognizedPersonRef.current?.id === m.userId) {
+                                    if (!stableStartTimeRef.current) stableStartTimeRef.current = now;
+                                    const dur = now - stableStartTimeRef.current;
+                                    const prog = Math.min(100, (dur / 200) * 100);
+                                    setStabilityProgress(prog);
+                                    setGuidance(`Giữ yên... ${Math.round(prog)}%`);
+                                    setDetectedPerson({ name: m.name, confidence: m.confidence });
+                                    if (dur >= 200) {
+                                        const exp = checkinCooldownsRef.current.get(m.userId);
+                                        if (!exp || now > exp) handleAutoCheckin(m.userId, m.name, m.confidence);
+                                        else { setGuidance('Đã check-in'); setStabilityProgress(100); }
+                                    }
+                                } else {
+                                    recognizedPersonRef.current = { id: m.userId, name: m.name, confidence: m.confidence };
+                                    stableStartTimeRef.current = now;
+                                    setStabilityProgress(0);
                                 }
-                            } else { recognizedPersonRef.current = { id: m.userId, name: m.name, confidence: m.confidence }; stableStartTimeRef.current = now; setStabilityProgress(0); }
-                        } else { setGuidance('Xác thực gương mặt...'); setDetectedPerson(null); setStabilityProgress(0); stableStartTimeRef.current = null; }
+                            } else {
+                                setGuidance('Xác thực khuôn mặt...');
+                                setDetectedPerson(null);
+                                setStabilityProgress(0);
+                            }
+                        }
                     }
-                } else { setGuidance('Đang tìm mặt...'); setStabilityProgress(0); stableStartTimeRef.current = null; setDetectedPerson(null); }
-            } catch (e) { }
+                } else {
+                    setFaceBox(null);
+                    setIsCloseEnough(false);
+                    setFaceDetected(false);
+                    setGuidance('Đang tìm mặt...');
+                    setStabilityProgress(0);
+                    stableStartTimeRef.current = null;
+                    setDetectedPerson(null);
+                }
+            } catch (e) { } finally {
+                isDetectingRef.current = false;
+            }
             aid = requestAnimationFrame(loop);
         };
         loop(); return () => cancelAnimationFrame(aid);
     }, [modelsReady, studentsLoaded, systemReady, checkinMode]);
 
     return (
-        <div className="min-h-screen bg-slate-900 flex flex-col pt-12 md:pt-16 px-1 md:px-4 pb-1 md:pb-4 gap-2 md:gap-4 lg:flex-row font-sans">
-            {(!modelsReady || !studentsLoaded) && (
-                <div className="fixed inset-0 z-[200] bg-slate-900 flex items-center justify-center p-4">
-                    <div className="text-center">
-                        <div className="w-20 h-20 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-6 animate-pulse">
-                            <UserCheck className="w-10 h-10 text-white" />
+        <>
+            <div className="min-h-screen bg-slate-900 flex flex-col pt-12 md:pt-16 px-1 md:px-4 pb-1 md:pb-4 gap-2 md:gap-4 lg:flex-row font-sans">
+                {(!modelsReady || !studentsLoaded) && (
+                    <div className="fixed inset-0 z-[200] bg-slate-900 flex items-center justify-center p-4">
+                        <div className="text-center">
+                            <div className="w-20 h-20 bg-indigo-600 rounded-2xl flex items-center justify-center mx-auto mb-6 animate-pulse">
+                                <UserCheck className="w-10 h-10 text-white" />
+                            </div>
+                            <h2 className="text-2xl font-bold text-white mb-2">Khởi tạo hệ thống</h2>
+                            <p className="text-slate-400">Đang tải dữ liệu và AI...</p>
                         </div>
-                        <h2 className="text-2xl font-bold text-white mb-2">Khởi tạo hệ thống</h2>
-                        <p className="text-slate-400">Đang tải dữ liệu và AI...</p>
-                    </div>
-                </div>
-            )}
-
-            {/* Header - compact on mobile */}
-            <div className="absolute top-0 left-0 right-0 h-11 md:h-14 bg-slate-800/90 backdrop-blur-md flex items-center justify-between px-2 md:px-4 z-20 border-b border-white/10">
-                <div className="flex items-center gap-1.5 md:gap-2">
-                    {onBack && <button onClick={onBack} className="p-1 md:p-1.5 text-white hover:bg-white/10 rounded-lg"><ChevronLeft className="w-5 h-5" /></button>}
-                    <h1 className="text-white font-bold text-sm md:text-base flex items-center gap-1.5">
-                        <span className="bg-indigo-600 p-1 rounded-lg hidden md:flex"><UserCheck className="w-4 h-4" /></span>
-                        <span className="hidden md:inline">Nội trú</span>
-                        <span className="md:hidden">🏠</span>
-                    </h1>
-                </div>
-
-                {/* Mode toggle - icons on mobile */}
-                <div className="flex gap-0.5 md:gap-1 bg-slate-700/50 p-0.5 md:p-1 rounded-lg md:rounded-xl">
-                    <button
-                        onClick={() => switchCheckinMode('face')}
-                        className={`px-2 md:px-3 py-1 rounded-md md:rounded-lg text-[10px] md:text-xs font-bold flex items-center gap-1 ${checkinMode === 'face' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}
-                    >
-                        <UserIcon className="w-3 h-3 md:w-3.5 md:h-3.5" />
-                        <span className="hidden md:inline">Face</span>
-                    </button>
-                    <button
-                        onClick={() => switchCheckinMode('qr')}
-                        className={`px-2 md:px-3 py-1 rounded-md md:rounded-lg text-[10px] md:text-xs font-bold flex items-center gap-1 ${checkinMode === 'qr' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
-                    >
-                        <QrCode className="w-3 h-3 md:w-3.5 md:h-3.5" />
-                        <span className="hidden md:inline">QR</span>
-                    </button>
-                </div>
-
-                {/* Status indicators - compact on mobile */}
-                <div className="flex items-center gap-1.5 md:gap-3">
-                    {/* AI Signal Dot - Restored to Header */}
-                    <div className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/10">
-                        <div className={`w-2 h-2 rounded-full ${modelsReady && studentsLoaded ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-500'} transition-all`} />
-                        <span className="text-[10px] font-black text-white/70 uppercase tracking-tighter hidden sm:inline">AI</span>
-                    </div>
-
-                    {/* Fullscreen Toggle */}
-                    <button
-                        onClick={() => {
-                            if (!document.fullscreenElement) document.documentElement.requestFullscreen();
-                            else if (document.exitFullscreen) document.exitFullscreen();
-                        }}
-                        className="p-1.5 bg-white/5 text-white hover:bg-white/10 rounded-lg border border-white/10 shadow-sm transition-all active:scale-95"
-                        title="Phóng to"
-                    >
-                        <Maximize2 className="w-4 h-4" />
-                    </button>
-
-                    {!isOnline && (
-                        <div className="flex items-center gap-1 px-1.5 md:px-2 py-0.5 md:py-1 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-md md:rounded-lg text-[8px] md:text-[10px] font-bold">
-                            <AlertTriangle className="w-2.5 h-2.5 md:w-3 md:h-3" />
-                            <span className="hidden md:inline">OFFLINE</span>
-                        </div>
-                    )}
-                    {pendingSyncCount > 0 && isOnline && (
-                        <div className="flex items-center gap-1 px-1.5 md:px-2 py-0.5 md:py-1 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-md md:rounded-lg text-[8px] md:text-[10px] font-bold">
-                            <RefreshCw className="w-2.5 h-2.5 md:w-3 md:h-3 animate-spin" />
-                            <span>{pendingSyncCount}</span>
-                        </div>
-                    )}
-                    <div className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${systemReady ? 'bg-emerald-500' : 'bg-red-500'} animate-pulse`}></div>
-                    <span className="text-white/60 text-[10px] md:text-xs font-mono hidden md:inline">{new Date().toLocaleTimeString()}</span>
-                </div>
-            </div>
-
-            <div className="flex-1 lg:flex-[2] relative bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 min-h-[300px] md:min-h-[350px]">
-                {cameraError && (
-                    <div className="absolute inset-0 z-[150] bg-slate-900/95 flex flex-col items-center justify-center p-6 text-center">
-                        <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mb-4">
-                            <CameraOff className="w-8 h-8 text-red-500" />
-                        </div>
-                        <h3 className="text-white font-bold text-lg mb-2">Lỗi Camera</h3>
-                        <p className="text-slate-400 text-sm mb-6 max-w-[240px] leading-relaxed">{cameraError}</p>
-                        <button
-                            onClick={handleRetryCamera}
-                            className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-lg active:scale-95"
-                        >
-                            <RotateCcw className="w-4 h-4 animate-spin-once" />
-                            Thử lại ngay
-                        </button>
                     </div>
                 )}
-                {checkinMode === 'face' ? <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" /> :
-                    <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 overflow-hidden">
-                        <div id="qr-reader" className="w-full max-w-md overflow-hidden rounded-2xl"></div>
-                        {checkinMode === 'qr' && (
-                            <button onClick={() => switchCheckinMode('qr', cameraFacing === 'environment' ? 'user' : 'environment')} className="absolute bottom-4 right-4 p-2 bg-slate-800 rounded-full text-white"><FlipHorizontal2 /></button>
-                        )}
-                    </div>}
 
-                {/* Face & QR detection frame - Premium Style */}
-                <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-center items-center z-10">
-                    {/* Professional Scan Frame */}
-                    <div className="relative w-full aspect-square max-w-[260px] md:max-w-[320px]">
-                        {/* Radar Scan Animation inside the frame - Primary Indicator */}
-                        <div className="absolute inset-0 overflow-hidden rounded-[3rem] opacity-40">
-                            <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
+                {/* Header - compact on mobile */}
+                <div className="absolute top-0 left-0 right-0 h-11 md:h-14 bg-slate-800/90 backdrop-blur-md flex items-center justify-between px-2 md:px-4 z-20 border-b border-white/10">
+                    <div className="flex items-center gap-1.5 md:gap-2">
+                        {onBack && <button onClick={onBack} className="p-1 md:p-1.5 text-white hover:bg-white/10 rounded-lg"><ChevronLeft className="w-5 h-5" /></button>}
+                        <h1 className="text-white font-bold text-sm md:text-base flex items-center gap-1.5">
+                            <span className="bg-indigo-600 p-1 rounded-lg hidden md:flex"><UserCheck className="w-4 h-4" /></span>
+                            <span className="hidden md:inline">Nội trú</span>
+                            <span className="md:hidden">🏠</span>
+                        </h1>
+                    </div>
+
+                    {/* Mode toggle - icons on mobile */}
+                    <div className="flex gap-0.5 md:gap-1 bg-slate-700/50 p-0.5 md:p-1 rounded-lg md:rounded-xl">
+                        <button
+                            onClick={() => switchCheckinMode('face')}
+                            className={`px-2 md:px-3 py-1 rounded-md md:rounded-lg text-[10px] md:text-xs font-bold flex items-center gap-1 ${checkinMode === 'face' ? 'bg-indigo-600 text-white' : 'text-slate-400'}`}
+                        >
+                            <UserIcon className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                            <span className="hidden md:inline">Face</span>
+                        </button>
+                        <button
+                            onClick={() => switchCheckinMode('qr')}
+                            className={`px-2 md:px-3 py-1 rounded-md md:rounded-lg text-[10px] md:text-xs font-bold flex items-center gap-1 ${checkinMode === 'qr' ? 'bg-emerald-600 text-white' : 'text-slate-400'}`}
+                        >
+                            <QrCode className="w-3 h-3 md:w-3.5 md:h-3.5" />
+                            <span className="hidden md:inline">QR</span>
+                        </button>
+                    </div>
+
+                    {/* Status indicators - compact on mobile */}
+                    <div className="flex items-center gap-1.5 md:gap-3">
+                        {/* AI Signal Dot - Restored to Header */}
+                        <div className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/10">
+                            <div className={`w-2 h-2 rounded-full ${modelsReady && studentsLoaded ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-500'} transition-all`} />
+                            <span className="text-[10px] font-black text-white/70 uppercase tracking-tighter hidden sm:inline">AI</span>
                         </div>
 
-                        {/* Main Frame Border - ONLY for Face Mode */}
-                        {checkinMode === 'face' && (
-                            <>
-                                <div className={`absolute inset-0 border-2 transition-all duration-300 pointer-events-none rounded-[3.5rem] md:rounded-2xl ${stabilityProgress >= 100 ? 'border-emerald-500/60 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : faceDetected ? 'border-red-500/60 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'border-white/10'}`}></div>
+                        {/* Fullscreen Toggle */}
+                        <button
+                            onClick={() => {
+                                if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+                                else if (document.exitFullscreen) document.exitFullscreen();
+                            }}
+                            className="p-1.5 bg-white/5 text-white hover:bg-white/10 rounded-lg border border-white/10 shadow-sm transition-all active:scale-95"
+                            title="Phóng to"
+                        >
+                            <Maximize2 className="w-4 h-4" />
+                        </button>
+
+                        {!isOnline && (
+                            <div className="flex items-center gap-1 px-1.5 md:px-2 py-0.5 md:py-1 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-md md:rounded-lg text-[8px] md:text-[10px] font-bold">
+                                <AlertTriangle className="w-2.5 h-2.5 md:w-3 md:h-3" />
+                                <span className="hidden md:inline">OFFLINE</span>
+                            </div>
+                        )}
+                        {pendingSyncCount > 0 && isOnline && (
+                            <div className="flex items-center gap-1 px-1.5 md:px-2 py-0.5 md:py-1 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-md md:rounded-lg text-[8px] md:text-[10px] font-bold">
+                                <RefreshCw className="w-2.5 h-2.5 md:w-3 md:h-3 animate-spin" />
+                                <span>{pendingSyncCount}</span>
+                            </div>
+                        )}
+                        <div className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${systemReady ? 'bg-emerald-500' : 'bg-red-500'} animate-pulse`}></div>
+                        <span className="text-white/60 text-[10px] md:text-xs font-mono hidden md:inline">{new Date().toLocaleTimeString()}</span>
+                    </div>
+                </div>
+
+                <div className="flex-1 lg:flex-[2] relative bg-black rounded-2xl overflow-hidden shadow-2xl border border-white/10 min-h-[300px] md:min-h-[350px]">
+                    {cameraError && (
+                        <div className="absolute inset-0 z-[150] bg-slate-900/95 flex flex-col items-center justify-center p-6 text-center">
+                            <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mb-4">
+                                <CameraOff className="w-8 h-8 text-red-500" />
+                            </div>
+                            <h3 className="text-white font-bold text-lg mb-2">Lỗi Camera</h3>
+                            <p className="text-slate-400 text-sm mb-6 max-w-[240px] leading-relaxed">{cameraError}</p>
+                            <button
+                                onClick={handleRetryCamera}
+                                className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold transition-all shadow-lg active:scale-95"
+                            >
+                                <RotateCcw className="w-4 h-4 animate-spin-once" />
+                                Thử lại ngay
+                            </button>
+                        </div>
+                    )}
+                    {checkinMode === 'face' ? <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover scale-x-[-1]" /> :
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-slate-900 overflow-hidden">
+                            <div id="qr-reader" className="w-full max-w-md overflow-hidden rounded-2xl"></div>
+                            {checkinMode === 'qr' && (
+                                <button onClick={() => switchCheckinMode('qr', cameraFacing === 'environment' ? 'user' : 'environment')} className="absolute bottom-4 right-4 p-2 bg-slate-800 rounded-full text-white"><FlipHorizontal2 /></button>
+                            )}
+                        </div>}
+
+                    {/* Dynamic Face tracking frame */}
+                    {checkinMode === 'face' && faceBox && (
+                        <div
+                            className="absolute pointer-events-none z-10 transition-all duration-75"
+                            style={{
+                                left: faceBox.x + 16, // +16 for container padding p-4
+                                top: faceBox.y + 16,
+                                width: faceBox.width,
+                                height: faceBox.height
+                            }}
+                        >
+                            <div className={`absolute inset-0 border-2 rounded-2xl md:rounded-[24px] transition-all duration-300 ${multipleFaces ? 'border-red-500/50 shadow-[0_0_20px_rgba(239,68,68,0.3)]' :
+                                isCloseEnough ? 'border-emerald-500/60 shadow-[0_0_20px_rgba(16,185,129,0.3)]' :
+                                    'border-white/30 shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                                }`}>
 
                                 {/* Corners */}
-                                <div className={`absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 rounded-tl-[2rem] md:rounded-tl-xl transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                                <div className={`absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 rounded-tr-[2rem] md:rounded-tr-xl transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                                <div className={`absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 rounded-bl-[2rem] md:rounded-bl-xl transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                                <div className={`absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 rounded-br-[2rem] md:rounded-br-xl transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
-                            </>
-                        )}
+                                <div className={`absolute -top-[2px] -left-[2px] w-8 h-8 md:w-10 md:h-10 border-t-4 border-l-4 rounded-tl-2xl md:rounded-tl-[24px] transition-colors duration-300 ${multipleFaces ? 'border-red-500' : isCloseEnough ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                <div className={`absolute -top-[2px] -right-[2px] w-8 h-8 md:w-10 md:h-10 border-t-4 border-r-4 rounded-tr-2xl md:rounded-tr-[24px] transition-colors duration-300 ${multipleFaces ? 'border-red-500' : isCloseEnough ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                <div className={`absolute -bottom-[2px] -left-[2px] w-8 h-8 md:w-10 md:h-10 border-b-4 border-l-4 rounded-bl-2xl md:rounded-bl-[24px] transition-colors duration-300 ${multipleFaces ? 'border-red-500' : isCloseEnough ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                <div className={`absolute -bottom-[2px] -right-[2px] w-8 h-8 md:w-10 md:h-10 border-b-4 border-r-4 rounded-br-2xl md:rounded-br-[24px] transition-colors duration-300 ${multipleFaces ? 'border-red-500' : isCloseEnough ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
 
-                        {/* Status Badge Over the Frame - Pushed Higher & Styled Like Event */}
-                        <div className="absolute -top-16 md:-top-20 left-1/2 -translate-x-1/2 w-max z-30">
-                            <div className={`px-4 md:px-6 py-2 md:py-3 rounded-2xl md:rounded-[24px] font-black text-[10px] md:text-[12px] shadow-2xl backdrop-blur-xl border-2 transition-all duration-300 ${faceDetected ? (stabilityProgress >= 100 ? 'bg-emerald-600 border-emerald-400 text-white' : 'bg-red-600 border-red-400 text-white') : (checkinMode === 'qr' ? 'bg-indigo-600/90 border-indigo-400/50 text-white' : 'bg-slate-900/80 border-white/10 text-white/70')}`}>
-                                {checkinMode === 'qr' ? (qrScannerActive ? '📱 Đưa mã QR vào khung' : '⏳ Khởi động quét QR...') : guidance}
+                                {/* Radar Wave Effect inside dynamic box */}
+                                <div className={`absolute inset-0 overflow-hidden rounded-2xl md:rounded-[24px] transition-opacity duration-500 ${isCloseEnough ? 'opacity-30' : 'opacity-10'}`}>
+                                    <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
+                                </div>
                             </div>
                         </div>
+                    )}
 
-                        {/* Stability Progress Bar - Bottom of Frame */}
-                        {faceDetected && stabilityProgress < 100 && (
-                            <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-32 h-1.5 bg-black/40 rounded-full overflow-hidden border border-white/10">
-                                <div className="h-full bg-indigo-500 transition-all duration-100" style={{ width: `${stabilityProgress}%` }}></div>
-                            </div>
-                        )}
-
-                        {/* Physical borders and corners REMOVED as requested to avoid clutter */}
+                    {/* Status Badge - INSIDE the Container */}
+                    <div className="absolute top-4 left-1/2 -translate-x-1/2 w-max z-30">
+                        <div className={`px-4 md:px-6 py-2 md:py-3 rounded-2xl md:rounded-[24px] font-black text-[12px] md:text-[14px] shadow-2xl backdrop-blur-2xl border-2 transition-all duration-300 ${faceDetected ? (stabilityProgress >= 100 ? 'bg-emerald-600/90 border-emerald-400 text-white' : 'bg-indigo-600/90 border-indigo-400 text-white') : (checkinMode === 'qr' ? 'bg-indigo-600/90 border-indigo-400/50 text-white' : 'bg-slate-900/90 border-white/20 text-white/90')}`}>
+                            {checkinMode === 'qr' ? (qrScannerActive ? '📱 Đưa mã QR vào khung' : '⏳ Khởi động quét QR...') : guidance}
+                        </div>
                     </div>
+
+                    {/* Stability Progress Bar - Bottom of Frame */}
+                    {faceDetected && stabilityProgress < 100 && (
+                        <div className="absolute bottom-8 left-1/2 -translate-x-1/2 w-32 h-2 bg-black/60 rounded-full overflow-hidden border border-white/20 z-30">
+                            <div className="h-full bg-indigo-500 shadow-[0_0_10px_rgba(99,102,241,0.5)] transition-all duration-100" style={{ width: `${stabilityProgress}%` }}></div>
+                        </div>
+                    )}
+
+                    {/* Physical borders and corners REMOVED as requested to avoid clutter */}
                 </div>
 
-
-            </div>
-
-            <div className={`w-full lg:w-96 flex flex-col gap-3 ${showMobileHistory ? 'fixed inset-0 z-[100] bg-slate-900 p-4' : 'block'}`}>
-                {showMobileHistory && <div className="flex justify-between mb-4"><h3 className="text-white font-bold">Lịch sử</h3><button onClick={() => setShowMobileHistory(false)}><X className="text-white" /></button></div>}
-                <div className={`p-5 rounded-3xl border ${selectedSlot ? (slotStatus === 'on_time' ? 'bg-emerald-900/20 border-emerald-500/30' : 'bg-amber-900/20 border-amber-500/30') : 'bg-slate-800/50'} ${showMobileHistory ? 'hidden' : 'block'}`}>
-                    <div className="flex justify-between mb-2">
-                        <span className="text-white/60 text-xs uppercase font-bold">Trạng thái</span>
-                        <span className={`text-[10px] font-bold ${systemReady ? 'text-emerald-400' : 'text-amber-400'}`}>{systemReady ? '● LIVE' : 'SYNCING'}</span>
+                <div className={`w-full lg:w-96 flex flex-col gap-3 ${showMobileHistory ? 'fixed inset-0 z-[100] bg-slate-900 p-4' : 'block'}`}>
+                    {showMobileHistory && <div className="flex justify-between mb-4"><h3 className="text-white font-bold">Lịch sử</h3><button onClick={() => setShowMobileHistory(false)}><X className="text-white" /></button></div>}
+                    <div className={`p-5 rounded-3xl border ${selectedSlot ? (slotStatus === 'on_time' ? 'bg-emerald-900/20 border-emerald-500/30' : 'bg-amber-900/20 border-amber-500/30') : 'bg-slate-800/50'} ${showMobileHistory ? 'hidden' : 'block'}`}>
+                        <div className="flex justify-between mb-2">
+                            <span className="text-white/60 text-xs uppercase font-bold">Trạng thái</span>
+                            <span className={`text-[10px] font-bold ${systemReady ? 'text-emerald-400' : 'text-amber-400'}`}>{systemReady ? '● LIVE' : 'SYNCING'}</span>
+                        </div>
+                        {selectedSlot ? <div><h2 className="text-white font-black text-xl">{selectedSlot.name}</h2><p className="text-white/40 text-xs">{selectedSlot.start_time} - {selectedSlot.end_time}</p></div> : <div className="text-center py-4 text-slate-500">Ngoài giờ</div>}
                     </div>
-                    {selectedSlot ? <div><h2 className="text-white font-black text-xl">{selectedSlot.name}</h2><p className="text-white/40 text-xs">{selectedSlot.start_time} - {selectedSlot.end_time}</p></div> : <div className="text-center py-4 text-slate-500">Ngoài giờ</div>}
+                    <div className={`flex-1 bg-slate-800/50 p-5 rounded-3xl border border-white/10 overflow-hidden flex flex-col ${showMobileHistory ? 'flex' : 'hidden md:flex'}`}>
+                        <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2 text-sm uppercase"><History className="w-4 h-4" /> Vừa Check-in</h3>
+                        <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
+                            {recentCheckins.length === 0 ? <p className="text-slate-600 text-center py-10 italic">Trống</p> : recentCheckins.map((item, i) => (
+                                <div key={i} className="flex items-center gap-3 bg-white/5 p-3 rounded-2xl border border-white/5">
+                                    {item.image ? (
+                                        <img src={item.image} alt={item.name} className="w-10 h-10 rounded-full object-cover border border-white/10" />
+                                    ) : (
+                                        <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold">{item.name[0]}</div>
+                                    )}
+                                    <div className="flex-1 min-w-0"><p className="text-white font-bold truncate text-sm">{item.name}</p><p className="text-indigo-300 text-[10px]">{item.type} • {item.time}</p></div>
+                                    <div className={item.status === 'success' ? 'text-emerald-400' : 'text-amber-400'}>{item.status === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}</div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                    <button onClick={() => setShowMobileHistory(!showMobileHistory)} className="md:hidden fixed bottom-6 left-6 p-4 bg-indigo-600 rounded-full shadow-2xl text-white"><History /></button>
                 </div>
-                <div className={`flex-1 bg-slate-800/50 p-5 rounded-3xl border border-white/10 overflow-hidden flex flex-col ${showMobileHistory ? 'flex' : 'hidden md:flex'}`}>
-                    <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2 text-sm uppercase"><History className="w-4 h-4" /> Vừa Check-in</h3>
-                    <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
-                        {recentCheckins.length === 0 ? <p className="text-slate-600 text-center py-10 italic">Trống</p> : recentCheckins.map((item, i) => (
-                            <div key={i} className="flex items-center gap-3 bg-white/5 p-3 rounded-2xl border border-white/5">
-                                {item.image ? (
-                                    <img src={item.image} alt={item.name} className="w-10 h-10 rounded-full object-cover border border-white/10" />
-                                ) : (
-                                    <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold">{item.name[0]}</div>
+
+                {
+                    result && (
+                        <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                            <div className="bg-slate-800 p-8 rounded-3xl text-center max-w-sm w-full border border-white/10">
+                                <div className={`w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6 ${result.status === 'late' ? 'bg-amber-500' : 'bg-emerald-500'}`}>{result.status === 'late' ? <AlertTriangle className="text-white w-10 h-10" /> : <CheckCircle className="text-white w-10 h-10" />}</div>
+                                <h2 className="text-white font-black text-2xl mb-2">{result.user?.full_name}</h2>
+                                <p className={result.status === 'late' ? 'text-amber-400' : 'text-emerald-400'}>{result.message}</p>
+                                {result.points !== undefined && result.points !== null && result.points !== 0 && (
+                                    <div className={`mt-4 inline-block px-4 py-2 rounded-full font-bold text-lg ${result.points > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+                                        {result.points > 0 ? '+' : ''}{result.points} điểm
+                                    </div>
                                 )}
-                                <div className="flex-1 min-w-0"><p className="text-white font-bold truncate text-sm">{item.name}</p><p className="text-indigo-300 text-[10px]">{item.type} • {item.time}</p></div>
-                                <div className={item.status === 'success' ? 'text-emerald-400' : 'text-amber-400'}>{item.status === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}</div>
                             </div>
-                        ))}
-                    </div>
-                </div>
-                <button onClick={() => setShowMobileHistory(!showMobileHistory)} className="md:hidden fixed bottom-6 left-6 p-4 bg-indigo-600 rounded-full shadow-2xl text-white"><History /></button>
-            </div>
-
-            {result && (
-                <div className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                    <div className="bg-slate-800 p-8 rounded-3xl text-center max-w-sm w-full border border-white/10">
-                        <div className={`w-20 h-20 mx-auto rounded-full flex items-center justify-center mb-6 ${result.status === 'late' ? 'bg-amber-500' : 'bg-emerald-500'}`}>{result.status === 'late' ? <AlertTriangle className="text-white w-10 h-10" /> : <CheckCircle className="text-white w-10 h-10" />}</div>
-                        <h2 className="text-white font-black text-2xl mb-2">{result.user?.full_name}</h2>
-                        <p className={result.status === 'late' ? 'text-amber-400' : 'text-emerald-400'}>{result.message}</p>
-                        {/* Points display - only show if points exist */}
-                        {result.points !== undefined && result.points !== null && result.points !== 0 && (
-                            <div className={`mt-4 inline-block px-4 py-2 rounded-full font-bold text-lg ${result.points > 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                                {result.points > 0 ? '+' : ''}{result.points} điểm
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {showConfigModal && (
-                <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
-                    <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md">
-                        <div className="flex justify-between mb-6"><h3 className="text-white font-bold">Cấu hình</h3><button onClick={() => setShowConfigModal(false)}><X className="text-slate-400" /></button></div>
-                        <div className="space-y-4">
-                            {['Sáng', 'Trưa', 'Tối'].map((lbl, i) => {
-                                const key = i === 0 ? 'morning_curfew' : i === 1 ? 'noon_curfew' : 'evening_curfew';
-                                return <div key={key}><label className="text-xs text-slate-500 font-bold uppercase">{lbl}</label><input type="time" value={configForm[key as keyof BoardingConfig]} onChange={e => setConfigForm({ ...configForm, [key]: e.target.value })} className="w-full bg-slate-800 border-slate-700 rounded-xl p-3 text-white" /></div>
-                            })}
                         </div>
-                        <button onClick={handleSaveConfig} className="w-full mt-6 py-3 bg-indigo-600 text-white rounded-xl font-bold">Lưu cấu hình</button>
-                    </div>
-                </div>
-            )}
-        </div>
+                    )
+                }
+
+                {
+                    showConfigModal && (
+                        <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
+                            <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-md">
+                                <div className="flex justify-between mb-6"><h3 className="text-white font-bold">Cấu hình</h3><button onClick={() => setShowConfigModal(false)}><X className="text-slate-400" /></button></div>
+                                <div className="space-y-4">
+                                    {['Sáng', 'Trưa', 'Tối'].map((lbl, i) => {
+                                        const key = i === 0 ? 'morning_curfew' : i === 1 ? 'noon_curfew' : 'evening_curfew';
+                                        return <div key={key}><label className="text-xs text-slate-500 font-bold uppercase">{lbl}</label><input type="time" value={configForm[key as keyof BoardingConfig]} onChange={e => setConfigForm({ ...configForm, [key]: e.target.value })} className="w-full bg-slate-800 border-slate-700 rounded-xl p-3 text-white" /></div>
+                                    })}
+                                </div>
+                                <button onClick={handleSaveConfig} className="w-full mt-6 py-3 bg-indigo-600 text-white rounded-xl font-bold">Lưu cấu hình</button>
+                            </div>
+                        </div>
+                    )
+                }
+            </div>
+        </>
     );
 };
 

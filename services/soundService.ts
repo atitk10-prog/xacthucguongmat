@@ -13,6 +13,7 @@ const SOUNDS = {
 class SoundService {
     private audioCache: Map<string, HTMLAudioElement> = new Map();
     private audioContext: AudioContext | null = null;
+    private isInitialized = false;
 
     constructor() {
         // Pre-load sounds
@@ -22,20 +23,41 @@ class SoundService {
                 audio.volume = 0.8;
                 this.audioCache.set(src, audio);
             });
+
+            // Interaction listener to resume AudioContext
+            const resumeAudio = () => {
+                if (this.audioContext && this.audioContext.state === 'suspended') {
+                    this.audioContext.resume();
+                }
+                window.removeEventListener('click', resumeAudio);
+                window.removeEventListener('touchstart', resumeAudio);
+                window.removeEventListener('keydown', resumeAudio);
+            };
+            window.addEventListener('click', resumeAudio);
+            window.addEventListener('touchstart', resumeAudio);
+            window.addEventListener('keydown', resumeAudio);
         }
     }
 
     // Play a specific sound type
     play(type: keyof typeof SOUNDS) {
+        // Double "ting" for success
+        if (type === 'success') {
+            this.playSoundEffect(type);
+            setTimeout(() => this.playSoundEffect(type), 150);
+        } else {
+            this.playSoundEffect(type);
+        }
+    }
+
+    private playSoundEffect(type: keyof typeof SOUNDS) {
         const src = SOUNDS[type];
         const audio = this.audioCache.get(src);
 
+        // Try to play file, fallback to synthesized beep if fails
         if (audio) {
-            // Reset and play
             audio.currentTime = 0;
-            audio.play().catch(e => {
-                // Fallback to oscillator if file not found or blocked
-                console.warn(`Sound file ${src} failed, falling back to beep.`, e);
+            audio.play().catch(() => {
                 this.fallbackBeep(type);
             });
         } else {
@@ -43,7 +65,7 @@ class SoundService {
         }
     }
 
-    // Fallback using Oscillator (in case MP3s are missing)
+    // Fallback using Oscillator (synthesized sound)
     private fallbackBeep(type: keyof typeof SOUNDS) {
         try {
             if (!this.audioContext) {
@@ -51,7 +73,7 @@ class SoundService {
             }
 
             const ctx = this.audioContext;
-            if (!ctx) return;
+            if (ctx.state === 'suspended') ctx.resume();
 
             const oscillator = ctx.createOscillator();
             const gainNode = ctx.createGain();
@@ -59,31 +81,34 @@ class SoundService {
             oscillator.connect(gainNode);
             gainNode.connect(ctx.destination);
 
+            const now = ctx.currentTime;
+
             if (type === 'success') {
-                // Pleasant "Ding"
+                // High-pitched pleasant "Ting"
                 oscillator.type = 'sine';
-                oscillator.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
-                oscillator.frequency.setValueAtTime(880, ctx.currentTime + 0.1); // A5
-                gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
-                oscillator.start(ctx.currentTime);
-                oscillator.stop(ctx.currentTime + 0.5);
+                oscillator.frequency.setValueAtTime(1046.50, now); // C6
+                gainNode.gain.setValueAtTime(0, now);
+                gainNode.gain.linearRampToValueAtTime(0.2, now + 0.01);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                oscillator.start(now);
+                oscillator.stop(now + 0.3);
             } else if (type === 'error') {
                 // Low "Buzz"
                 oscillator.type = 'sawtooth';
-                oscillator.frequency.setValueAtTime(150, ctx.currentTime);
-                gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
-                gainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + 0.3);
-                oscillator.start(ctx.currentTime);
-                oscillator.stop(ctx.currentTime + 0.3);
+                oscillator.frequency.setValueAtTime(120, now);
+                gainNode.gain.setValueAtTime(0.1, now);
+                gainNode.gain.linearRampToValueAtTime(0, now + 0.4);
+                oscillator.start(now);
+                oscillator.stop(now + 0.4);
             } else {
                 // Warning "Ping"
                 oscillator.type = 'triangle';
-                oscillator.frequency.setValueAtTime(440, ctx.currentTime);
-                gainNode.gain.setValueAtTime(0.1, ctx.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
-                oscillator.start(ctx.currentTime);
-                oscillator.stop(ctx.currentTime + 0.3);
+                oscillator.frequency.setValueAtTime(660, now); // E5
+                gainNode.gain.setValueAtTime(0, now);
+                gainNode.gain.linearRampToValueAtTime(0.1, now + 0.01);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+                oscillator.start(now);
+                oscillator.stop(now + 0.2);
             }
 
         } catch (e) {

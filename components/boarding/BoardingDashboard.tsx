@@ -528,7 +528,7 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                                             <p className="font-medium text-slate-900 text-xs sm:text-sm truncate">{student.full_name}</p>
                                             <p className="text-[10px] text-slate-500 truncate">{student.organization || student.student_code}</p>
                                         </div>
-                                        <div className="text-[10px] font-bold text-red-400 flex-shrink-0">Chưa về</div>
+                                        <div className="text-[9px] font-bold text-red-400 flex-shrink-0 uppercase">Chưa điểm danh</div>
                                     </div>
                                 ))
                             )}
@@ -706,7 +706,7 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                                 </div>
                                 <div>
                                     <h3 className="text-xl font-black text-slate-900">Chi tiết phòng {selectedRoom.name}</h3>
-                                    <p className="text-slate-500">Khu {selectedRoom.zone} • {selectedRoom.checkedIn}/{selectedRoom.current} đã về</p>
+                                    <p className="text-slate-500">Khu {selectedRoom.zone} • {selectedRoom.checkedIn}/{selectedRoom.current} đã điểm danh</p>
                                 </div>
                             </div>
                             <button
@@ -722,11 +722,11 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                             <div className="flex gap-2 mb-4">
                                 <div className="flex-1 bg-emerald-50 p-3 rounded-xl border border-emerald-100 items-center justify-center flex flex-col">
                                     <span className="text-2xl font-black text-emerald-600">{selectedRoom.checkedIn}</span>
-                                    <span className="text-xs font-bold text-emerald-700 uppercase">Đã về</span>
+                                    <span className="text-[10px] font-bold text-emerald-700 uppercase">Đã điểm danh</span>
                                 </div>
                                 <div className="flex-1 bg-red-50 p-3 rounded-xl border border-red-100 items-center justify-center flex flex-col">
                                     <span className="text-2xl font-black text-red-600">{selectedRoom.current - selectedRoom.checkedIn}</span>
-                                    <span className="text-xs font-bold text-red-700 uppercase">Chưa về</span>
+                                    <span className="text-[10px] font-bold text-red-700 uppercase">Chưa điểm danh</span>
                                 </div>
                             </div>
 
@@ -753,8 +753,8 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                                                     <p className="font-bold text-slate-900">{student.full_name}</p>
                                                     <p className="text-sm text-slate-500">{student.student_code}</p>
                                                 </div>
-                                                <div className={`px-3 py-1 rounded-lg text-xs font-bold ${isCheckedIn ? 'bg-emerald-100 text-emerald-700' : isOnLeave ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}>
-                                                    {isCheckedIn ? 'Đã về' : isOnLeave ? 'Có phép' : 'Chưa về'}
+                                                <div className={`px-3 py-1 rounded-lg text-[10px] font-bold ${isCheckedIn ? 'bg-emerald-100 text-emerald-700' : isOnLeave ? 'bg-blue-100 text-blue-700' : 'bg-red-100 text-red-700'}`}>
+                                                    {isCheckedIn ? 'Đã điểm danh' : isOnLeave ? 'Có phép' : 'Chưa điểm danh'}
                                                 </div>
                                             </div>
                                         );

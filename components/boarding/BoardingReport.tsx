@@ -53,7 +53,7 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
     const [processResult, setProcessResult] = useState<{
         processed: number;
         pointsDeducted: number;
-        students: { name: string; code: string; organization: string }[]
+        students: { name: string; code: string; organization: string; points: number; isExcused: boolean }[]
     } | null>(null);
 
     // Process Late Modal State
@@ -188,6 +188,35 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
         const a = document.createElement('a');
         a.href = url;
         a.download = `diem-danh-noi-tru-${selectedDate}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
+    const exportAbsentToExcel = () => {
+        if (!processResult) return;
+        const headers = ['STT', 'Họ tên', 'Mã HS', 'Lớp', 'Số điểm trừ', 'Ghi chú'];
+
+        // As requested: Exclude excused students from Excel
+        const nonExcusedStudents = processResult.students.filter(s => !(s as any).isExcused);
+
+        const rows = nonExcusedStudents.map((s, index) => [
+            `${index + 1}`,
+            s.name,
+            s.code,
+            s.organization,
+            `-${(s as any).points || processResult.pointsDeducted}`,
+            ''
+        ]);
+
+        const selectedSlot = timeSlots.find(s => s.id === absentSlotId);
+        const slotName = selectedSlot ? selectedSlot.name : 'Unknown';
+
+        const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+        const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `danh-sach-vang-${slotName}-${selectedDate}.csv`;
         a.click();
         URL.revokeObjectURL(url);
     };
@@ -341,15 +370,27 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
                                     <table className="w-full">
                                         <thead className="bg-slate-50 text-xs text-slate-400 uppercase font-bold sticky top-0">
                                             <tr>
-                                                <th className="px-4 py-2 text-left">Họ tên</th>
+                                                <th className="px-4 py-2 text-left">Học sinh</th>
                                                 <th className="px-4 py-2 text-left">Lớp</th>
+                                                <th className="px-4 py-2 text-center">Điểm</th>
+                                                <th className="px-4 py-2 text-right">Trạng thái</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-slate-100">
                                             {processResult.students.map((s, i) => (
-                                                <tr key={i} className="hover:bg-slate-50">
+                                                <tr key={i} className={`hover:bg-slate-50 ${s.isExcused ? 'bg-emerald-50/30' : ''}`}>
                                                     <td className="px-4 py-2 text-sm font-medium text-slate-700">{s.name}</td>
                                                     <td className="px-4 py-2 text-sm text-slate-500">{s.organization}</td>
+                                                    <td className={`px-4 py-2 text-sm text-center font-bold ${s.isExcused ? 'text-slate-400' : 'text-red-600'}`}>
+                                                        {s.isExcused ? '0' : `-${s.points}`}
+                                                    </td>
+                                                    <td className="px-4 py-2 text-right">
+                                                        {s.isExcused ? (
+                                                            <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">CÓ PHÉP</span>
+                                                        ) : (
+                                                            <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">VẮNG</span>
+                                                        )}
+                                                    </td>
                                                 </tr>
                                             ))}
                                             {processResult.students.length === 0 && (
@@ -362,16 +403,25 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
                                 </div>
                             </div>
 
-                            <button
-                                onClick={() => {
-                                    setShowAbsentModal(false);
-                                    setProcessResult(null);
-                                    loadData();
-                                }}
-                                className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-4 rounded-2xl shadow-lg transition-all"
-                            >
-                                Đóng và Quay lại
-                            </button>
+                            <div className="flex gap-3">
+                                <button
+                                    onClick={exportAbsentToExcel}
+                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2"
+                                >
+                                    <Download className="w-5 h-5" />
+                                    Xuất Excel danh sách
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setShowAbsentModal(false);
+                                        setProcessResult(null);
+                                        loadData();
+                                    }}
+                                    className="flex-1 bg-slate-800 hover:bg-slate-900 text-white font-bold py-4 rounded-2xl shadow-lg transition-all"
+                                >
+                                    Đóng và Quay lại
+                                </button>
+                            </div>
                         </div>
                     )}
                 </div>

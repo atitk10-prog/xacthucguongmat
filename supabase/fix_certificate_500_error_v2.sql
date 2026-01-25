@@ -24,12 +24,12 @@ END $$;
 UPDATE notifications 
 SET type = 'info' 
 WHERE type IS NOT NULL 
-  AND type NOT IN ('info', 'success', 'warning', 'error', 'points', 'event', 'certificate', 'permission');
+  AND type NOT IN ('info', 'success', 'warning', 'error', 'points', 'event', 'certificate', 'permission', 'request');
 
 -- Add constraint as NOT VALID first (This is INSTANT)
 ALTER TABLE notifications DROP CONSTRAINT IF EXISTS notifications_type_check;
 ALTER TABLE notifications ADD CONSTRAINT notifications_type_check 
-  CHECK (type IN ('info', 'success', 'warning', 'error', 'points', 'event', 'certificate', 'permission'))
+  CHECK (type IN ('info', 'success', 'warning', 'error', 'points', 'event', 'certificate', 'permission', 'request'))
   NOT VALID;
 
 -- Validate it separately (This won't block the ALTER)

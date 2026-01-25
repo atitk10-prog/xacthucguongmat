@@ -19,7 +19,7 @@ import PointStatistics from './components/reports/PointStatistics';
 import StudentLayout from './components/student/StudentLayout'; // Import StudentLayout
 import AdminProfile from './components/profile/AdminProfile';
 import SelfCheckinPage from './components/checkin/SelfCheckinPage';
-import { Icons } from './components/ui';
+import { Icons, NotificationList } from './components/ui';
 import { dataService } from './services/dataService';
 import { useToast } from './components/ui/Toast';
 import { User, Event } from './types';
@@ -222,12 +222,10 @@ const App: React.FC = () => {
     loadPending();
 
     // Subscribe to all exit permission changes
-    const channel = dataService.subscribeToExitPermissions((payload) => {
-      // console.log('Exit permission event:', payload);
-
+    const exitChannel = dataService.subscribeToExitPermissions((payload) => {
       if (payload.eventType === 'INSERT') {
         setPendingCount(prev => prev + 1);
-        toast.info(`Có đơn xin phép mới từ: ${payload.new?.reason || 'Học sinh'}`);
+        // Toast is now handled by notifications table subscription to avoid duplicates
       } else if (payload.eventType === 'DELETE') {
         const oldRecord = payload.old;
         if (oldRecord && oldRecord.status === 'pending') {
@@ -245,8 +243,16 @@ const App: React.FC = () => {
       }
     });
 
+    // Subscribe to ALL personal notifications (newly added for real-time manager alerts)
+    const notifChannel = dataService.subscribeToNotifications(currentUser.id, (payload) => {
+      if (payload.eventType === 'INSERT') {
+        toast.success(payload.new.message || 'Bạn có thông báo mới!');
+      }
+    });
+
     return () => {
-      if (channel) channel.unsubscribe();
+      if (exitChannel) exitChannel.unsubscribe();
+      if (notifChannel) notifChannel.unsubscribe();
     };
   }, [currentUser]);
 
@@ -555,6 +561,7 @@ const App: React.FC = () => {
             <span className="font-black text-slate-800 tracking-tight">EduCheck</span>
           </div>
           <div className="flex items-center gap-3">
+            <NotificationList userId={currentUser.id} className="hover:bg-slate-100" />
             <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center">
               <span className="text-xs font-bold text-slate-600">{currentUser.full_name.charAt(0)}</span>
             </div>

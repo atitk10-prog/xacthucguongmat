@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { dataService } from '../../services/dataService';
 import { faceService, stringToDescriptor, compareFaces } from '../../services/faceService';
+import { soundService } from '../../services/soundService';
 import { Event, User } from '../../types';
 import { Icons } from '../ui';
 
@@ -107,11 +108,13 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
                 if (dist > radius) {
                     setErrorMessage(`Bạn đang ở quá xa vị trí sự kiện (${Math.round(dist)}m). Vui lòng di chuyển đến gần hơn (trong bán kính ${radius}m).`);
                     setStatus('error');
+                    soundService.play('error');
                     return;
                 }
             } catch (err) {
                 setErrorMessage('Vui lòng bật định vị GPS để tiếp tục điểm danh.');
                 setStatus('error');
+                soundService.play('error');
                 return;
             }
         }
@@ -140,6 +143,7 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
                     if (confidence < threshold) {
                         setErrorMessage(`Nhận diện không chính xác (${confidence}%). Vui lòng thử lại ở nơi có đủ ánh sáng.`);
                         setStatus('error');
+                        soundService.play('error');
                         return;
                     }
 
@@ -160,14 +164,17 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
 
                     if (result.success) {
                         setStatus('success');
+                        soundService.play('success');
                         setTimeout(() => onSuccess(), 3000);
                     } else {
                         setErrorMessage(result.error || 'Lỗi trong quá trình điểm danh.');
                         setStatus('error');
+                        soundService.play('error');
                     }
                 } else {
                     setErrorMessage('Không nhận diện được khuôn mặt. Hãy nhìn thẳng vào camera.');
                     setStatus('error');
+                    soundService.play('error');
                 }
             } else if (!currentUser.face_descriptor) {
                 setErrorMessage('Bạn chưa đăng ký Face ID. Vui lòng liên hệ quản trị viên.');

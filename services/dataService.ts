@@ -3365,7 +3365,7 @@ async function processAbsentStudents(
 ): Promise<ApiResponse<{
     processed: number;
     pointsDeducted: number;
-    students: { name: string; code: string; organization: string }[]
+    students: { name: string; code: string; organization: string; points: number; isExcused: boolean }[]
 }>> {
     try {
         const { data: slot } = await supabase
@@ -3393,48 +3393,60 @@ async function processAbsentStudents(
         const studentsRes = await getAllStudentsForCheckin(false);
         if (!studentsRes.success || !studentsRes.data) return { success: false, error: 'Không tải được danh sách học sinh' };
 
-        const permissionsRes = await getExitPermissions({
-            startDate: targetDate,
-            endDate: targetDate,
-            status: 'approved'
-        });
+        // Improved query to find approved permissions that overlap with targetDate
+        // We look for permissions that start before end of day AND end after start of day
+        const { data: permissions } = await supabase
+            .from('exit_permissions')
+            .select('user_id, exit_time, return_time')
+            .eq('status', 'approved')
+            .lte('exit_time', `${targetDate}T23:59:59`)
+            .gte('return_time', `${targetDate}T00:00:00`);
 
         const excusedUsers = new Set<string>();
-        if (permissionsRes.success && permissionsRes.data) {
-            for (const perm of permissionsRes.data) {
-                const exitDate = new Date(perm.exit_time).toISOString().split('T')[0];
-                const returnDate = new Date(perm.return_time).toISOString().split('T')[0];
-                if (targetDate >= exitDate && targetDate <= returnDate) {
-                    excusedUsers.add(perm.user_id);
-                }
+        if (permissions) {
+            for (const perm of permissions) {
+                // Since the DB already filtered correctly, any permission in 'permissions'
+                // overlaps with targetDate. We add them to excusedUsers.
+                excusedUsers.add(perm.user_id);
             }
         }
 
-        const absentStudents: { name: string; code: string; organization: string }[] = [];
+        const absentStudents: { name: string; code: string; organization: string; points: number; isExcused: boolean }[] = [];
         for (const student of studentsRes.data) {
-            if (!checkedInUsers.has(student.id) && !excusedUsers.has(student.id)) {
+            if (!checkedInUsers.has(student.id)) {
+                const isExcused = excusedUsers.has(student.id);
+
+                // If excused, we show 0 points and mark as excused
+                // If the user wants them GONE, we will filter in the UI/Excel
+                // but for now let's pass them with 0 points to be safe.
+                const pointsToDeduct = isExcused ? 0 : absentPoints;
+
+                if (!isExcused) {
+                    await deductPoints(
+                        student.id,
+                        pointsToDeduct,
+                        `Vắng điểm danh ${slot.name} ngày ${targetDate}`
+                    );
+                }
+
                 absentStudents.push({
                     name: student.full_name,
                     code: student.student_code || '',
-                    organization: student.organization || ''
+                    organization: student.organization || '',
+                    points: pointsToDeduct,
+                    isExcused: isExcused
                 });
-
-                await deductPoints(
-                    student.id,
-                    absentPoints,
-                    `Vắng điểm danh ${slot.name} ngày ${targetDate}`
-                );
             }
         }
 
         return {
             success: true,
             data: {
-                processed: absentStudents.length,
+                processed: absentStudents.filter(s => !s.isExcused).length,
                 pointsDeducted: absentPoints,
                 students: absentStudents
             },
-            message: `Đã xử lý ${absentStudents.length} học sinh vắng ${slot.name}`
+            message: `Đã xử lý ${absentStudents.filter(s => !s.isExcused).length} học sinh vắng ${slot.name}`
         };
     } catch (err: any) {
         return { success: false, error: err.message || 'Lỗi xử lý vắng' };
