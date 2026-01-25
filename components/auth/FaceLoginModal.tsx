@@ -99,13 +99,21 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
         init();
 
-        // Cleanup on unmount/close
         return () => {
             if (stream) {
                 stream.getTracks().forEach(t => t.stop());
             }
         };
     }, [isOpen]);
+
+    // 2. Ensure stream is attached to video element when it becomes available
+    useEffect(() => {
+        const isLoading = !modelsReady || !usersLoaded;
+        if (isOpen && !isLoading && videoRef.current && stream && !videoRef.current.srcObject) {
+            videoRef.current.srcObject = stream;
+            console.log('✅ Stream attached to video element after loading');
+        }
+    }, [isOpen, modelsReady, usersLoaded, stream]);
 
     // Face Detection Loop
     useEffect(() => {
