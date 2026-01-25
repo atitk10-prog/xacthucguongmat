@@ -171,11 +171,11 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                         if (!stableStartTimeRef.current) stableStartTimeRef.current = now;
                         const duration = now - stableStartTimeRef.current;
 
-                        const progress = Math.min(100, (duration / 800) * 100);
+                        const progress = Math.min(100, (duration / 400) * 100);
                         setStabilityProgress(progress);
-                        setGuidance('Giữ nguyên vị trí...');
+                        setGuidance('Nhận diện...');
 
-                        if (duration >= 800) {
+                        if (duration >= 400) {
                             // START RADAR SCAN
                             startRadarProcess();
                         }
@@ -201,22 +201,22 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             setIsScanning(true);
             soundService.play('warning');
 
-            // Visual radar progress (2.5s total to allow for blink)
+            // Super fast radar progress (~0.6s)
             let prog = 0;
             const interval = setInterval(() => {
-                prog += 2;
+                prog += 5; // Faster steps
                 setScanProgress(prog);
 
-                // Play radar sweep sound
-                if (prog % 20 === 0) soundService.play('camera');
+                // Play radar sweep sound less frequently
+                if (prog % 40 === 0) soundService.play('camera');
 
                 // Guidance
                 if (prog > 30 && prog < 85) {
-                    setGuidance('ĐANG XÁC THỰC...');
+                    setGuidance('ĐANG QUÉT...');
                 }
 
-                // Check presence LESS FREQUENTLY (Every 200ms)
-                if (prog % 8 === 0) {
+                // Check presence once during fast scan
+                if (prog === 50) {
                     checkPresence(interval);
                 }
 
@@ -224,7 +224,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                     clearInterval(interval);
                     performRadarAuth();
                 }
-            }, 40);
+            }, 30); // Faster interval
         };
 
         const checkPresence = async (interval: NodeJS.Timeout) => {
@@ -249,9 +249,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         const performRadarAuth = async () => {
             if (!videoRef.current) return;
 
-            setGuidance('Đang phân tích...');
-            // Reduced wait for faster experience
-            await new Promise(r => setTimeout(r, 200));
+            setGuidance('Xác thực...');
+            // No delay for faster experience
 
             try {
                 // IMPORTANT: Final auth step uses full landmarks + descriptor for maximum accuracy
@@ -302,7 +301,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 setScanProgress(0);
                 stableStartTimeRef.current = null;
                 setStabilityProgress(0);
-            }, 3000);
+            }, 1000); // Faster retry (1s instead of 3s)
         };
 
         loop();
