@@ -70,9 +70,8 @@ export async function loadModels(): Promise<void> {
 
     try {
         await Promise.all([
-            faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),    // ACCURATE detection
-            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), // TINY/FAST detection for tracking
-            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), // ACCURATE landmarks
+            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), // TINY/FAST detection (Mô hình siêu nhẹ)
+            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), // Landmarks
             faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL) // Recognition
         ]);
 
@@ -99,7 +98,7 @@ export async function getFaceDescriptor(input: HTMLImageElement | HTMLVideoEleme
     if (!modelsLoaded) await loadModels();
 
     const detection = await faceapi
-        .detectSingleFace(input)
+        .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 160 }))
         .withFaceLandmarks()
         .withFaceDescriptor();
 
@@ -113,7 +112,7 @@ export async function detectFaces(input: HTMLImageElement | HTMLVideoElement | H
 
     if (single) {
         const detection = await faceapi
-            .detectSingleFace(input)
+            .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 160 }))
             .withFaceLandmarks()
             .withFaceDescriptor();
         return detection ? [detection] : [];

@@ -115,8 +115,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         if (!isOpen || !modelsReady || !videoRef.current || loginSuccess) return;
 
         let animationId: number;
-        const STABILITY_THRESHOLD = 250; // Faster trigger
-        const PROCESSING_THROTTLE = 80; // 12 FPS - Smooth even on weak devices
+        const STABILITY_THRESHOLD = 200; // Even faster (0.2s)
+        const PROCESSING_THROTTLE = 100; // 10 FPS
         const CONFIDENCE_THRESHOLD = 42;
 
         const loop = async () => {
@@ -221,9 +221,11 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             setGuidance('Xác thực...');
 
             try {
-                // Multi-face support: Detect all faces in frame to find the right one
-                // This prevents issues where background photos/people interfere
-                const allDetections = await faceapi.detectAllFaces(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+                // ALL STEPS now use TinyFaceDetector for maximum speed
+                const allDetections = await faceapi.detectAllFaces(
+                    videoRef.current,
+                    new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 })
+                )
                     .withFaceLandmarks()
                     .withFaceDescriptors();
 
