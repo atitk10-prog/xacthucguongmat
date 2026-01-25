@@ -858,7 +858,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
 
                                 <div>
                                     <label className="block text-xs font-black text-slate-400 uppercase mb-2">Bắt đầu *</label>
-                                    <div className="flex flex-col sm:flex-row gap-2">
+                                    <div className="flex flex-col gap-2">
                                         <input
                                             type="date"
                                             required
@@ -868,7 +868,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                                 const time = formData.start_time && formData.start_time.includes('T') ? formData.start_time.split('T')[1] : '07:00';
                                                 setFormData({ ...formData, start_time: `${date}T${time}` });
                                             }}
-                                            className="w-full sm:flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                            className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                                         />
                                         <TimeInput
                                             value={formData.start_time && formData.start_time.includes('T') ? formData.start_time.split('T')[1] : '07:00'}
@@ -882,7 +882,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
 
                                 <div>
                                     <label className="block text-xs font-black text-slate-400 uppercase mb-2">Kết thúc *</label>
-                                    <div className="flex flex-col sm:flex-row gap-2">
+                                    <div className="flex flex-col gap-2">
                                         <input
                                             type="date"
                                             required
@@ -892,7 +892,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                                 const time = formData.end_time && formData.end_time.includes('T') ? formData.end_time.split('T')[1] : '17:00';
                                                 setFormData({ ...formData, end_time: `${date}T${time}` });
                                             }}
-                                            className="w-full sm:flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                            className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                                         />
                                         <TimeInput
                                             value={formData.end_time && formData.end_time.includes('T') ? formData.end_time.split('T')[1] : '17:00'}
@@ -928,31 +928,31 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                         </div>
                                     </div>
 
-                                    <div className="md:col-span-3 mb-4 flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4">
-                                        <div className="flex-1">
-                                            <label className="block text-xs font-black text-slate-400 uppercase mb-2">Thời gian đi muộn (phút)</label>
-                                            <input
-                                                type="number"
-                                                value={formData.late_threshold_mins}
-                                                onChange={(e) => {
-                                                    const val = e.target.value;
-                                                    setFormData({
-                                                        ...formData,
-                                                        late_threshold_mins: val === '' ? '' as any : parseInt(val)
-                                                    });
-                                                }}
-                                                className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
-                                            />
+                                    <div className="md:col-span-3 mb-4 flex flex-col gap-3">
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                                            <label className="block text-xs font-black text-slate-400 uppercase">Thời gian đi muộn (phút)</label>
+                                            <button
+                                                type="button"
+                                                onClick={handleLoadSystemDefaults}
+                                                className="px-3 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-xs transition-colors flex items-center justify-center gap-2 whitespace-nowrap w-fit"
+                                                title="Tải lại cấu hình mặc định từ hệ thống"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
+                                                Mặc định hệ thống
+                                            </button>
                                         </div>
-                                        <button
-                                            type="button"
-                                            onClick={handleLoadSystemDefaults}
-                                            className="w-full sm:w-auto px-4 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
-                                            title="Tải lại cấu hình mặc định từ hệ thống"
-                                        >
-                                            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                                            Tải từ hệ thống
-                                        </button>
+                                        <input
+                                            type="number"
+                                            value={formData.late_threshold_mins}
+                                            onChange={(e) => {
+                                                const val = e.target.value;
+                                                setFormData({
+                                                    ...formData,
+                                                    late_threshold_mins: val === '' ? '' as any : parseInt(val)
+                                                });
+                                            }}
+                                            className="w-full px-5 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                        />
                                     </div>
 
                                     {(!formData.checkin_mode || formData.checkin_mode === 'student') && (

@@ -22,6 +22,8 @@ const CardGenerator: React.FC<CardGeneratorProps> = ({ users: propUsers, event, 
     const [cardType, setCardType] = useState<'event' | 'student' | 'teacher'>('student');
     const [searchQuery, setSearchQuery] = useState('');
     const [isLoading, setIsLoading] = useState(!propUsers);
+    const [currentPage, setCurrentPage] = useState(1);
+    const usersPerPage = 20;
 
     useEffect(() => {
         if (!propUsers) {
@@ -55,6 +57,18 @@ const CardGenerator: React.FC<CardGeneratorProps> = ({ users: propUsers, event, 
         return matchesType && matchesSearch;
     });
 
+    // Reset page when filtering
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [searchQuery, cardType]);
+
+    // Pagination logic
+    const totalPages = Math.ceil(filteredUsers.length / usersPerPage);
+    const paginatedUsers = filteredUsers.slice(
+        (currentPage - 1) * usersPerPage,
+        currentPage * usersPerPage
+    );
+
     const handleSelectAll = () => {
         if (selectedUsers.length === filteredUsers.length) {
             setSelectedUsers([]);
@@ -69,7 +83,7 @@ const CardGenerator: React.FC<CardGeneratorProps> = ({ users: propUsers, event, 
         );
     };
 
-    const handleGenerate = async () => {
+    const handleGenerate = async (mode: 'print' | 'pdf' = 'print') => {
         if (selectedUsers.length === 0) return;
 
         setIsGenerating(true);
@@ -101,9 +115,13 @@ const CardGenerator: React.FC<CardGeneratorProps> = ({ users: propUsers, event, 
                 cardHTMLs.push(html);
             }
 
-            // Print ALL cards in one window
+            // Print or Download
             if (cardHTMLs.length > 0) {
-                pdfService.printBatchCards(cardHTMLs);
+                if (mode === 'print') {
+                    pdfService.printBatchCards(cardHTMLs);
+                } else {
+                    await pdfService.downloadBatchCardsAsPDF(cardHTMLs, `The_EduCheck_${new Date().getTime()}.pdf`);
+                }
             }
         } catch (error) {
             console.error('Failed to generate cards:', error);
@@ -232,27 +250,42 @@ const CardGenerator: React.FC<CardGeneratorProps> = ({ users: propUsers, event, 
                         Đã chọn: <strong className="text-indigo-600">{selectedUsers.length}</strong> / {filteredUsers.length}
                     </span>
 
-                    {/* Generate Button */}
-                    <button
-                        onClick={handleGenerate}
-                        disabled={selectedUsers.length === 0 || isGenerating}
-                        className={`px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 ${selectedUsers.length === 0 || isGenerating
-                            ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                            : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg'
-                            }`}
-                    >
-                        {isGenerating ? (
-                            <>
+                    {/* Action Buttons */}
+                    <div className="flex gap-2">
+                        {/* Download PDF Button */}
+                        <button
+                            onClick={() => handleGenerate('pdf')}
+                            disabled={selectedUsers.length === 0 || isGenerating}
+                            className={`px-4 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${selectedUsers.length === 0 || isGenerating
+                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-lg'
+                                }`}
+                        >
+                            {isGenerating ? (
                                 <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                                Đang tạo...
-                            </>
-                        ) : (
-                            <>
+                            ) : (
+                                <Download className="w-5 h-5" />
+                            )}
+                            <span className="hidden md:inline">Xuất PDF</span>
+                        </button>
+
+                        {/* Print Button */}
+                        <button
+                            onClick={() => handleGenerate('print')}
+                            disabled={selectedUsers.length === 0 || isGenerating}
+                            className={`px-5 py-2.5 rounded-xl font-bold flex items-center gap-2 transition-all ${selectedUsers.length === 0 || isGenerating
+                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                : 'bg-indigo-600 text-white hover:bg-indigo-700 shadow-lg'
+                                }`}
+                        >
+                            {isGenerating ? (
+                                <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                            ) : (
                                 <Printer className="w-5 h-5" />
-                                Tạo {selectedUsers.length} thẻ
-                            </>
-                        )}
-                    </button>
+                            )}
+                            <span>In {selectedUsers.length} thẻ</span>
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -266,7 +299,7 @@ const CardGenerator: React.FC<CardGeneratorProps> = ({ users: propUsers, event, 
                         </p>
                     </div>
                 ) : (
-                    filteredUsers.map(user => (
+                    paginatedUsers.map(user => (
                         <div
                             key={user.id}
                             onClick={() => handleSelectUser(user.id)}
@@ -303,6 +336,37 @@ const CardGenerator: React.FC<CardGeneratorProps> = ({ users: propUsers, event, 
                     ))
                 )}
             </div>
+
+            {/* UI Pagination Controls */}
+            {totalPages > 1 && (
+                <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 flex flex-wrap justify-between items-center gap-4">
+                    <div className="text-sm text-slate-500 font-medium">
+                        Hiển thị <span className="text-slate-900 font-bold">{(currentPage - 1) * usersPerPage + 1}-{Math.min(currentPage * usersPerPage, filteredUsers.length)}</span> trong tổng số <span className="text-indigo-600 font-black">{filteredUsers.length}</span> người
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                        <button
+                            disabled={currentPage === 1}
+                            onClick={() => { setCurrentPage(prev => Math.max(1, prev - 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                            className={`px-4 py-2 rounded-xl border font-bold transition-all flex items-center gap-2 ${currentPage === 1 ? 'text-slate-300 border-slate-100 cursor-not-allowed' : 'text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-indigo-300'}`}
+                        >
+                            <ChevronLeft className="w-4 h-4" /> Trước
+                        </button>
+
+                        <div className="flex items-center px-4 py-2 bg-indigo-50 rounded-xl text-indigo-600 font-black text-sm border border-indigo-100">
+                            Trang {currentPage} / {totalPages}
+                        </div>
+
+                        <button
+                            disabled={currentPage === totalPages}
+                            onClick={() => { setCurrentPage(prev => Math.min(totalPages, prev + 1)); window.scrollTo({ top: 0, behavior: 'smooth' }); }}
+                            className={`px-4 py-2 rounded-xl border font-bold transition-all flex items-center gap-2 ${currentPage === totalPages ? 'text-slate-300 border-slate-100 cursor-not-allowed' : 'text-slate-600 border-slate-200 hover:bg-slate-50 hover:border-indigo-300'}`}
+                        >
+                            Tiếp <ChevronLeft className="w-4 h-4 rotate-180" />
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {/* Card Preview */}
             <div className="bg-white rounded-3xl p-6 shadow-sm border border-slate-100">
@@ -359,7 +423,7 @@ const CardGenerator: React.FC<CardGeneratorProps> = ({ users: propUsers, event, 
                     </div>
                 </div>
             </div>
-        </div>
+        </div >
     );
 };
 

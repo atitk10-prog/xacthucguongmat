@@ -111,7 +111,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 (item.name === entry.name && item.time === entry.time)
             );
             if (isDuplicate) return prev;
-            return [entry, ...prev.slice(0, 14)];
+            // Keep last 30 for better history
+            return [entry, ...prev.slice(0, 29)];
         });
 
         // Update checkedInIds Set
@@ -303,8 +304,24 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 const studentsRes = await dataService.getAllStudentsForCheckin(false);
                 if (studentsRes.success && studentsRes.data) {
                     setStudentsData(studentsRes.data);
+
+                    // NEW: Optimized loading of descriptors
+                    setGuidance('Đang tải dữ liệu Face ID...');
+                    const userIds = studentsRes.data.map(u => u.id);
+                    const descriptorRes = await dataService.getFaceDescriptors(userIds);
+
                     faceService.faceMatcher.clearAll();
-                    studentsRes.data.forEach(u => { if (u.face_descriptor) faceService.faceMatcher.registerFace(u.id, faceService.stringToDescriptor(u.face_descriptor), u.full_name); });
+                    if (descriptorRes.success && descriptorRes.data) {
+                        const descriptors = descriptorRes.data;
+                        studentsRes.data.forEach(u => {
+                            const descStr = descriptors[u.id];
+                            if (descStr) {
+                                try {
+                                    faceService.faceMatcher.registerFace(u.id, faceService.stringToDescriptor(descStr), u.full_name);
+                                } catch (e) { }
+                            }
+                        });
+                    }
                     setStudentsLoaded(true);
                 }
                 const slotsRes = await dataService.getActiveTimeSlots();
@@ -313,6 +330,25 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 if (configRes.success && configRes.data) { setBoardingConfig(configRes.data); setConfigForm(configRes.data); }
                 const roomsRes = await dataService.getRooms();
                 if (roomsRes.success && roomsRes.data) setRooms(roomsRes.data);
+
+                // LOAD RECENT CHECK-INS (LIMIT 30)
+                const recentRes = await dataService.getRecentBoardingLogs(30);
+                if (recentRes.success && recentRes.data) {
+                    const mapped = recentRes.data.map(c => ({
+                        name: c.user?.full_name || 'Học sinh',
+                        userId: c.user_id,
+                        time: new Date(c.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+                        type: c.slot?.name || 'Điểm danh',
+                        image: c.user?.avatar_url,
+                        status: c.status === 'late' ? 'warning' : 'success'
+                    }));
+                    setRecentCheckins(mapped);
+
+                    // Sync checkedInIds
+                    const ids = new Set<string>();
+                    recentRes.data.forEach(c => ids.add(c.user_id));
+                    setCheckedInIds(ids);
+                }
 
                 // Set initial queue count
                 setPendingSyncCount(dataService.getOfflineQueueLength());

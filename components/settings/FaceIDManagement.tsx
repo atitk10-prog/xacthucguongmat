@@ -432,7 +432,7 @@ const FaceIDManagement: React.FC<FaceIDManagementProps> = ({ onBack }) => {
                                     <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex-shrink-0">
+                                                <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex-shrink-0 aspect-square">
                                                     {user.avatar_url ? (
                                                         <img src={user.avatar_url} alt={user.full_name} className="w-full h-full object-cover" />
                                                     ) : (

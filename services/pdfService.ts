@@ -121,24 +121,35 @@ export function printHTML(html: string): void {
   }
 }
 
-// Print multiple cards in batch - ALL cards in ONE print window
+// Print multiple cards in batch - Grouped into pages of 8 for reliability
 export function printBatchCards(htmlCards: string[]): void {
   const printWindow = window.open('', '_blank');
   if (printWindow) {
-    const cardsHTML = htmlCards.map((card, i) => `
-            <div class="card-wrapper" style="page-break-inside:avoid;">
-                ${card}
-            </div>
-        `).join('');
+    const cardsPerPage = 8;
+    let combinedHTML = '';
 
-    printWindow.document.write(generatePrintPage(cardsHTML, true));
+    // Chunk cards into pages
+    for (let i = 0; i < htmlCards.length; i += cardsPerPage) {
+      const batch = htmlCards.slice(i, i + cardsPerPage);
+      combinedHTML += `
+        <div class="print-page" style="page-break-after: always; display: grid; grid-template-columns: repeat(2, 1fr); gap: 5mm; justify-items: center; align-content: start; min-height: 280mm; padding: 5mm;">
+          ${batch.map(card => `
+            <div class="card-wrapper" style="page-break-inside: avoid; margin-bottom: 5mm;">
+              ${card}
+            </div>
+          `).join('')}
+        </div>
+      `;
+    }
+
+    printWindow.document.write(generatePrintPage(combinedHTML, true));
     printWindow.document.close();
     printWindow.focus();
 
     // Wait for images to load before printing
     setTimeout(() => {
       printWindow.print();
-    }, 1000);
+    }, 1200);
   }
 }
 
@@ -249,9 +260,67 @@ function generatePrintPage(content: string, isBatch: boolean = false): string {
 </html>`;
 }
 
+
+// Export as PDF using jspdf + html2canvas
+export async function downloadBatchCardsAsPDF(htmlCards: string[], filename: string = 'The_EduCheck.pdf'): Promise<void> {
+  try {
+    const { default: jsPDF } = await import('jspdf');
+    const { default: html2canvas } = await import('html2canvas');
+
+    // 1. Create a hidden container for rendering
+    const container = document.createElement('div');
+    container.style.position = 'absolute';
+    container.style.left = '-9999px';
+    container.style.top = '0';
+    container.style.width = '210mm'; // A4 width
+    container.style.background = 'white';
+    document.body.appendChild(container);
+
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const cardsPerPage = 8;
+
+    for (let i = 0; i < htmlCards.length; i += cardsPerPage) {
+      const batch = htmlCards.slice(i, i + cardsPerPage);
+
+      // Clear and prepare container for this page
+      container.innerHTML = `
+                <div style="padding: 10mm; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10mm; justify-items: center; width: 210mm; box-sizing: border-box;">
+                    ${batch.map(card => `<div style="width: 90mm; height: 56mm; overflow: hidden; border-radius: 8px;">${card}</div>`).join('')}
+                </div>
+            `;
+
+      // Wait a bit for images to render
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const canvas = await html2canvas(container, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff'
+      });
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+
+      if (i > 0) pdf.addPage();
+
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+    }
+
+    pdf.save(filename);
+    document.body.removeChild(container);
+  } catch (error) {
+    console.error('PDF Generation failed:', error);
+    throw error;
+  }
+}
+
 export const pdfService = {
   generateCardHTML,
   generateCertificateHTML,
   printHTML,
-  printBatchCards
+  printBatchCards,
+  downloadBatchCardsAsPDF
 };

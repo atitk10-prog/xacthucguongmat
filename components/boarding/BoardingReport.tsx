@@ -139,7 +139,7 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
             return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] sm:text-xs font-bold whitespace-nowrap"><CheckCircle className="w-2.5 h-2.5 sm:w-3 h-3" /> Đúng giờ</span>;
         }
         if (status === 'late') {
-            return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] sm:text-xs font-bold whitespace-nowrap"><AlertTriangle className="w-2.5 h-2.5 sm:w-3 h-3" /> Trễ</span>;
+            return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] sm:text-xs font-bold whitespace-normal sm:whitespace-nowrap"><AlertTriangle className="w-2.5 h-2.5 sm:w-3 h-3 flex-shrink-0" /> Trễ</span>;
         }
         return null;
     };
@@ -596,54 +596,57 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
             </div>
 
             {/* Controls */}
-            <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex flex-wrap items-center gap-4">
-                {/* Date Picker */}
-                <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1">
-                    <button onClick={() => handleDateChange(-1)} className="p-2 hover:bg-white rounded-lg transition-colors">
-                        <ChevronLeft className="w-4 h-4 text-slate-600" />
-                    </button>
-                    <input
-                        type="date"
-                        value={selectedDate}
-                        onChange={e => setSelectedDate(e.target.value)}
-                        className="bg-transparent px-2 py-1 font-bold text-slate-900 focus:outline-none"
-                    />
-                    <button onClick={() => handleDateChange(1)} className="p-2 hover:bg-white rounded-lg transition-colors">
-                        <ChevronRight className="w-4 h-4 text-slate-600" />
-                    </button>
-                </div>
+            <div className="bg-white rounded-2xl p-4 border border-slate-100 shadow-sm flex flex-col md:flex-row md:items-center gap-4">
+                <div className="flex flex-wrap items-center gap-4">
+                    {/* Date Picker */}
+                    <div className="flex items-center gap-2 bg-slate-100 rounded-xl p-1 w-full sm:w-auto">
+                        <button onClick={() => handleDateChange(-1)} className="p-2 hover:bg-white rounded-lg transition-colors">
+                            <ChevronLeft className="w-4 h-4 text-slate-600" />
+                        </button>
+                        <input
+                            type="date"
+                            value={selectedDate}
+                            onChange={e => setSelectedDate(e.target.value)}
+                            className="bg-transparent px-2 py-1 font-bold text-slate-900 focus:outline-none"
+                        />
+                        <button onClick={() => handleDateChange(1)} className="p-2 hover:bg-white rounded-lg transition-colors">
+                            <ChevronRight className="w-4 h-4 text-slate-600" />
+                        </button>
+                    </div>
 
-                {/* Org Filter */}
-                <div className="flex items-center gap-2">
-                    <Filter className="w-4 h-4 text-slate-400" />
-                    <select
-                        value={filterOrg}
-                        onChange={e => setFilterOrg(e.target.value)}
-                        className="bg-slate-100 border-0 rounded-lg px-3 py-2 font-medium text-slate-700"
-                    >
-                        <option value="">Tất cả lớp</option>
-                        {organizations.map(org => (
-                            <option key={org} value={org}>{org}</option>
-                        ))}
-                    </select>
+                    {/* Org Filter */}
+                    <div className="flex items-center gap-2">
+                        <Filter className="w-4 h-4 text-slate-400" />
+                        <select
+                            value={filterOrg}
+                            onChange={e => setFilterOrg(e.target.value)}
+                            className="bg-slate-100 border-0 rounded-lg px-3 py-2 font-medium text-slate-700"
+                        >
+                            <option value="">Tất cả lớp</option>
+                            {organizations.map(org => (
+                                <option key={org} value={org}>{org}</option>
+                            ))}
+                        </select>
+                    </div>
+
                 </div>
 
                 {/* Stats */}
-                <div className="flex gap-4 ml-auto">
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-indigo-50 rounded-lg">
+                <div className="flex flex-wrap gap-2 md:gap-4 md:ml-auto">
+                    <div className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-indigo-50 rounded-lg">
                         <Users className="w-4 h-4 text-indigo-600" />
                         <span className="font-bold text-indigo-700">{stats.total}</span>
-                        <span className="text-indigo-500 text-sm">check-in</span>
+                        <span className="text-indigo-500 text-xs sm:text-sm">tất cả</span>
                     </div>
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-emerald-50 rounded-lg">
+                    <div className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-emerald-50 rounded-lg">
                         <CheckCircle className="w-4 h-4 text-emerald-600" />
                         <span className="font-bold text-emerald-700">{stats.onTime}</span>
-                        <span className="text-emerald-500 text-sm">đúng giờ</span>
+                        <span className="text-emerald-500 text-xs sm:text-sm">đúng giờ</span>
                     </div>
-                    <div className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 rounded-lg">
+                    <div className="flex-1 sm:flex-none flex items-center justify-center gap-2 px-3 py-1.5 bg-amber-50 rounded-lg">
                         <AlertTriangle className="w-4 h-4 text-amber-600" />
                         <span className="font-bold text-amber-700">{stats.late}</span>
-                        <span className="text-amber-500 text-sm">trễ</span>
+                        <span className="text-amber-500 text-xs sm:text-sm">trễ</span>
                     </div>
                 </div>
             </div>

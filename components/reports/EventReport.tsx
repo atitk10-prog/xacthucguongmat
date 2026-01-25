@@ -383,7 +383,7 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                     </div>
 
                     {/* Content Tabs */}
-                    <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden min-h-[500px]">
+                    <div className="bg-white rounded-3xl shadow-sm border border-slate-100 min-h-[500px]">
                         <div className="flex border-b border-slate-100 px-6 pt-4">
                             <TabButton active={activeTab === 'overview'} onClick={() => setActiveTab('overview')}>
                                 Tổng quan & Biểu đồ
@@ -522,8 +522,8 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                                         </div>
                                     </div>
 
-                                    {/* Table */}
-                                    <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                                    {/* Table with improved scrolling for mobile */}
+                                    <div className="overflow-x-auto rounded-2xl border border-slate-100 -mx-4 md:mx-0">
                                         <table className="w-full min-w-[700px]">
                                             <thead>
                                                 <tr className="bg-slate-50 text-left border-b border-slate-100">

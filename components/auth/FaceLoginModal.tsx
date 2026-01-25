@@ -32,6 +32,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
     const [loginSuccess, setLoginSuccess] = useState(false);
     const [matchedUser, setMatchedUser] = useState<User | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [isCapturing, setIsCapturing] = useState(false);
+    const [capturedImage, setCapturedImage] = useState<string | null>(null);
 
     const [attempts, setAttempts] = useState(0);
     const [lockoutTime, setLockoutTime] = useState<number | null>(null);
@@ -71,15 +73,22 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 if (currentCount === 0) {
                     const response = await dataService.getUsers({ status: 'active' });
                     if (response.success && response.data) {
+                        const userIds = response.data.map(u => u.id);
+                        const descriptorRes = await dataService.getFaceDescriptors(userIds);
+
                         faceService.faceMatcher.clearAll();
-                        for (const user of response.data) {
-                            if (user.face_descriptor) {
-                                try {
-                                    const descriptor = faceService.stringToDescriptor(user.face_descriptor);
-                                    if (descriptor.length > 0) {
-                                        faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
-                                    }
-                                } catch (e) { }
+                        if (descriptorRes.success && descriptorRes.data) {
+                            const descriptors = descriptorRes.data;
+                            for (const user of response.data) {
+                                const descStr = descriptors[user.id];
+                                if (descStr) {
+                                    try {
+                                        const descriptor = faceService.stringToDescriptor(descStr);
+                                        if (descriptor.length > 0) {
+                                            faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
+                                        }
+                                    } catch (e) { }
+                                }
                             }
                         }
                     }
@@ -115,12 +124,12 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         if (!isOpen || !modelsReady || !videoRef.current || loginSuccess) return;
 
         let animationId: number;
-        const STABILITY_THRESHOLD = 200; // Even faster (0.2s)
+        const STABILITY_THRESHOLD = 1000; // 1s to stabilize as requested
         const PROCESSING_THROTTLE = 100; // 10 FPS
         const CONFIDENCE_THRESHOLD = 42;
 
         const loop = async () => {
-            if (!videoRef.current || videoRef.current.paused || videoRef.current.ended || loginSuccess) {
+            if (!videoRef.current || videoRef.current.paused || videoRef.current.ended || loginSuccess || isProcessing || capturedImage) {
                 animationId = requestAnimationFrame(loop);
                 return;
             }
@@ -181,8 +190,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                         setStabilityProgress(progress);
 
                         if (progress >= 100) {
-                            // DIRECT AUTH
-                            performAuth();
+                            // SNAPSHOT MODE: Trigger capture
+                            captureAndAuth();
                         }
                     }
                 } else {
@@ -215,29 +224,51 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             }
         };
 
-        const performAuth = async () => {
+        const captureAndAuth = async () => {
             if (!videoRef.current || isProcessing) return;
+
+            // 1. Flash effect
+            setIsCapturing(true);
+            soundService.play('camera');
+
+            // 2. Capture frame to canvas
+            const canvas = document.createElement('canvas');
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                // Mirror the image because video is mirrored
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+                ctx.drawImage(videoRef.current, 0, 0);
+            }
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            setCapturedImage(dataUrl);
+
+            // 3. Stop background loop and start processing
             setIsProcessing(true);
-            setGuidance('Xác thực...');
+            setGuidance('Đang phân tích ảnh...');
+
+            setTimeout(() => {
+                setIsCapturing(false);
+            }, 300);
 
             try {
-                // ALL STEPS now use TinyFaceDetector for maximum speed
+                // Perform deep auth on the captured image
+                const img = await faceService.base64ToImage(dataUrl);
                 const allDetections = await faceapi.detectAllFaces(
-                    videoRef.current,
+                    img,
                     new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 })
                 )
                     .withFaceLandmarks()
                     .withFaceDescriptors();
 
                 if (allDetections.length > 0) {
-                    // SORT by area descending: Most prominent (closest) face first
                     const sortedDetections = [...allDetections].sort((a, b) =>
                         (b.detection.box.width * b.detection.box.height) - (a.detection.box.width * a.detection.box.height)
                     );
 
                     let bestMatch = null;
-
-                    // Try matching sorted faces
                     for (const det of sortedDetections) {
                         const match = faceService.faceMatcher.findMatch(det.descriptor, CONFIDENCE_THRESHOLD);
                         if (match) {
@@ -278,14 +309,10 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 setLockoutTime(Date.now() + 60000);
                 setError('Quá 5 lần thử. Vui lòng thử lại sau.');
             } else {
-                setGuidance(`Không khớp. Thử lại lần ${newAttempts}/5`);
+                setGuidance(`Không khớp khuôn mặt.`);
             }
-
-            setTimeout(() => {
-                setIsProcessing(false);
-                stableStartTimeRef.current = null;
-                setStabilityProgress(0);
-            }, 1000); // Faster retry
+            setIsProcessing(false);
+            // No auto-reset
         };
 
         loop();
@@ -305,6 +332,9 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             setStabilityProgress(0);
             setDetectedPerson(null);
             setError(null);
+            setCapturedImage(null);
+            setIsCapturing(false);
+            setIsProcessing(false);
         }
     }, [isOpen]);
 
@@ -335,51 +365,29 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
             {/* Main Content */}
             <div className="flex-1 flex flex-col items-center justify-center p-4 relative">
-                {/* Loading State */}
-                {isLoading && (
-                    <div className="text-center">
-                        <div className="w-20 h-20 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-3xl flex items-center justify-center mx-auto mb-6 animate-pulse shadow-2xl shadow-indigo-500/30">
-                            <Loader2 className="w-10 h-10 text-white animate-spin" />
-                        </div>
-                        <h3 className="text-xl font-bold text-white mb-2">{guidance}</h3>
-                        <p className="text-slate-400 text-sm">Vui lòng chờ...</p>
-
-                        {/* Loading Steps */}
-                        <div className="mt-8 space-y-3 max-w-xs mx-auto">
-                            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl ${modelsReady ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
-                                {modelsReady ? (
-                                    <CheckCircle className="w-5 h-5 text-emerald-400" />
-                                ) : (
-                                    <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin" />
-                                )}
-                                <span className={`text-sm font-medium ${modelsReady ? 'text-emerald-400' : 'text-white'}`}>
-                                    {modelsReady ? 'AI đã sẵn sàng' : 'Đang tải AI nhận diện...'}
-                                </span>
-                            </div>
-                            <div className={`flex items-center gap-3 px-4 py-3 rounded-xl ${usersLoaded ? 'bg-emerald-500/20 border border-emerald-500/30' : 'bg-white/10 border border-white/10'}`}>
-                                {usersLoaded ? (
-                                    <CheckCircle className="w-5 h-5 text-emerald-400" />
-                                ) : (
-                                    <RefreshCw className="w-5 h-5 text-indigo-400 animate-spin" />
-                                )}
-                                <span className={`text-sm font-medium ${usersLoaded ? 'text-emerald-400' : 'text-white'}`}>
-                                    {usersLoaded ? 'Dữ liệu khuôn mặt sẵn sàng' : 'Đang đồng bộ dữ liệu...'}
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                )}
-
-                {/* Camera View */}
-                {!isLoading && !loginSuccess && (
+                {/* Direct Camera View - No more blocking Loading Screen */}
+                {!loginSuccess && (
                     <div className="relative w-full max-w-sm aspect-[3/4] rounded-2xl overflow-hidden bg-black border-2 border-white/10">
-                        <video
-                            ref={videoRef}
-                            autoPlay
-                            playsInline
-                            muted
-                            className="w-full h-full object-cover scale-x-[-1]"
-                        />
+                        {capturedImage ? (
+                            <img
+                                src={capturedImage}
+                                className="w-full h-full object-cover"
+                                alt="Captured face"
+                            />
+                        ) : (
+                            <video
+                                ref={videoRef}
+                                autoPlay
+                                playsInline
+                                muted
+                                className="w-full h-full object-cover scale-x-[-1]"
+                            />
+                        )}
+
+                        {/* Flash Effect */}
+                        {isCapturing && (
+                            <div className="absolute inset-0 bg-white z-[50] animate-in fade-in out-fade duration-300" />
+                        )}
 
                         {/* Face Frame Overlay */}
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
@@ -451,6 +459,17 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                                 <span className="text-sm font-medium">{error}</span>
                             </div>
                         )}
+                        {/* Small Loading Overlay if AI not ready or processing */}
+                        {(isLoading || isProcessing) && (
+                            <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px] flex items-center justify-center z-[30]">
+                                <div className="bg-slate-900/80 border border-white/10 rounded-2xl p-4 flex items-center gap-3">
+                                    <Loader2 className="w-5 h-5 text-indigo-400 animate-spin" />
+                                    <span className="text-xs text-white font-medium">
+                                        {isProcessing ? 'Đang xác thực...' : 'Đang tải cấu hình AI...'}
+                                    </span>
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -472,10 +491,26 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 <div className="fixed inset-0 bg-white z-[110] animate-pulse pointer-events-none opacity-40 shadow-[inset_0_0_100px_rgba(255,255,255,1)]" />
             )}
 
-            {/* Footer - Switch to Email Login */}
+            {/* Footer - Switch to Email Login or Retry */}
             {!loginSuccess && (
                 <div className="p-6 text-center z-20">
                     <div className="flex flex-col items-center gap-4">
+                        {capturedImage && !isProcessing && (
+                            <button
+                                onClick={() => {
+                                    setCapturedImage(null);
+                                    stableStartTimeRef.current = null;
+                                    setStabilityProgress(0);
+                                    setIsProcessing(false);
+                                    setGuidance('Đưa khuôn mặt vào khung hình');
+                                }}
+                                className="w-full inline-flex items-center justify-center gap-2 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-2xl font-bold transition-all shadow-xl shadow-indigo-500/20 active:scale-95"
+                            >
+                                <RefreshCw className="w-5 h-5" />
+                                Nhận diện lại
+                            </button>
+                        )}
+
                         <label className="flex items-center gap-2 text-white/60 text-sm mb-2 cursor-pointer group">
                             <input
                                 type="checkbox"

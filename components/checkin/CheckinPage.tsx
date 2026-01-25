@@ -193,8 +193,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 return prev;
             }
 
-            // Keep last 15
-            return [checkin, ...prev.slice(0, 14)];
+            // Keep last 30 for better history
+            return [checkin, ...prev.slice(0, 29)];
         });
     };
 
@@ -256,54 +256,53 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     console.log('👥 Loaded participants:', loadedParticipants.length, loadedParticipants.map(p => ({ name: p.full_name, hasAvatar: !!p.avatar_url, avatarLength: p.avatar_url?.length || 0 })));
                     setParticipants(loadedParticipants);
 
-                    // Generate face descriptors SEQUENTIALLY with progress tracking
-                    const participantsWithAvatars = loadedParticipants.filter(p => p.avatar_url);
+                    // NEW: Optimized loading of descriptors via cache/Supabase
+                    setLoadingProgress({ current: 0, total: loadedParticipants.length });
 
-                    // Initialize progress
-                    setLoadingProgress({ current: 0, total: participantsWithAvatars.length });
+                    const participantIds = loadedParticipants.map(p => p.id);
+                    const systemUserIds = loadedParticipants.filter(p => p.user_id).map(p => p.user_id!);
+
+                    // Fetch descriptors for both participant IDs and system user IDs
+                    const [participantDescs, userDescs] = await Promise.all([
+                        dataService.getFaceDescriptors(participantIds),
+                        dataService.getFaceDescriptors(systemUserIds)
+                    ]);
+
                     let loadedCount = 0;
-
-                    // Process SEQUENTIALLY so we can show real progress (and avoid overwhelming browser)
-                    for (let i = 0; i < participantsWithAvatars.length; i++) {
-                        const participant = participantsWithAvatars[i];
-                        try {
-                            // OPTIMIZATION: Try to use cached face_descriptor first (MUCH FASTER)
-                            if (participant.face_descriptor) {
-                                try {
-                                    const descriptor = stringToDescriptor(participant.face_descriptor);
-                                    faceMatcher.addFace(participant.id, descriptor, participant.full_name);
-                                    participant.hasFaceDescriptor = true;
-                                    console.log(`⚡ Used cached descriptor for ${participant.full_name}`);
-                                    loadedCount++;
-                                    setLoadingProgress({ current: i + 1, total: participantsWithAvatars.length });
-                                    continue;
-                                } catch (e) {
-                                    console.warn(`⚠️ Invalid cached descriptor for ${participant.full_name}, will recompute`);
-                                }
-                            }
-
-                            // Fallback: Compute from Image (SLOW) & Save to DB
-                            const img = await base64ToImage(participant.avatar_url!);
-                            const descriptor = await faceService.getFaceDescriptor(img);
-                            if (descriptor) {
-                                faceMatcher.addFace(participant.id, descriptor, participant.full_name);
-                                participant.hasFaceDescriptor = true;
+                    loadedParticipants.forEach(p => {
+                        const descStr = participantDescs.data?.[p.id] || (p.user_id ? userDescs.data?.[p.user_id] : null);
+                        if (descStr) {
+                            try {
+                                const descriptor = stringToDescriptor(descStr);
+                                faceMatcher.addFace(p.id, descriptor, p.full_name);
+                                p.hasFaceDescriptor = true;
                                 loadedCount++;
-
-                                // OPTIMIZATION: Save computed descriptor to DB for next time
-                                const descriptorStr = descriptorToString(descriptor);
-                                // Run in background, don't await
-                                dataService.updateParticipantFaceDescriptor(participant.id, descriptorStr)
-                                    .then(res => {
-                                        if (res.success) console.log(`💾 Saved face descriptor for ${participant.full_name}`);
-                                    });
-                            }
-                        } catch (err) {
-                            console.error(`❌ Failed to load face for ${participant.full_name}:`, err);
+                            } catch (e) { }
                         }
+                    });
 
-                        // Update progress
-                        setLoadingProgress({ current: i + 1, total: participantsWithAvatars.length });
+                    console.log(`✅ Loaded ${loadedCount}/${loadedParticipants.length} face descriptors optimized`);
+                    setLoadingProgress({ current: loadedCount, total: loadedParticipants.length });
+
+                    // Fallback for missing descriptors (still compute if avatar exists)
+                    const missingDescriptors = loadedParticipants.filter(p => !p.hasFaceDescriptor && p.avatar_url);
+                    if (missingDescriptors.length > 0) {
+                        console.log(`🔄 Re-computing ${missingDescriptors.length} missing descriptors...`);
+                        for (let i = 0; i < missingDescriptors.length; i++) {
+                            const p = missingDescriptors[i];
+                            try {
+                                const img = await base64ToImage(p.avatar_url!);
+                                const descriptor = await faceService.getFaceDescriptor(img);
+                                if (descriptor) {
+                                    faceMatcher.addFace(p.id, descriptor, p.full_name);
+                                    p.hasFaceDescriptor = true;
+                                    loadedCount++;
+                                    // Save back for future use
+                                    dataService.updateParticipantFaceDescriptor(p.id, descriptorToString(descriptor));
+                                }
+                            } catch (e) { }
+                            setLoadingProgress({ current: loadedCount, total: loadedParticipants.length });
+                        }
                     }
 
                     console.log(`✅ Total: Loaded ${loadedCount} face descriptors for ${loadedParticipants.length} participants`);
@@ -370,7 +369,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     });
                     setCheckedInUserIds(checkedInIds);
 
-                    const mapped = result.data.slice(0, 15).map(c => ({
+                    const mapped = result.data.slice(0, 30).map(c => ({
                         name: c.participants?.full_name || 'Unknown',
                         time: new Date(c.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase(),
                         image: c.participants?.avatar_url,
@@ -426,21 +425,14 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         return;
                     }
 
-                    // Update cooldown for check-ins from OTHER devices
-                    if (pId) {
-                        checkinCooldownsRef.current.set(pId, now);
+                    // Update cooldown and count for check-ins from OTHER devices
+                    const checkinId = pId || uId;
+                    if (checkinId) {
+                        checkinCooldownsRef.current.set(checkinId, now);
                         setCheckedInUserIds(prev => {
+                            if (prev.has(checkinId)) return prev;
                             const next = new Set(prev);
-                            next.add(pId);
-                            return next;
-                        });
-                    }
-                    if (uId) {
-                        checkinCooldownsRef.current.set(uId, now);
-                        // Also add uId just in case some components match by user_id
-                        setCheckedInUserIds(prev => {
-                            const next = new Set(prev);
-                            next.add(uId);
+                            next.add(checkinId);
                             return next;
                         });
                     }
@@ -1800,7 +1792,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 </div>
 
                 {/* Recent Check-ins */}
-                <div className="flex-1 overflow-hidden">
+                <div className="flex-1 overflow-hidden flex flex-col">
                     <h3 className="text-slate-400 text-sm font-bold uppercase tracking-wider mb-4">Check-in gần đây</h3>
                     {/* Recent Check-ins List */}
                     <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">

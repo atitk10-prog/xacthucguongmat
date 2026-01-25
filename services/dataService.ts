@@ -679,7 +679,7 @@ async function getUsers(options?: {
         const isPaging = options?.page !== undefined && options?.pageSize !== undefined;
 
         let query = supabase.from('users').select(
-            'id, full_name, email, role, avatar_url, status, student_code, organization, created_at, birth_date, room_id, face_descriptor, total_points',
+            'id, full_name, email, role, avatar_url, status, student_code, organization, created_at, birth_date, room_id, total_points', // Removed face_descriptor
             { count: isPaging ? 'exact' : undefined }
         );
 
@@ -717,6 +717,62 @@ async function getUsers(options?: {
         return { success: true, data: result };
     } catch (err) {
         return { success: false, error: 'Lỗi tải danh sách người dùng' };
+    }
+}
+
+/**
+ * Lấy face_descriptor cho danh sách IDs, có sử dụng IndexedDB cache
+ */
+async function getFaceDescriptors(userIds: string[]): Promise<ApiResponse<Record<string, string>>> {
+    try {
+        const { indexedDBService } = await import('./indexedDB');
+        const results: Record<string, string> = {};
+        const missingIds: string[] = [];
+
+        // 1. Check IndexedDB first
+        for (const id of userIds) {
+            const cached = await indexedDBService.getDescriptor(id);
+            if (cached && cached.descriptor) {
+                results[id] = cached.descriptor;
+            } else {
+                missingIds.push(id);
+            }
+        }
+
+        if (missingIds.length === 0) return { success: true, data: results };
+
+        // 2. Fetch missing from Supabase in batches of 100
+        const batchSize = 100;
+        for (let i = 0; i < missingIds.length; i += batchSize) {
+            const batch = missingIds.slice(i, i + batchSize);
+            const { data, error } = await supabase
+                .from('users')
+                .select('id, face_descriptor, avatar_url, created_at')
+                .in('id', batch)
+                .not('face_descriptor', 'is', null);
+
+            if (error) console.warn('Fetch descriptors batch error:', error);
+
+            if (data) {
+                const toCache: any[] = [];
+                data.forEach(item => {
+                    results[item.id] = item.face_descriptor;
+                    toCache.push({
+                        id: item.id,
+                        avatar_url: item.avatar_url || '',
+                        descriptor: item.face_descriptor,
+                        updated_at: item.created_at
+                    });
+                });
+                // Update Cache in background
+                indexedDBService.saveBatchDescriptors(toCache).catch(e => console.error('Cache batch update failed:', e));
+            }
+        }
+
+        return { success: true, data: results };
+    } catch (err: any) {
+        console.error('getFaceDescriptors error:', err);
+        return { success: false, error: err.message };
     }
 }
 
@@ -875,7 +931,7 @@ async function getAllStudentsForCheckin(requireFaceId: boolean = true): Promise<
     try {
         let query = supabase
             .from('users')
-            .select('id, full_name, email, avatar_url, student_code, organization, face_descriptor, role, birth_date, room_id'); // Added email and room_id
+            .select('id, full_name, email, avatar_url, student_code, organization, role, birth_date, room_id'); // Removed face_descriptor
 
         if (requireFaceId) {
             query = query.not('face_descriptor', 'is', null);
@@ -1852,6 +1908,26 @@ async function getRecentBoardingActivity(options?: {
         };
     } catch (err) {
         return { success: false, error: 'Lỗi tải danh sách check-in' };
+    }
+}
+
+// Fetch raw boarding logs (not grouped) for sidebar
+async function getRecentBoardingLogs(limit: number = 30): Promise<ApiResponse<any[]>> {
+    try {
+        const { data, error } = await supabase
+            .from('boarding_attendance')
+            .select(`
+                *,
+                user:users!user_id(full_name, avatar_url, student_code, organization),
+                slot:boarding_time_slots!slot_id(name)
+            `)
+            .order('checkin_time', { ascending: false })
+            .limit(limit);
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data };
+    } catch (err) {
+        return { success: false, error: 'Lỗi tải lịch sử điểm danh' };
     }
 }
 
@@ -3228,6 +3304,7 @@ export const dataService = {
 
     // Users
     getUsers,
+    getFaceDescriptors,
     getUser,
     createUser,
     updateUser,
@@ -3269,6 +3346,7 @@ export const dataService = {
     getOfflineQueueLength,
     getBoardingCheckins,
     getRecentBoardingActivity,
+    getRecentBoardingLogs,
     getBoardingConfig,
     updateBoardingConfig,
     getTeacherPermissions,
