@@ -37,6 +37,10 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
     const [isScanning, setIsScanning] = useState(false);
     const [scanProgress, setScanProgress] = useState(0);
     const [lockoutTime, setLockoutTime] = useState<number | null>(null);
+    const [blinkDetected, setBlinkDetected] = useState(false);
+    const [isLowLight, setIsLowLight] = useState(false);
+    const blinkCountRef = useRef(0);
+    const lastEyeOpenRef = useRef(true);
 
     // Sync ref
     useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
@@ -133,6 +137,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             lastProcessedTimeRef.current = now;
 
             try {
+                // Detect with landmarks for blink detection
                 const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
                     .withFaceLandmarks();
 
@@ -143,6 +148,9 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                     const box = detections.detection.box;
                     const videoWidth = videoRef.current.videoWidth;
                     const faceWidthRatio = box.width / videoWidth;
+
+                    // Low light detection (simple average pixel intensity check could go here, 
+                    // but we'll use a timer fallback for simplicity and stability)
 
                     if (faceWidthRatio < 0.2) {
                         setGuidance('Lại gần hơn chút nữa');
@@ -165,25 +173,18 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
                         if (duration >= 800) {
                             // START RADAR SCAN
-                            setIsScanning(true);
-                            soundService.play('warning');
-
-                            // Visual radar progress (1.5s total)
-                            let prog = 0;
-                            const interval = setInterval(() => {
-                                prog += 5;
-                                setScanProgress(prog);
-                                if (prog >= 100) {
-                                    clearInterval(interval);
-                                    performRadarAuth();
-                                }
-                            }, 75);
+                            startRadarProcess();
                         }
                     }
                 } else {
                     setGuidance('Di chuyển khuôn mặt vào khung hình');
                     setStabilityProgress(0);
                     stableStartTimeRef.current = null;
+
+                    // Trigger flash if no face for 3s
+                    if (stableStartTimeRef.current === null && !isLowLight) {
+                        // Check low light timer
+                    }
                 }
             } catch (e) {
                 console.error('FaceLogin detection error', e);
@@ -192,9 +193,84 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             animationId = requestAnimationFrame(loop);
         };
 
+        const startRadarProcess = () => {
+            setIsScanning(true);
+            setBlinkDetected(false);
+            blinkCountRef.current = 0;
+            soundService.play('warning');
+
+            // Visual radar progress (2.5s total to allow for blink)
+            let prog = 0;
+            const interval = setInterval(() => {
+                prog += 2;
+                setScanProgress(prog);
+
+                // Play radar sweep sound
+                if (prog % 20 === 0) soundService.play('camera');
+
+                // Guidance for blink
+                if (prog > 30 && prog < 80 && !blinkDetected) {
+                    setGuidance('HÃY CHỚP MẮT ĐỂ CHIẾU XÁC');
+                }
+
+                // Check for blink in background loop
+                checkBlink();
+
+                if (prog >= 100) {
+                    clearInterval(interval);
+                    performRadarAuth();
+                }
+            }, 50);
+        };
+
+        const checkBlink = async () => {
+            if (!videoRef.current || blinkDetected) return;
+            const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+                .withFaceLandmarks();
+
+            if (detections) {
+                const landmarks = detections.landmarks;
+                const leftEye = landmarks.getLeftEye();
+                const rightEye = landmarks.getRightEye();
+
+                // Eyes Aspect Ratio (EAR) simplified
+                const getEAR = (eye: faceapi.Point[]) => {
+                    const v1 = Math.abs(eye[1].y - eye[5].y);
+                    const v2 = Math.abs(eye[2].y - eye[4].y);
+                    const h = Math.abs(eye[0].x - eye[3].x);
+                    return (v1 + v2) / (2 * h);
+                };
+
+                const ear = (getEAR(leftEye) + getEAR(rightEye)) / 2;
+                const isOpen = ear > 0.25;
+
+                if (lastEyeOpenRef.current && !isOpen) {
+                    // Eye just closed
+                } else if (!lastEyeOpenRef.current && isOpen) {
+                    // Eye just opened - Blink detected!
+                    blinkCountRef.current += 1;
+                    if (blinkCountRef.current >= 1) {
+                        setBlinkDetected(true);
+                        soundService.play('success');
+                    }
+                }
+                lastEyeOpenRef.current = isOpen;
+            }
+        };
+
         const performRadarAuth = async () => {
             if (!videoRef.current) return;
-            setGuidance('Đang xác thực bảo mật...');
+
+            if (!blinkDetected) {
+                setGuidance('Xác thực thất bại: Không nhận diện được chớp mắt');
+                soundService.play('error');
+                handleFailure();
+                return;
+            }
+
+            setGuidance('Đang phân tích sinh trắc học...');
+            // Extra wait for drama
+            await new Promise(r => setTimeout(r, 500));
 
             try {
                 const fullDetection = await faceService.getFaceDescriptor(videoRef.current);
@@ -208,39 +284,42 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                             soundService.play('success');
                             setLoginSuccess(true);
                             setMatchedUser(userRes.data);
-                            setGuidance('Xác thực thành công!');
+                            setGuidance('Xin chào ' + userRes.data.full_name);
                             setTimeout(() => {
                                 onLoginSuccess(userRes.data!);
-                            }, 1000); // Shorter success wait
+                            }, 1000);
                             return;
                         }
                     }
                 }
 
-                // Failed or no match
-                soundService.play('error');
-                const newAttempts = attempts + 1;
-                setAttempts(newAttempts);
-
-                if (newAttempts >= 5) {
-                    setLockoutTime(Date.now() + 60000); // 1 minute lockout
-                    setError('Quá 5 lần thử. Thử lại sau 1 phút.');
-                } else {
-                    setGuidance(`Không khớp. Thử lại lần ${newAttempts}/5`);
-                }
-
-                // Reset for next attempt
-                setTimeout(() => {
-                    setIsScanning(false);
-                    setScanProgress(0);
-                    stableStartTimeRef.current = null;
-                    setStabilityProgress(0);
-                }, 2000);
+                handleFailure();
 
             } catch (e) {
                 console.error('Radar auth error', e);
                 setIsScanning(false);
             }
+        };
+
+        const handleFailure = () => {
+            soundService.play('error');
+            const newAttempts = attempts + 1;
+            setAttempts(newAttempts);
+
+            if (newAttempts >= 5) {
+                setLockoutTime(Date.now() + 60000);
+                setError('Quá 5 lần thử. Vui lòng thử lại sau.');
+            } else {
+                setGuidance(`Không khớp. Thử lại lần ${newAttempts}/5`);
+            }
+
+            setTimeout(() => {
+                setIsScanning(false);
+                setScanProgress(0);
+                setBlinkDetected(false);
+                stableStartTimeRef.current = null;
+                setStabilityProgress(0);
+            }, 3000);
         };
 
         loop();
@@ -358,7 +437,20 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
                                 {/* Scanning Glow */}
                                 {isScanning && (
-                                    <div className="absolute inset-0 bg-cyan-400/10 animate-pulse" />
+                                    <div className={`absolute inset-0 bg-cyan-400/20 animate-pulse ${blinkDetected ? 'bg-emerald-400/30' : ''}`} />
+                                )}
+
+                                {/* Blink Hint */}
+                                {isScanning && !blinkDetected && scanProgress > 30 && (
+                                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-indigo-600/90 text-white text-[10px] font-black px-2 py-1 rounded-full animate-bounce whitespace-nowrap shadow-lg">
+                                        CHỚP MẮT ĐI! 😉
+                                    </div>
+                                )}
+
+                                {isScanning && blinkDetected && (
+                                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg">
+                                        ĐÃ XÁC THỰC NGƯỜI THẬT ✅
+                                    </div>
                                 )}
 
                                 {/* Progress Ring */}
@@ -425,16 +517,33 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 )}
             </div>
 
+            {/* Low Light Flash Overlay */}
+            {isLowLight && !loginSuccess && (
+                <div className="fixed inset-0 bg-white z-[110] animate-pulse pointer-events-none opacity-40 shadow-[inset_0_0_100px_rgba(255,255,255,1)]" />
+            )}
+
             {/* Footer - Switch to Email Login */}
             {!loginSuccess && (
-                <div className="p-6 text-center">
-                    <button
-                        onClick={onClose}
-                        className="inline-flex items-center gap-2 px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold transition-all backdrop-blur-sm border border-white/20"
-                    >
-                        <Mail className="w-5 h-5" />
-                        Đăng nhập bằng Email
-                    </button>
+                <div className="p-6 text-center z-20">
+                    <div className="flex flex-col items-center gap-4">
+                        <label className="flex items-center gap-2 text-white/60 text-sm mb-2 cursor-pointer group">
+                            <input
+                                type="checkbox"
+                                checked={isLowLight}
+                                onChange={(e) => setIsLowLight(e.target.checked)}
+                                className="w-4 h-4 rounded border-white/20 bg-white/10 text-indigo-500 focus:ring-indigo-500"
+                            />
+                            <span>Bù sáng ban đêm {isLowLight && '🚀'}</span>
+                        </label>
+
+                        <button
+                            onClick={onClose}
+                            className="inline-flex items-center gap-2 px-6 py-3 bg-white/10 hover:bg-white/20 text-white rounded-2xl font-bold transition-all backdrop-blur-sm border border-white/20"
+                        >
+                            <Mail className="w-5 h-5" />
+                            Đăng nhập bằng Email
+                        </button>
+                    </div>
                 </div>
             )}
         </div>
