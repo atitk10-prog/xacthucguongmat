@@ -414,7 +414,7 @@ const FaceIDManagement: React.FC<FaceIDManagementProps> = ({ onBack }) => {
             {/* Users Table */}
             <div className="bg-white rounded-2xl md:rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
                 <div className="overflow-x-auto">
-                    <table className="w-full min-w-[1000px] md:min-w-0">
+                    <table className="w-full min-w-[700px] md:min-w-0">
                         <thead className="bg-slate-50 border-b border-slate-100">
                             <tr>
                                 <th className="px-4 py-3 text-left text-xs font-bold text-slate-400 uppercase">Họ tên / Ảnh</th>
@@ -432,18 +432,18 @@ const FaceIDManagement: React.FC<FaceIDManagementProps> = ({ onBack }) => {
                                     <tr key={user.id} className="hover:bg-slate-50 transition-colors">
                                         <td className="px-4 py-3">
                                             <div className="flex items-center gap-3">
-                                                <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-100 border border-slate-200">
+                                                <div className="w-10 h-10 rounded-xl overflow-hidden bg-slate-100 border border-slate-200 flex-shrink-0">
                                                     {user.avatar_url ? (
                                                         <img src={user.avatar_url} alt={user.full_name} className="w-full h-full object-cover" />
                                                     ) : (
                                                         <div className="w-full h-full flex items-center justify-center text-slate-300">
-                                                            <Icons.User className="w-6 h-6" />
+                                                            <Icons.User className="w-5 h-5" />
                                                         </div>
                                                     )}
                                                 </div>
-                                                <div>
-                                                    <p className="font-bold text-slate-900">{user.full_name}</p>
-                                                    <p className="text-xs text-slate-500">{user.email}</p>
+                                                <div className="min-w-0">
+                                                    <p className="font-bold text-slate-900 truncate">{user.full_name}</p>
+                                                    <p className="text-xs text-slate-500 truncate">{user.email}</p>
                                                 </div>
                                             </div>
                                         </td>

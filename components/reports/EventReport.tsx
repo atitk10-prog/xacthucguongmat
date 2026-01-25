@@ -523,8 +523,8 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                                     </div>
 
                                     {/* Table */}
-                                    <div className="overflow-hidden rounded-2xl border border-slate-100">
-                                        <table className="w-full">
+                                    <div className="overflow-x-auto rounded-2xl border border-slate-100">
+                                        <table className="w-full min-w-[700px]">
                                             <thead>
                                                 <tr className="bg-slate-50 text-left border-b border-slate-100">
                                                     <th className="px-6 py-4 text-xs font-black text-slate-400 uppercase tracking-wider">STT</th>

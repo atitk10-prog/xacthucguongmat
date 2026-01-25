@@ -85,7 +85,7 @@ const TimeInput = ({ value, onChange }: { value: string, onChange: (val: string)
     };
 
     return (
-        <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-4 w-fit h-[58px]">
+        <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-2xl px-4 py-4 w-full sm:w-fit h-[58px] justify-center sm:justify-start">
             <input
                 type="number" min="1" max="12"
                 value={displayH}
@@ -858,7 +858,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
 
                                 <div>
                                     <label className="block text-xs font-black text-slate-400 uppercase mb-2">Bắt đầu *</label>
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-col sm:flex-row gap-2">
                                         <input
                                             type="date"
                                             required
@@ -868,7 +868,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                                 const time = formData.start_time && formData.start_time.includes('T') ? formData.start_time.split('T')[1] : '07:00';
                                                 setFormData({ ...formData, start_time: `${date}T${time}` });
                                             }}
-                                            className="flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                            className="w-full sm:flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                                         />
                                         <TimeInput
                                             value={formData.start_time && formData.start_time.includes('T') ? formData.start_time.split('T')[1] : '07:00'}
@@ -882,7 +882,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
 
                                 <div>
                                     <label className="block text-xs font-black text-slate-400 uppercase mb-2">Kết thúc *</label>
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-col sm:flex-row gap-2">
                                         <input
                                             type="date"
                                             required
@@ -892,7 +892,7 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                                 const time = formData.end_time && formData.end_time.includes('T') ? formData.end_time.split('T')[1] : '17:00';
                                                 setFormData({ ...formData, end_time: `${date}T${time}` });
                                             }}
-                                            className="flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
+                                            className="w-full sm:flex-1 px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium"
                                         />
                                         <TimeInput
                                             value={formData.end_time && formData.end_time.includes('T') ? formData.end_time.split('T')[1] : '17:00'}
@@ -928,8 +928,8 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                         </div>
                                     </div>
 
-                                    <div className="md:col-span-3 mb-4 flex justify-between items-end">
-                                        <div>
+                                    <div className="md:col-span-3 mb-4 flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4">
+                                        <div className="flex-1">
                                             <label className="block text-xs font-black text-slate-400 uppercase mb-2">Thời gian đi muộn (phút)</label>
                                             <input
                                                 type="number"
@@ -947,11 +947,11 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                         <button
                                             type="button"
                                             onClick={handleLoadSystemDefaults}
-                                            className="ml-4 px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-sm transition-colors flex items-center gap-2 whitespace-nowrap"
+                                            className="w-full sm:w-auto px-4 py-4 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold text-sm transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
                                             title="Tải lại cấu hình mặc định từ hệ thống"
                                         >
                                             <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>
-                                            Tải từ cấu hình hệ thống
+                                            Tải từ hệ thống
                                         </button>
                                     </div>
 

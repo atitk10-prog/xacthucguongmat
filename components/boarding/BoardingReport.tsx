@@ -136,10 +136,10 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
     const getStatusBadge = (status?: string) => {
         if (!status) return null;
         if (status === 'on_time') {
-            return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-xs font-bold"><CheckCircle className="w-3 h-3" /> Đúng giờ</span>;
+            return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] sm:text-xs font-bold whitespace-nowrap"><CheckCircle className="w-2.5 h-2.5 sm:w-3 h-3" /> Đúng giờ</span>;
         }
         if (status === 'late') {
-            return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-xs font-bold"><AlertTriangle className="w-3 h-3" /> Trễ</span>;
+            return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[10px] sm:text-xs font-bold whitespace-nowrap"><AlertTriangle className="w-2.5 h-2.5 sm:w-3 h-3" /> Trễ</span>;
         }
         return null;
     };
@@ -276,10 +276,10 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
         if (!timeIn) return <span className="text-slate-300">-</span>;
 
         return (
-            <>
-                <span className="text-slate-900">{formatTime(timeIn)}</span>
+            <div className="flex flex-col items-center gap-1">
+                <span className="text-slate-900 font-medium">{formatTime(timeIn)}</span>
                 {getStatusBadge(status)}
-            </>
+            </div>
         );
     };
 
