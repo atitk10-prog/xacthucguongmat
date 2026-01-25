@@ -69,9 +69,9 @@ export async function loadModels(): Promise<void> {
     modelsLoading = true;
 
     try {
-        console.log('🔄 Loading face models (ssdMobilenetv1 + Recognition)...');
         await Promise.all([
-            faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),    // ACCURATE detection (like old version)
+            faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),    // ACCURATE detection
+            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), // TINY/FAST detection for tracking
             faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), // ACCURATE landmarks
             faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL) // Recognition
         ]);

@@ -64,27 +64,28 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 setModelsReady(true);
 
                 // 3. Load Users in background WITHOUT blocking
-                setGuidance('Đưa khuôn mặt vào khung hình');
-                dataService.getUsers({ status: 'active' }).then(response => {
+                setGuidance('Đang đồng bộ dữ liệu...');
+                const currentCount = faceService.faceMatcher.getCount();
+
+                // Only reload if we have no users cached
+                if (currentCount === 0) {
+                    const response = await dataService.getUsers({ status: 'active' });
                     if (response.success && response.data) {
                         faceService.faceMatcher.clearAll();
-                        let count = 0;
                         for (const user of response.data) {
                             if (user.face_descriptor) {
                                 try {
                                     const descriptor = faceService.stringToDescriptor(user.face_descriptor);
                                     if (descriptor.length > 0) {
                                         faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
-                                        count++;
                                     }
                                 } catch (e) { }
                             }
                         }
-                        setUsersLoaded(true);
-                    } else {
-                        console.error('Failed to load face data');
                     }
-                });
+                }
+                setUsersLoaded(true);
+                setGuidance('Đưa khuôn mặt vào khung hình');
 
             } catch (err) {
                 console.error('FaceLogin init error:', err);
@@ -114,8 +115,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         if (!isOpen || !modelsReady || !videoRef.current || loginSuccess) return;
 
         let animationId: number;
-        const STABILITY_THRESHOLD = 300;
-        const PROCESSING_THROTTLE = 120; // 8 FPS - Perfect balance for weak devices
+        const STABILITY_THRESHOLD = 250; // Faster trigger
+        const PROCESSING_THROTTLE = 80; // 12 FPS - Smooth even on weak devices
         const CONFIDENCE_THRESHOLD = 42;
 
         const loop = async () => {
@@ -139,10 +140,13 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             lastProcessedTimeRef.current = now;
 
             try {
-                // Detect ALL faces but focus on the LARGEST one (closest to camera)
-                const allDets = await faceapi.detectAllFaces(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }));
+                // USE TINY FACE DETECTOR for ultra-fast tracking (No lag)
+                const allDets = await faceapi.detectAllFaces(
+                    videoRef.current,
+                    new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 })
+                );
 
-                // Pick the largest face by area (width * height)
+                // Pick the largest face
                 const detections = allDets.length > 0
                     ? allDets.sort((a, b) => (b.box.width * b.box.height) - (a.box.width * a.box.height))[0]
                     : null;
@@ -177,8 +181,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                         setStabilityProgress(progress);
 
                         if (progress >= 100) {
-                            // DIRECT AUTH - No Radar
-                            performRadarAuth();
+                            // DIRECT AUTH
+                            performAuth();
                         }
                     }
                 } else {
@@ -211,7 +215,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             }
         };
 
-        const performRadarAuth = async () => {
+        const performAuth = async () => {
             if (!videoRef.current || isProcessing) return;
             setIsProcessing(true);
             setGuidance('Xác thực...');
@@ -307,7 +311,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
     const isLoading = !modelsReady || !usersLoaded;
 
     return (
-        <div className="fixed inset-0 z-[100] bg-gradient-to-br from-slate-900 via-indigo-900 to-purple-900 flex flex-col animate-in fade-in duration-300">
+        <div className="fixed inset-0 z-[100] bg-slate-900 flex flex-col animate-in fade-in duration-200">
             {/* Header */}
             <div className="flex justify-between items-center p-4 relative z-10">
                 <div className="flex items-center gap-3">
@@ -336,7 +340,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                             <Loader2 className="w-10 h-10 text-white animate-spin" />
                         </div>
                         <h3 className="text-xl font-bold text-white mb-2">{guidance}</h3>
-                        <p className="text-indigo-300 text-sm">Vui lòng chờ trong giây lát...</p>
+                        <p className="text-slate-400 text-sm">Vui lòng chờ...</p>
 
                         {/* Loading Steps */}
                         <div className="mt-8 space-y-3 max-w-xs mx-auto">
@@ -366,7 +370,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
                 {/* Camera View */}
                 {!isLoading && !loginSuccess && (
-                    <div className="relative w-full max-w-sm md:max-w-md aspect-[3/4] rounded-2xl md:rounded-3xl overflow-hidden bg-black shadow-2xl border-2 md:border-4 border-white/20">
+                    <div className="relative w-full max-w-sm aspect-[3/4] rounded-2xl overflow-hidden bg-black border-2 border-white/10">
                         <video
                             ref={videoRef}
                             autoPlay
