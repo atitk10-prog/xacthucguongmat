@@ -139,8 +139,13 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             lastProcessedTimeRef.current = now;
 
             try {
-                // USE SIMPLEST DETECTION for weak devices (No Landmarks)
-                const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }));
+                // Detect ALL faces but focus on the LARGEST one (closest to camera)
+                const allDets = await faceapi.detectAllFaces(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }));
+
+                // Pick the largest face by area (width * height)
+                const detections = allDets.length > 0
+                    ? allDets.sort((a, b) => (b.box.width * b.box.height) - (a.box.width * a.box.height))[0]
+                    : null;
 
                 const hasFace = !!detections;
                 setFaceDetected(hasFace);
@@ -219,14 +224,19 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                     .withFaceDescriptors();
 
                 if (allDetections.length > 0) {
+                    // SORT by area descending: Most prominent (closest) face first
+                    const sortedDetections = [...allDetections].sort((a, b) =>
+                        (b.detection.box.width * b.detection.box.height) - (a.detection.box.width * a.detection.box.height)
+                    );
+
                     let bestMatch = null;
 
-                    // Try matching ALL detected faces
-                    for (const det of allDetections) {
+                    // Try matching sorted faces
+                    for (const det of sortedDetections) {
                         const match = faceService.faceMatcher.findMatch(det.descriptor, CONFIDENCE_THRESHOLD);
                         if (match) {
                             bestMatch = match;
-                            break; // Stop at first successful match
+                            break;
                         }
                     }
 
