@@ -212,16 +212,26 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             setGuidance('Xác thực...');
 
             try {
-                // IMPORTANT: Final auth step uses full landmarks + descriptor for maximum accuracy
-                const fullDetection = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+                // Multi-face support: Detect all faces in frame to find the right one
+                // This prevents issues where background photos/people interfere
+                const allDetections = await faceapi.detectAllFaces(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
                     .withFaceLandmarks()
-                    .withFaceDescriptor();
+                    .withFaceDescriptors();
 
-                if (fullDetection && fullDetection.descriptor) {
-                    const match = faceService.faceMatcher.findMatch(fullDetection.descriptor, CONFIDENCE_THRESHOLD);
+                if (allDetections.length > 0) {
+                    let bestMatch = null;
 
-                    if (match) {
-                        const userRes = await dataService.getUser(match.userId);
+                    // Try matching ALL detected faces
+                    for (const det of allDetections) {
+                        const match = faceService.faceMatcher.findMatch(det.descriptor, CONFIDENCE_THRESHOLD);
+                        if (match) {
+                            bestMatch = match;
+                            break; // Stop at first successful match
+                        }
+                    }
+
+                    if (bestMatch) {
+                        const userRes = await dataService.getUser(bestMatch.userId);
                         if (userRes.success && userRes.data) {
                             soundService.play('success');
                             setLoginSuccess(true);
