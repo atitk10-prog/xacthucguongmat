@@ -37,10 +37,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
     const [isScanning, setIsScanning] = useState(false);
     const [scanProgress, setScanProgress] = useState(0);
     const [lockoutTime, setLockoutTime] = useState<number | null>(null);
-    const [blinkDetected, setBlinkDetected] = useState(false);
     const [isLowLight, setIsLowLight] = useState(false);
-    const blinkCountRef = useRef(0);
-    const lastEyeOpenRef = useRef(true);
 
     // Sync ref
     useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
@@ -203,8 +200,6 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
         const startRadarProcess = () => {
             setIsScanning(true);
-            setBlinkDetected(false);
-            blinkCountRef.current = 0;
             soundService.play('warning');
 
             // Visual radar progress (2.5s total to allow for blink)
@@ -216,13 +211,13 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 // Play radar sweep sound
                 if (prog % 20 === 0) soundService.play('camera');
 
-                // Guidance for blink
-                if (prog > 30 && prog < 85 && !blinkDetected) {
-                    setGuidance('HÃY CHỚP MẮT ĐỂ XÁC MINH');
+                // Guidance
+                if (prog > 30 && prog < 85) {
+                    setGuidance('ĐANG XÁC THỰC DANH TÍNH...');
                 }
 
-                // Check for blink and face presence in background
-                checkBlinkAndPresence(interval);
+                // Check for face presence in background
+                checkPresence(interval);
 
                 if (prog >= 100) {
                     clearInterval(interval);
@@ -231,7 +226,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             }, 40);
         };
 
-        const checkBlinkAndPresence = async (interval: NodeJS.Timeout) => {
+        const checkPresence = async (interval: NodeJS.Timeout) => {
             if (!videoRef.current) return;
 
             const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
@@ -248,46 +243,10 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 setStabilityProgress(0);
                 return;
             }
-
-            if (blinkDetected) return;
-
-            const landmarks = detections.landmarks;
-            const leftEye = landmarks.getLeftEye();
-            const rightEye = landmarks.getRightEye();
-
-            // EAR Calculation
-            const getEAR = (eye: faceapi.Point[]) => {
-                const v1 = Math.abs(eye[1].y - eye[5].y);
-                const v2 = Math.abs(eye[2].y - eye[4].y);
-                const h = Math.abs(eye[0].x - eye[3].x);
-                return (v1 + v2) / (2 * h);
-            };
-
-            const ear = (getEAR(leftEye) + getEAR(rightEye)) / 2;
-            const isOpen = ear > 0.22; // Slightly more sensitive
-
-            if (lastEyeOpenRef.current && !isOpen) {
-                // Eye closing...
-            } else if (!lastEyeOpenRef.current && isOpen) {
-                // Eye opened - BLINK!
-                blinkCountRef.current += 1;
-                if (blinkCountRef.current >= 1) {
-                    setBlinkDetected(true);
-                    soundService.play('success');
-                }
-            }
-            lastEyeOpenRef.current = isOpen;
         };
 
         const performRadarAuth = async () => {
             if (!videoRef.current) return;
-
-            if (!blinkDetected) {
-                setGuidance('Xác thực thất bại: Không nhận diện được chớp mắt');
-                soundService.play('error');
-                handleFailure();
-                return;
-            }
 
             setGuidance('Đang phân tích sinh trắc học...');
             // Extra wait for drama
@@ -337,7 +296,6 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             setTimeout(() => {
                 setIsScanning(false);
                 setScanProgress(0);
-                setBlinkDetected(false);
                 stableStartTimeRef.current = null;
                 setStabilityProgress(0);
             }, 3000);
@@ -464,19 +422,13 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
                                 {/* Scanning Glow */}
                                 {isScanning && (
-                                    <div className={`absolute inset-0 bg-cyan-400/20 animate-pulse ${blinkDetected ? 'bg-emerald-400/30' : ''}`} />
+                                    <div className="absolute inset-0 bg-cyan-400/10 animate-pulse" />
                                 )}
 
                                 {/* Blink Hint */}
-                                {isScanning && !blinkDetected && scanProgress > 30 && (
-                                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 bg-indigo-600/90 text-white text-[10px] font-black px-2 py-1 rounded-full animate-bounce whitespace-nowrap shadow-lg">
-                                        CHỚP MẮT ĐI! 😉
-                                    </div>
-                                )}
-
-                                {isScanning && blinkDetected && (
-                                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-emerald-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg">
-                                        ĐÃ XÁC THỰC NGƯỜI THẬT ✅
+                                {isScanning && (
+                                    <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-indigo-500 text-white text-[8px] font-black px-2 py-0.5 rounded-full shadow-lg">
+                                        ĐANG PHÂN TÍCH...
                                     </div>
                                 )}
 
