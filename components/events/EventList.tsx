@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
 import { Event, EventStatus, EventType, User } from '../../types';
 import QRCode from 'qrcode';
+import { Users, Search, CheckCircle, XCircle, X, ChevronRight, Filter } from 'lucide-react';
+import { EventParticipant, EventCheckin } from '../../types';
 
 interface EventListProps {
     onSelectEvent: (event: Event) => void;
@@ -139,6 +141,15 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
     const [checkedInCounts, setCheckedInCounts] = useState<Record<string, number>>({});
     const [showQRModal, setShowQRModal] = useState<Event | null>(null);
     const [qrMode, setQrMode] = useState<'self' | 'staff'>('self');
+
+    // Attendance Detail States
+    const [showAttendanceDetail, setShowAttendanceDetail] = useState(false);
+    const [selectedEventForAttendance, setSelectedEventForAttendance] = useState<Event | null>(null);
+    const [attendanceParticipants, setAttendanceParticipants] = useState<EventParticipant[]>([]);
+    const [attendanceCheckins, setAttendanceCheckins] = useState<EventCheckin[]>([]);
+    const [isAttendanceLoading, setIsAttendanceLoading] = useState(false);
+    const [attendanceSearchTerm, setAttendanceSearchTerm] = useState('');
+    const [attendanceFilter, setAttendanceFilter] = useState<'all' | 'present' | 'absent'>('all');
 
     useEffect(() => {
         loadEvents();
@@ -300,6 +311,39 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
         }
     };
 
+    const openAttendanceModal = async (event: Event) => {
+        setSelectedEventForAttendance(event);
+        setShowAttendanceDetail(true);
+        setIsAttendanceLoading(true);
+        setAttendanceSearchTerm('');
+        setAttendanceFilter('all');
+
+        try {
+            // Fetch participants and check-ins in parallel
+            const [participantsRes, checkinsRes] = await Promise.all([
+                dataService.getEventParticipants(event.id),
+                dataService.getEventCheckins(event.id)
+            ]);
+
+            if (participantsRes.success && participantsRes.data) {
+                setAttendanceParticipants(participantsRes.data);
+            } else {
+                setAttendanceParticipants([]);
+            }
+
+            if (checkinsRes.success && checkinsRes.data) {
+                setAttendanceCheckins(checkinsRes.data);
+            } else {
+                setAttendanceCheckins([]);
+            }
+        } catch (error) {
+            console.error('Failed to load attendance details:', error);
+            setNotification({ type: 'error', message: 'Lỗi tải chi tiết điểm danh' });
+        } finally {
+            setIsAttendanceLoading(false);
+        }
+    };
+
     const toggleParticipant = (userId: string) => {
         setSelectedParticipants(prev =>
             prev.includes(userId)
@@ -360,6 +404,39 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
     if (isLoading) {
         return <div className="flex items-center justify-center h-64"><div className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin"></div></div>;
     }
+
+    const getAttendanceList = () => {
+        return attendanceParticipants.map(participant => {
+            // Find check-in for this participant
+            // Check both participant_id and user_id linkage
+            const checkin = attendanceCheckins.find(c =>
+                (c.participant_id && c.participant_id === participant.id) ||
+                (c.user_id && c.user_id === participant.user_id)
+            );
+
+            return {
+                ...participant,
+                isCheckedIn: !!checkin,
+                checkinInfo: checkin
+            };
+        }).filter(p => {
+            if (attendanceSearchTerm) {
+                const search = attendanceSearchTerm.toLowerCase();
+                return p.full_name.toLowerCase().includes(search) ||
+                    (p.student_code && p.student_code.toLowerCase().includes(search));
+            }
+            return true;
+        }).filter(p => {
+            if (attendanceFilter === 'present') return p.isCheckedIn;
+            if (attendanceFilter === 'absent') return !p.isCheckedIn;
+            return true;
+        }).sort((a, b) => {
+            // Present first, then alphabetical
+            if (a.isCheckedIn && !b.isCheckedIn) return -1;
+            if (!a.isCheckedIn && b.isCheckedIn) return 1;
+            return a.full_name.localeCompare(b.full_name);
+        });
+    };
 
     return (
         <div className="space-y-6">
@@ -612,16 +689,23 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                                             </span>
                                         </div>
 
-                                        {/* Attendance Stats Overlay */}
-                                        <div className="mt-4 p-3 bg-slate-50 rounded-2xl border border-slate-100">
+                                        {/* Attendance Stats Overlay - CLICKABLE */}
+                                        <div
+                                            className="mt-4 p-3 bg-slate-50 rounded-2xl border border-slate-100 hover:bg-slate-100 transition-colors cursor-pointer group/stats"
+                                            onClick={(e) => { e.stopPropagation(); openAttendanceModal(event); }}
+                                            title="Xem chi tiết điểm danh"
+                                        >
                                             <div className="flex justify-between items-center mb-1.5">
                                                 <div className="flex items-center gap-2">
-                                                    <span className="text-slate-400 italic">Hiện diện:</span>
+                                                    <span className="text-slate-400 italic group-hover/stats:text-indigo-500 transition-colors">Hiện diện:</span>
                                                     <span className="font-black text-slate-900">{attended}/{total}</span>
                                                 </div>
-                                                <span className={`text-xs font-black ${attendanceRate >= 80 ? 'text-emerald-600' : attendanceRate >= 50 ? 'text-amber-600' : 'text-slate-400'}`}>
-                                                    {attendanceRate}%
-                                                </span>
+                                                <div className="flex items-center gap-1">
+                                                    <span className={`text-xs font-black ${attendanceRate >= 80 ? 'text-emerald-600' : attendanceRate >= 50 ? 'text-amber-600' : 'text-slate-400'}`}>
+                                                        {attendanceRate}%
+                                                    </span>
+                                                    <ChevronRight className="w-3 h-3 text-slate-300 group-hover/stats:text-indigo-400 transition-colors" />
+                                                </div>
                                             </div>
                                             <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
                                                 <div
@@ -934,6 +1018,210 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
                                     ? 'Học sinh quét mã để tự điểm danh bằng điện thoại cá nhân (Cần GPS)'
                                     : 'Quét để mở máy điểm danh phụ trên điện thoại/máy tính khác (Không cần đăng nhập)'}
                             </p>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Attendance Detail Modal */}
+            {showAttendanceDetail && selectedEventForAttendance && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 animate-fade-in">
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setShowAttendanceDetail(false)} />
+
+                    {/* Modal Content */}
+                    <div className="relative w-full h-full md:h-auto md:max-h-[90vh] md:max-w-3xl bg-slate-900 md:rounded-[32px] overflow-hidden flex flex-col shadow-2xl border border-white/10 animate-scale-in">
+                        {/* Header */}
+                        <div className="p-6 border-b border-white/5 flex items-center justify-between bg-slate-900/50">
+                            <div className="flex items-center gap-4">
+                                <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${selectedEventForAttendance.status === 'active' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                                    <Users className="w-6 h-6" />
+                                </div>
+                                <div>
+                                    <h2 className="text-xl font-black text-white line-clamp-1">{selectedEventForAttendance.name}</h2>
+                                    <p className="text-slate-400 text-xs font-medium mt-0.5">
+                                        Chi tiết hiện diện • <span className="text-emerald-400 font-bold">{attendanceCheckins.length}/{attendanceParticipants.length} đã điểm danh</span>
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setShowAttendanceDetail(false)}
+                                className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
+                            >
+                                <X className="w-6 h-6 text-slate-400" />
+                            </button>
+                        </div>
+
+                        {/* Search & Stats */}
+                        <div className="p-6 bg-slate-800/20 border-b border-white/5">
+                            <div className="flex flex-col md:flex-row gap-4">
+                                {/* Search */}
+                                <div className="relative group flex-1">
+                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
+                                    <input
+                                        type="text"
+                                        placeholder="Tìm kiếm theo tên hoặc mã..."
+                                        value={attendanceSearchTerm}
+                                        onChange={(e) => setAttendanceSearchTerm(e.target.value)}
+                                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-11 pr-4 text-white text-sm placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
+                                    />
+                                </div>
+
+                                {/* Filters */}
+                                <div className="flex gap-2">
+                                    {(['all', 'present', 'absent'] as const).map(f => (
+                                        <button
+                                            key={f}
+                                            onClick={() => setAttendanceFilter(f)}
+                                            className={`px-4 py-3 rounded-xl text-xs font-black transition-all border ${attendanceFilter === f
+                                                ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20'
+                                                : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
+                                                }`}
+                                        >
+                                            {f === 'all' ? 'Tất cả' : f === 'present' ? 'Có mặt' : 'Vắng'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Stats */}
+                            <div className="grid grid-cols-4 gap-4 mt-6">
+                                <div className="bg-white/5 p-4 rounded-2xl border border-white/5">
+                                    <p className="text-slate-500 text-[10px] font-black uppercase tracking-wider mb-1">Tổng cộng</p>
+                                    <p className="text-white text-xl font-black">{attendanceParticipants.length}</p>
+                                </div>
+                                <div className="bg-emerald-500/10 p-4 rounded-2xl border border-emerald-500/20">
+                                    <p className="text-emerald-500/70 text-[10px] font-black uppercase tracking-wider mb-1">Đã mặt</p>
+                                    <p className="text-emerald-400 text-xl font-black">{attendanceCheckins.length}</p>
+                                </div>
+                                <div className="bg-red-500/10 p-4 rounded-2xl border border-red-500/20">
+                                    <p className="text-red-500/70 text-[10px] font-black uppercase tracking-wider mb-1">Vắng</p>
+                                    <p className="text-red-400 text-xl font-black">{attendanceParticipants.length - attendanceCheckins.length}</p>
+                                </div>
+                                <div className="bg-indigo-500/10 p-4 rounded-2xl border border-indigo-500/20">
+                                    <p className="text-indigo-500/70 text-[10px] font-black uppercase tracking-wider mb-1">Tỉ lệ</p>
+                                    <p className="text-indigo-400 text-xl font-black">
+                                        {attendanceParticipants.length > 0 ? Math.round((attendanceCheckins.length / attendanceParticipants.length) * 100) : 0}%
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* List Area */}
+                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar bg-slate-900">
+                            {isAttendanceLoading ? (
+                                <div className="flex flex-col items-center justify-center py-20 gap-4">
+                                    <div className="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                                    <p className="text-slate-500 font-bold">Đang tải dữ liệu hiện diện...</p>
+                                </div>
+                            ) : (
+                                <div className="space-y-6">
+                                    {Object.entries(
+                                        (getAttendanceList().reduce((acc, p) => {
+                                            const org = p.organization || 'Khác';
+                                            if (!acc[org]) acc[org] = [];
+                                            acc[org].push(p);
+                                            return acc;
+                                        }, {} as Record<string, any[]>)) as Record<string, any[]>
+                                    ).map(([org, students]) => (
+                                        <div key={org} className="mb-6">
+                                            <div className="flex items-center gap-2 mb-3 bg-slate-800/40 py-1.5 px-3 rounded-lg border-l-4 border-indigo-500">
+                                                <span className="text-xs font-black text-indigo-400 uppercase tracking-widest">{org}</span>
+                                                <span className="text-[10px] text-slate-500 font-bold ml-auto">{(students as any[]).length} người</span>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                {(students as any[]).sort((a, b) => {
+                                                    if (a.isCheckedIn && !b.isCheckedIn) return -1;
+                                                    if (!a.isCheckedIn && b.isCheckedIn) return 1;
+                                                    return a.full_name.localeCompare(b.full_name);
+                                                }).map((p) => (
+                                                    <div
+                                                        key={p.id}
+                                                        className={`p-2.5 rounded-2xl border flex items-center gap-3 transition-all ${p.isCheckedIn
+                                                            ? 'bg-emerald-500/5 border-emerald-500/10'
+                                                            : 'bg-slate-800/30 border-white/5 opacity-80'
+                                                            }`}
+                                                    >
+                                                        <div className="relative">
+                                                            {p.user?.avatar_url || p.avatar_url ? (
+                                                                <img
+                                                                    src={p.user?.avatar_url || p.avatar_url}
+                                                                    alt={p.full_name}
+                                                                    className="w-9 h-9 rounded-xl object-cover border border-white/10"
+                                                                />
+                                                            ) : (
+                                                                <div className="w-9 h-9 rounded-xl bg-slate-700 flex items-center justify-center border border-white/10">
+                                                                    <span className="text-white/50 text-[10px] font-bold">{p.full_name.charAt(0)}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <div className="flex justify-between items-start gap-2">
+                                                                <h4 className="text-sm font-bold text-white truncate">{p.full_name}</h4>
+                                                                {p.isCheckedIn && (
+                                                                    <span className="text-[10px] font-black text-emerald-400/70 whitespace-nowrap">
+                                                                        {p.checkinInfo?.checkin_time ? new Date(p.checkinInfo.checkin_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : ''}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                                                                {p.student_code || 'N/A'}
+                                                            </p>
+                                                            {p.isCheckedIn && (
+                                                                <div className="flex items-center gap-2 mt-1">
+                                                                    <div className={`px-2 py-0.5 rounded-md text-[8px] font-black uppercase ${p.checkinInfo?.status === 'on_time' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-amber-500/20 text-amber-400'
+                                                                        }`}>
+                                                                        {p.checkinInfo?.status === 'on_time' ? 'Đúng giờ' : 'Đi muộn'}
+                                                                    </div>
+                                                                    {p.checkinInfo?.points_earned !== 0 && (
+                                                                        <span className={`text-[8px] font-black ${p.checkinInfo?.points_earned && p.checkinInfo?.points_earned > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                                                                            {p.checkinInfo?.points_earned && p.checkinInfo?.points_earned > 0 ? '+' : ''}{p.checkinInfo?.points_earned}đ
+                                                                        </span>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            {p.isCheckedIn && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
+                                                            <div className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-tighter ${p.isCheckedIn
+                                                                ? 'bg-emerald-500/20 text-emerald-400'
+                                                                : 'bg-slate-700/50 text-slate-500'
+                                                                }`}>
+                                                                {p.isCheckedIn ? 'Có mặt' : 'Vắng mặt'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+
+                                    {getAttendanceList().length === 0 && (
+                                        <div className="col-span-full py-20 text-center">
+                                            <div className="w-20 h-20 bg-white/5 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/5 opacity-20">
+                                                <Search className="w-10 h-10 text-white" />
+                                            </div>
+                                            <p className="text-slate-500 font-bold">Không tìm thấy ai phù hợp</p>
+                                            <button
+                                                onClick={() => { setAttendanceSearchTerm(''); setAttendanceFilter('all'); }}
+                                                className="mt-4 text-indigo-400 text-sm font-black hover:underline underline-offset-4"
+                                            >
+                                                Xóa bộ lọc
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer Overlay for Mobile */}
+                        <div className="p-6 bg-slate-900 border-t border-white/5 md:hidden">
+                            <button
+                                onClick={() => setShowAttendanceDetail(false)}
+                                className="w-full py-4 bg-white/5 text-white rounded-2xl font-black text-sm"
+                            >
+                                ĐỐNG
+                            </button>
                         </div>
                     </div>
                 </div>

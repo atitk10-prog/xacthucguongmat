@@ -10,8 +10,9 @@ import {
     Camera, RefreshCw, UserCheck, AlertTriangle, CheckCircle,
     ArrowDown, ArrowUp, Clock, History, ChevronLeft, MapPin,
     Moon, Sun, Sunrise, Sunset, Settings, Save, X, QrCode, User as UserIcon,
-    FlipHorizontal2, RotateCcw, CameraOff, Maximize2
+    FlipHorizontal2, RotateCcw, CameraOff, Maximize2, Search, Filter
 } from 'lucide-react';
+import { Room } from '../../types';
 
 interface BoardingCheckinProps {
     currentUser?: User;
@@ -70,6 +71,13 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     // Mobile View Toggle
     const [showMobileHistory, setShowMobileHistory] = useState(false);
 
+    // Attendee Modal state
+    const [showAttendanceModal, setShowAttendanceModal] = useState(false);
+    const [checkedInIds, setCheckedInIds] = useState<Set<string>>(new Set());
+    const [searchTerm, setSearchTerm] = useState('');
+    const [attendanceFilter, setAttendanceFilter] = useState<'all' | 'present' | 'absent'>('all');
+    const [rooms, setRooms] = useState<Room[]>([]);
+
     // Network & Sync status
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
     const [pendingSyncCount, setPendingSyncCount] = useState(0);
@@ -104,6 +112,15 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             if (isDuplicate) return prev;
             return [entry, ...prev.slice(0, 14)];
         });
+
+        // Update checkedInIds Set
+        if (entry.userId) {
+            setCheckedInIds(prev => {
+                const next = new Set(prev);
+                next.add(entry.userId!);
+                return next;
+            });
+        }
     };
 
     const handleAutoCheckin = async (userId: string, name: string, confidence: number) => {
@@ -120,6 +137,13 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             if (response.success) {
                 const student = studentsData.find(s => s.id === userId);
                 checkinCooldownsRef.current.set(userId, Date.now() + 60000);
+
+                // Track checked in ID
+                setCheckedInIds(prev => {
+                    const next = new Set(prev);
+                    next.add(userId);
+                    return next;
+                });
 
                 if (response.alreadyExists) {
                     setResult({ success: true, message: 'Bạn đã điểm danh rồi', user: { full_name: name, student_code: '' }, status: 'on_time' });
@@ -286,6 +310,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 if (slotsRes.success && slotsRes.data) setTimeSlots(slotsRes.data);
                 const configRes = await dataService.getBoardingConfig();
                 if (configRes.success && configRes.data) { setBoardingConfig(configRes.data); setConfigForm(configRes.data); }
+                const roomsRes = await dataService.getRooms();
+                if (roomsRes.success && roomsRes.data) setRooms(roomsRes.data);
 
                 // Set initial queue count
                 setPendingSyncCount(dataService.getOfflineQueueLength());
@@ -385,14 +411,19 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     limit: 15
                 }).then(res => {
                     if (res.success && res.data) {
-                        setRecentCheckins(res.data.map(item => ({
-                            name: item.name,
-                            userId: item.user_id,
-                            time: new Date(item.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-                            type: item.slot_name || found.name,
-                            image: item.avatar,
-                            status: item.status === 'late' ? 'warning' : 'success'
-                        })));
+                        const newCheckedInIds = new Set<string>();
+                        setRecentCheckins(res.data.map(item => {
+                            if (item.user_id) newCheckedInIds.add(item.user_id);
+                            return {
+                                name: item.name,
+                                userId: item.user_id,
+                                time: new Date(item.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+                                type: item.slot_name || found.name,
+                                image: item.avatar,
+                                status: item.status === 'late' ? 'warning' : 'success'
+                            };
+                        }));
+                        setCheckedInIds(newCheckedInIds);
                     }
                 });
             } else if (!found && slotStatus !== 'closed') {
@@ -690,33 +721,167 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                     {/* Physical borders and corners REMOVED as requested to avoid clutter */}
                 </div>
 
-                <div className={`w-full lg:w-96 flex flex-col gap-3 ${showMobileHistory ? 'fixed inset-0 z-[100] bg-slate-900 p-4' : 'block'}`}>
-                    {showMobileHistory && <div className="flex justify-between mb-4"><h3 className="text-white font-bold">Lịch sử</h3><button onClick={() => setShowMobileHistory(false)}><X className="text-white" /></button></div>}
-                    <div className={`p-5 rounded-3xl border ${selectedSlot ? (slotStatus === 'on_time' ? 'bg-emerald-900/20 border-emerald-500/30' : 'bg-amber-900/20 border-amber-500/30') : 'bg-slate-800/50'} ${showMobileHistory ? 'hidden' : 'block'}`}>
+                <div className="w-full lg:w-96 flex flex-col gap-3">
+                    <div className={`p-5 rounded-3xl border ${selectedSlot ? (slotStatus === 'on_time' ? 'bg-emerald-900/20 border-emerald-500/30' : 'bg-amber-900/20 border-amber-500/30') : 'bg-slate-800/50'}`}>
                         <div className="flex justify-between mb-2">
                             <span className="text-white/60 text-xs uppercase font-bold">Trạng thái</span>
                             <span className={`text-[10px] font-bold ${systemReady ? 'text-emerald-400' : 'text-amber-400'}`}>{systemReady ? '● LIVE' : 'SYNCING'}</span>
                         </div>
                         {selectedSlot ? <div><h2 className="text-white font-black text-xl">{selectedSlot.name}</h2><p className="text-white/40 text-xs">{selectedSlot.start_time} - {selectedSlot.end_time}</p></div> : <div className="text-center py-4 text-slate-500">Ngoài giờ</div>}
                     </div>
-                    <div className={`flex-1 bg-slate-800/50 p-5 rounded-3xl border border-white/10 overflow-hidden flex flex-col ${showMobileHistory ? 'flex' : 'hidden md:flex'}`}>
+                    <div className="flex-1 bg-slate-800/50 p-5 rounded-3xl border border-white/10 overflow-hidden flex flex-col hidden md:flex">
                         <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2 text-sm uppercase"><History className="w-4 h-4" /> Vừa Check-in</h3>
                         <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
                             {recentCheckins.length === 0 ? <p className="text-slate-600 text-center py-10 italic">Trống</p> : recentCheckins.map((item, i) => (
                                 <div key={i} className="flex items-center gap-3 bg-white/5 p-3 rounded-2xl border border-white/5">
                                     {item.image ? (
-                                        <img src={item.image} alt={item.name} className="w-10 h-10 rounded-full object-cover border border-white/10" />
+                                        <img src={item.image} alt={item.name} className="w-9 h-9 rounded-full object-cover border border-white/10" />
                                     ) : (
-                                        <div className="w-10 h-10 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold">{item.name[0]}</div>
+                                        <div className="w-9 h-9 rounded-full bg-indigo-600 flex items-center justify-center text-white font-bold text-xs">{item.name[0]}</div>
                                     )}
                                     <div className="flex-1 min-w-0"><p className="text-white font-bold truncate text-sm">{item.name}</p><p className="text-indigo-300 text-[10px]">{item.type} • {item.time}</p></div>
-                                    <div className={item.status === 'success' ? 'text-emerald-400' : 'text-amber-400'}>{item.status === 'success' ? <CheckCircle className="w-5 h-5" /> : <AlertTriangle className="w-5 h-5" />}</div>
+                                    <div className={item.status === 'success' ? 'text-emerald-400' : 'text-amber-400'}>{item.status === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}</div>
                                 </div>
                             ))}
                         </div>
                     </div>
-                    <button onClick={() => setShowMobileHistory(!showMobileHistory)} className="md:hidden fixed bottom-6 left-6 p-4 bg-indigo-600 rounded-full shadow-2xl text-white"><History /></button>
+
+                    {/* Mobile Floating Buttons - MOVED TO RIGHT */}
+                    <div className="md:hidden fixed bottom-6 right-6 flex flex-col gap-3 z-[95]">
+                        <button
+                            onClick={() => setShowAttendanceModal(true)}
+                            className="p-4 bg-emerald-600 rounded-full shadow-2xl text-white transform active:scale-95 transition-all"
+                        >
+                            <UserIcon className="w-6 h-6" />
+                            {checkedInIds.size > 0 && (
+                                <div className="absolute -top-1 -right-1 w-5 h-5 bg-white text-emerald-600 rounded-full flex items-center justify-center text-[10px] font-black border-2 border-emerald-600">
+                                    {checkedInIds.size}
+                                </div>
+                            )}
+                        </button>
+                    </div>
                 </div>
+
+                {/* Attendance List Modal */}
+                {showAttendanceModal && (
+                    <div className="fixed inset-0 z-[400] flex items-center justify-center md:p-6 animate-fade-in">
+                        <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setShowAttendanceModal(false)} />
+
+                        <div className="relative w-full h-full md:h-auto md:max-h-[90vh] md:max-w-2xl bg-slate-900 md:rounded-[32px] overflow-hidden flex flex-col shadow-2xl border border-white/10">
+                            <div className="p-6 border-b border-white/5 flex items-center justify-between bg-slate-900/50">
+                                <div>
+                                    <h2 className="text-xl font-black text-white flex items-center gap-3">
+                                        <UserIcon className="w-6 h-6 text-indigo-400" />
+                                        Danh sách điểm danh
+                                    </h2>
+                                    <p className="text-slate-400 text-xs font-medium mt-1">
+                                        {selectedSlot?.name || 'Ngoài giờ'} • <span className="text-emerald-400">{checkedInIds.size} đã mặt</span>
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={() => setShowAttendanceModal(false)}
+                                    className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
+                                >
+                                    <X className="w-6 h-6 text-slate-400" />
+                                </button>
+                            </div>
+
+                            <div className="p-4 md:p-6 space-y-4">
+                                <div className="relative group">
+                                    <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
+                                    <input
+                                        type="text"
+                                        placeholder="Tìm theo tên, mã hoặc phòng..."
+                                        value={searchTerm}
+                                        onChange={(e) => setSearchTerm(e.target.value)}
+                                        className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-11 pr-4 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
+                                    />
+                                </div>
+
+                                <div className="flex gap-2">
+                                    {(['all', 'present', 'absent'] as const).map(f => (
+                                        <button
+                                            key={f}
+                                            onClick={() => setAttendanceFilter(f)}
+                                            className={`flex-1 py-2.5 rounded-xl text-xs font-black transition-all border ${attendanceFilter === f
+                                                ? 'bg-indigo-600 border-indigo-500 text-white shadow-lg shadow-indigo-500/20'
+                                                : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10'
+                                                }`}
+                                        >
+                                            {f === 'all' ? 'Tất cả' : f === 'present' ? 'Có mặt' : 'Vắng'}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-6 custom-scrollbar">
+                                {Object.entries(
+                                    (studentsData
+                                        .filter(s => {
+                                            const search = searchTerm.toLowerCase();
+                                            const room = rooms.find(r => r.id === s.room_id)?.name || '';
+                                            return s.full_name.toLowerCase().includes(search) ||
+                                                (s.student_code && s.student_code.toLowerCase().includes(search)) ||
+                                                room.toLowerCase().includes(search);
+                                        })
+                                        .filter(s => {
+                                            const isCheckedIn = checkedInIds.has(s.id);
+                                            if (attendanceFilter === 'present') return isCheckedIn;
+                                            if (attendanceFilter === 'absent') return !isCheckedIn;
+                                            return true;
+                                        })
+                                        .reduce((acc, s) => {
+                                            const roomName = rooms.find(r => r.id === s.room_id)?.name || 'Chưa xếp phòng';
+                                            if (!acc[roomName]) acc[roomName] = [];
+                                            acc[roomName].push(s);
+                                            return acc;
+                                        }, {} as Record<string, User[]>)) as Record<string, User[]>
+                                ).map(([roomName, students]) => (
+                                    <div key={roomName} className="mb-6">
+                                        <div className="flex items-center gap-2 mb-3 bg-slate-800/40 py-1.5 px-3 rounded-lg border-l-4 border-indigo-500">
+                                            <span className="text-xs font-black text-indigo-400 uppercase tracking-widest">{roomName}</span>
+                                            <span className="text-[10px] text-slate-500 font-bold ml-auto">{(students as User[]).length} học sinh</span>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            {(students as User[]).sort((a, b) => {
+                                                const aChecked = checkedInIds.has(a.id);
+                                                const bChecked = checkedInIds.has(b.id);
+                                                if (aChecked && !bChecked) return -1;
+                                                if (!aChecked && bChecked) return 1;
+                                                return a.full_name.localeCompare(b.full_name);
+                                            }).map(s => {
+                                                const isCheckedIn = checkedInIds.has(s.id);
+                                                return (
+                                                    <div key={s.id} className={`p-2.5 rounded-2xl border flex items-center gap-3 transition-all ${isCheckedIn ? 'bg-emerald-500/5 border-emerald-500/10' : 'bg-slate-800/30 border-white/5 opacity-80'}`}>
+                                                        <div className="relative">
+                                                            {s.avatar_url ? (
+                                                                <img src={s.avatar_url} alt={s.full_name} className="w-9 h-9 rounded-xl object-cover border border-white/10" />
+                                                            ) : (
+                                                                <div className="w-9 h-9 rounded-xl bg-slate-700 flex items-center justify-center border border-white/10">
+                                                                    <span className="text-white/50 text-[10px] font-bold">{s.full_name.charAt(0)}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <h4 className="text-sm font-bold text-white truncate">{s.full_name}</h4>
+                                                            <p className="text-[10px] text-slate-500 truncate mt-0.5">{s.student_code || 'N/A'}</p>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            {isCheckedIn && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
+                                                            <div className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-tighter ${isCheckedIn ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700/50 text-slate-500'}`}>
+                                                                {isCheckedIn ? 'Có mặt' : 'Vắng mặt'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {
                     result && (

@@ -4,7 +4,7 @@ import { supabase } from '../../services/supabaseClient';
 import { faceService, faceMatcher, base64ToImage, stringToDescriptor, descriptorToString } from '../../services/faceService';
 import { qrScannerService } from '../../services/qrScannerService';
 import { Event, User, EventCheckin, CheckinMethod } from '../../types';
-import { Camera, X, CheckCircle, RefreshCw, AlertTriangle, ChevronLeft, Settings, Clock, User as UserIcon, QrCode, FlipHorizontal2, Maximize2 } from 'lucide-react';
+import { Camera, X, CheckCircle, RefreshCw, AlertTriangle, ChevronLeft, Settings, Clock, User as UserIcon, QrCode, FlipHorizontal2, Maximize2, Users, Search } from 'lucide-react';
 
 // Interface for event participant with face data
 interface EventParticipant {
@@ -165,7 +165,10 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     // Network & Sync status
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
     const [pendingSyncCount, setPendingSyncCount] = useState(0);
-
+    // Attendee Modal state
+    const [showAttendeeModal, setShowAttendeeModal] = useState(false);
+    const [checkedInUserIds, setCheckedInUserIds] = useState<Set<string>>(new Set());
+    const [searchTerm, setSearchTerm] = useState('');
     // Ref to track if success overlay is active (to silence redundant alerts)
     const successActiveRef = useRef(false);
     useEffect(() => {
@@ -354,13 +357,17 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // Get checkins from API
                 const result = await dataService.getEventCheckins(event.id);
                 if (result.success && result.data) {
-                    // 1. Populate Cooldowns/Existing Check-ins Map with ALL data
-                    // This ensures we know who checked in even after refresh
+                    const checkedInIds = new Set<string>();
                     result.data.forEach(c => {
-                        if (c.user_id) {
-                            checkinCooldownsRef.current.set(c.user_id, new Date(c.checkin_time).getTime());
+                        // Priority: participant_id (the specific ID for this event)
+                        // Fallback: user_id (if participant_id is missing)
+                        const checkinId = c.participant_id || c.user_id;
+                        if (checkinId) {
+                            checkinCooldownsRef.current.set(checkinId, new Date(c.checkin_time).getTime());
+                            checkedInIds.add(checkinId);
                         }
                     });
+                    setCheckedInUserIds(checkedInIds);
 
                     const mapped = result.data.slice(0, 15).map(c => ({
                         name: c.participants?.full_name || 'Unknown',
@@ -419,8 +426,23 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     }
 
                     // Update cooldown for check-ins from OTHER devices
-                    if (pId) checkinCooldownsRef.current.set(pId, now);
-                    if (uId) checkinCooldownsRef.current.set(uId, now);
+                    if (pId) {
+                        checkinCooldownsRef.current.set(pId, now);
+                        setCheckedInUserIds(prev => {
+                            const next = new Set(prev);
+                            next.add(pId);
+                            return next;
+                        });
+                    }
+                    if (uId) {
+                        checkinCooldownsRef.current.set(uId, now);
+                        // Also add uId just in case some components match by user_id
+                        setCheckedInUserIds(prev => {
+                            const next = new Set(prev);
+                            next.add(uId);
+                            return next;
+                        });
+                    }
 
                     // Fetch participant info for display
                     let participant = participants.find(p => p.id === newCheckin.user_id);
@@ -1025,7 +1047,6 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         capturedImage: displayAvatar,
                         userName: checkInUserName
                     });
-                    // Don't add to recent checkins list
                 } else {
                     playSound('success');
                     console.log('Check-in SUCCESS:', checkinResult);
@@ -1053,6 +1074,15 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         points: checkinResult.data.checkin.points_earned,
                         participant_id: checkInUserId,
                         user_id: participant?.user_id
+                    });
+                }
+
+                // Mark as checked in in state
+                if (participant?.id) {
+                    setCheckedInUserIds(prev => {
+                        const next = new Set(prev);
+                        next.add(participant.id);
+                        return next;
                     });
                 }
 
@@ -1089,7 +1119,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 // playSound('error');
                 console.error('Check-in FAILED:', checkinResult);
 
-                const errorMsg = checkinResult.error || 'Check-in thất bại';
+                const errorMsg = checkinResult.error || 'Đã Check-in';
                 const isAlreadyCheckedIn = errorMsg.toLowerCase().includes('already') ||
                     errorMsg.toLowerCase().includes('đã check-in') ||
                     errorMsg.includes('đã điểm danh');
@@ -1922,7 +1952,162 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     </div>
                 )
             }
+            {/* Floating Action Button for Attendee List - COMPACT for Mobile */}
+            <button
+                onClick={() => setShowAttendeeModal(true)}
+                className="fixed bottom-6 right-6 md:bottom-8 md:right-40 w-12 h-12 md:w-14 md:h-14 bg-indigo-600 hover:bg-indigo-500 text-white rounded-full shadow-2xl flex items-center justify-center transition-all hover:scale-110 active:scale-95 z-[95] border border-white/20"
+                title="Danh sách tham gia"
+            >
+                <Users className="w-6 h-6 md:w-7 md:h-7" />
+                {participants.length > 0 && (
+                    <div className="absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full flex items-center justify-center border-2 border-slate-900 text-[10px] font-black">
+                        {checkedInUserIds.size}
+                    </div>
+                )}
+            </button>
+
+            {/* Attendee List Modal */}
+            {showAttendeeModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center md:p-6 animate-fade-in">
+                    {/* Backdrop */}
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-md" onClick={() => setShowAttendeeModal(false)} />
+
+                    {/* Modal Content */}
+                    <div className="relative w-full h-full md:h-auto md:max-h-[90vh] md:max-w-2xl bg-slate-900 md:rounded-[32px] overflow-hidden flex flex-col shadow-2xl border border-white/10 animate-scale-in">
+                        {/* Header */}
+                        <div className="p-6 border-b border-white/5 flex items-center justify-between bg-slate-900/50">
+                            <div>
+                                <h2 className="text-xl font-black text-white flex items-center gap-3">
+                                    <Users className="w-6 h-6 text-indigo-400" />
+                                    Danh sách tham gia
+                                </h2>
+                                <p className="text-slate-400 text-xs font-medium mt-1">
+                                    {event?.name} • <span className="text-emerald-400">{checkedInUserIds.size} đã điểm danh</span>
+                                </p>
+                            </div>
+                            <button
+                                onClick={() => setShowAttendeeModal(false)}
+                                className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center hover:bg-white/10 transition-colors"
+                            >
+                                <X className="w-6 h-6 text-slate-400" />
+                            </button>
+                        </div>
+
+                        {/* Search & Stats */}
+                        <div className="p-4 md:p-6 space-y-4">
+                            {/* Search */}
+                            <div className="relative group">
+                                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 group-focus-within:text-indigo-400 transition-colors" />
+                                <input
+                                    type="text"
+                                    placeholder="Tìm kiếm theo tên hoặc mã..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-3 pl-11 pr-4 text-white text-sm placeholder:text-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 transition-all"
+                                />
+                            </div>
+
+                            {/* Stats */}
+                            <div className="grid grid-cols-3 gap-3">
+                                <div className="bg-slate-800/50 p-3 rounded-2xl border border-white/5 text-center">
+                                    <p className="text-slate-500 text-[10px] font-bold uppercase tracking-wider">Tổng cộng</p>
+                                    <p className="text-white text-lg font-black">{participants.length}</p>
+                                </div>
+                                <div className="bg-emerald-500/10 p-3 rounded-2xl border border-emerald-500/20 text-center">
+                                    <p className="text-emerald-500/70 text-[10px] font-bold uppercase tracking-wider">Đã mặt</p>
+                                    <p className="text-emerald-400 text-lg font-black">{checkedInUserIds.size}</p>
+                                </div>
+                                <div className="bg-red-500/10 p-3 rounded-2xl border border-red-500/20 text-center">
+                                    <p className="text-red-500/70 text-[10px] font-bold uppercase tracking-wider">Vắng</p>
+                                    <p className="text-red-400 text-lg font-black">{participants.length - checkedInUserIds.size}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto px-4 md:px-6 pb-6 custom-scrollbar">
+                            <div className="space-y-6">
+                                {Object.entries(
+                                    (participants
+                                        .filter(p => !searchTerm || p.full_name.toLowerCase().includes(searchTerm.toLowerCase()))
+                                        .reduce((acc, p) => {
+                                            const org = p.organization || 'Khác';
+                                            if (!acc[org]) acc[org] = [];
+                                            acc[org].push(p);
+                                            return acc;
+                                        }, {} as Record<string, any[]>)) as Record<string, any[]>
+                                ).map(([org, students]) => (
+                                    <div key={org} className="mb-6">
+                                        <div className="flex items-center gap-2 mb-3 bg-slate-800/40 py-1.5 px-3 rounded-lg border-l-4 border-indigo-500">
+                                            <span className="text-xs font-black text-indigo-400 uppercase tracking-widest">{org}</span>
+                                            <span className="text-[10px] text-slate-500 font-bold ml-auto">{(students as any[]).length} người</span>
+                                        </div>
+                                        <div className="space-y-1.5">
+                                            {(students as any[]).sort((a, b) => {
+                                                const aChecked = checkedInUserIds.has(a.id);
+                                                const bChecked = checkedInUserIds.has(b.id);
+                                                if (aChecked && !bChecked) return -1;
+                                                if (!aChecked && bChecked) return 1;
+                                                return a.full_name.localeCompare(b.full_name);
+                                            }).map((participant) => {
+                                                const isCheckedIn = checkedInUserIds.has(participant.id);
+                                                return (
+                                                    <div
+                                                        key={participant.id}
+                                                        className={`p-2.5 rounded-2xl border flex items-center gap-3 transition-all ${isCheckedIn
+                                                            ? 'bg-emerald-500/5 border-emerald-500/10'
+                                                            : 'bg-slate-800/30 border-white/5 opacity-80'
+                                                            }`}
+                                                    >
+                                                        <div className="relative">
+                                                            {participant.avatar_url ? (
+                                                                <img
+                                                                    src={participant.avatar_url}
+                                                                    alt={participant.full_name}
+                                                                    className="w-9 h-9 rounded-xl object-cover border border-white/10"
+                                                                />
+                                                            ) : (
+                                                                <div className="w-9 h-9 rounded-xl bg-slate-700 flex items-center justify-center border border-white/10">
+                                                                    <span className="text-white/50 text-[10px] font-bold">{participant.full_name.charAt(0)}</span>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                        <div className="flex-1 min-w-0">
+                                                            <h4 className="text-sm font-bold text-white truncate">{participant.full_name}</h4>
+                                                            <p className="text-[10px] text-slate-500 truncate mt-0.5">
+                                                                {(participant as any).student_code || 'N/A'}
+                                                            </p>
+                                                        </div>
+                                                        <div className="flex items-center gap-2">
+                                                            {isCheckedIn && <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />}
+                                                            <div className={`px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-tighter ${isCheckedIn
+                                                                ? 'bg-emerald-500/20 text-emerald-400'
+                                                                : 'bg-slate-700/50 text-slate-500'
+                                                                }`}>
+                                                                {isCheckedIn ? 'Có mặt' : 'Vắng mặt'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+
+                                {participants.filter(p => !searchTerm || p.full_name.toLowerCase().includes(searchTerm.toLowerCase())).length === 0 && (
+                                    <div className="py-12 text-center">
+                                        <div className="w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 border border-white/5 opacity-20">
+                                            <Search className="w-8 h-8 text-white" />
+                                        </div>
+                                        <p className="text-slate-500 font-medium">Không tìm thấy ai phù hợp</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div >
+
     );
 };
 
