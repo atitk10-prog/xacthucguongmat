@@ -10,7 +10,7 @@ import {
     Camera, RefreshCw, UserCheck, AlertTriangle, CheckCircle,
     ArrowDown, ArrowUp, Clock, History, ChevronLeft, MapPin,
     Moon, Sun, Sunrise, Sunset, Settings, Save, X, QrCode, User as UserIcon,
-    FlipHorizontal2, RotateCcw, CameraOff
+    FlipHorizontal2, RotateCcw, CameraOff, Maximize2
 } from 'lucide-react';
 
 interface BoardingCheckinProps {
@@ -181,6 +181,14 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         const facing = newFacing || cameraFacing;
         if (newFacing) setCameraFacing(newFacing);
         setCheckinMode(mode);
+
+        // RESET TRACKING STATE TO PREVENT STALL/GLITCH
+        setIsProcessing(false);
+        setStabilityProgress(0);
+        setFaceDetected(false);
+        setDetectedPerson(null);
+        recognizedPersonRef.current = null;
+        stableStartTimeRef.current = null;
 
         // STEP 2: Wait longer for camera to fully release
         await new Promise(resolve => setTimeout(resolve, 600));
@@ -456,7 +464,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             aid = requestAnimationFrame(loop);
         };
         loop(); return () => cancelAnimationFrame(aid);
-    }, [modelsReady, studentsLoaded, systemReady]);
+    }, [modelsReady, studentsLoaded, systemReady, checkinMode]);
 
     return (
         <div className="min-h-screen bg-slate-900 flex flex-col pt-12 md:pt-16 px-1 md:px-4 pb-1 md:pb-4 gap-2 md:gap-4 lg:flex-row font-sans">
@@ -502,7 +510,25 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 </div>
 
                 {/* Status indicators - compact on mobile */}
-                <div className="flex items-center gap-1 md:gap-2">
+                <div className="flex items-center gap-1.5 md:gap-3">
+                    {/* AI Signal Dot - Restored to Header */}
+                    <div className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/10">
+                        <div className={`w-2 h-2 rounded-full ${modelsReady && studentsLoaded ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-500'} transition-all`} />
+                        <span className="text-[10px] font-black text-white/70 uppercase tracking-tighter hidden sm:inline">AI</span>
+                    </div>
+
+                    {/* Fullscreen Toggle */}
+                    <button
+                        onClick={() => {
+                            if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+                            else if (document.exitFullscreen) document.exitFullscreen();
+                        }}
+                        className="p-1.5 bg-white/5 text-white hover:bg-white/10 rounded-lg border border-white/10 shadow-sm transition-all active:scale-95"
+                        title="Phóng to"
+                    >
+                        <Maximize2 className="w-4 h-4" />
+                    </button>
+
                     {!isOnline && (
                         <div className="flex items-center gap-1 px-1.5 md:px-2 py-0.5 md:py-1 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-md md:rounded-lg text-[8px] md:text-[10px] font-bold">
                             <AlertTriangle className="w-2.5 h-2.5 md:w-3 md:h-3" />
@@ -554,11 +580,22 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                             <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
                         </div>
 
-                        {/* Physical borders and corners REMOVED as requested to avoid clutter */}
+                        {/* Main Frame Border - ONLY for Face Mode */}
+                        {checkinMode === 'face' && (
+                            <>
+                                <div className={`absolute inset-0 border-2 transition-all duration-300 pointer-events-none rounded-[3.5rem] md:rounded-2xl ${stabilityProgress >= 100 ? 'border-emerald-500/60 shadow-[0_0_20px_rgba(16,185,129,0.3)]' : faceDetected ? 'border-red-500/60 shadow-[0_0_20px_rgba(239,68,68,0.2)]' : 'border-white/10'}`}></div>
 
-                        {/* Status Badge Over the Frame */}
-                        <div className="absolute -top-12 left-1/2 -translate-x-1/2 w-max">
-                            <div className={`px-4 py-1.5 rounded-full font-bold text-xs shadow-lg backdrop-blur-md border transition-all duration-300 ${faceDetected ? (stabilityProgress >= 100 ? 'bg-emerald-600/90 border-emerald-400 text-white' : 'bg-red-600/90 border-red-400 text-white') : (checkinMode === 'qr' ? 'bg-indigo-600/90 border-indigo-400 text-white' : 'bg-slate-900/60 border-white/10 text-white/80')}`}>
+                                {/* Corners */}
+                                <div className={`absolute -top-1 -left-1 w-10 h-10 border-t-4 border-l-4 rounded-tl-[2rem] md:rounded-tl-xl transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                                <div className={`absolute -top-1 -right-1 w-10 h-10 border-t-4 border-r-4 rounded-tr-[2rem] md:rounded-tr-xl transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                                <div className={`absolute -bottom-1 -left-1 w-10 h-10 border-b-4 border-l-4 rounded-bl-[2rem] md:rounded-bl-xl transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                                <div className={`absolute -bottom-1 -right-1 w-10 h-10 border-b-4 border-r-4 rounded-br-[2rem] md:rounded-br-xl transition-colors duration-300 ${stabilityProgress >= 100 ? 'border-emerald-500' : faceDetected ? 'border-red-500' : 'border-indigo-500'}`}></div>
+                            </>
+                        )}
+
+                        {/* Status Badge Over the Frame - Pushed Higher & Styled Like Event */}
+                        <div className="absolute -top-16 md:-top-20 left-1/2 -translate-x-1/2 w-max z-30">
+                            <div className={`px-4 md:px-6 py-2 md:py-3 rounded-2xl md:rounded-[24px] font-black text-[10px] md:text-[12px] shadow-2xl backdrop-blur-xl border-2 transition-all duration-300 ${faceDetected ? (stabilityProgress >= 100 ? 'bg-emerald-600 border-emerald-400 text-white' : 'bg-red-600 border-red-400 text-white') : (checkinMode === 'qr' ? 'bg-indigo-600/90 border-indigo-400/50 text-white' : 'bg-slate-900/80 border-white/10 text-white/70')}`}>
                                 {checkinMode === 'qr' ? (qrScannerActive ? '📱 Đưa mã QR vào khung' : '⏳ Khởi động quét QR...') : guidance}
                             </div>
                         </div>
@@ -569,15 +606,12 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                                 <div className="h-full bg-indigo-500 transition-all duration-100" style={{ width: `${stabilityProgress}%` }}></div>
                             </div>
                         )}
-                    </div>
 
-                    {/* AI Ready Indicator - Separate */}
-                    <div className={`mt-16 px-3 py-1 rounded-xl text-[10px] font-bold backdrop-blur-md transition-all duration-500 ${modelsReady && studentsLoaded ? 'bg-emerald-500/10 text-emerald-400/70 border border-emerald-500/20' : 'bg-amber-500/10 text-amber-400/70 border border-amber-500/20'}`}>
-                        {modelsReady && studentsLoaded ? '🤖 AI Sẵn sàng' : '⏳ Đang tải AI...'}
+                        {/* Physical borders and corners REMOVED as requested to avoid clutter */}
                     </div>
                 </div>
 
-                <button onClick={() => setShowConfigModal(true)} className="absolute top-2 right-2 md:top-4 md:right-4 z-50 p-1.5 md:p-2 bg-slate-800/50 rounded-full text-slate-400"><Settings className="w-4 h-4 md:w-5 md:h-5" /></button>
+
             </div>
 
             <div className={`w-full lg:w-96 flex flex-col gap-3 ${showMobileHistory ? 'fixed inset-0 z-[100] bg-slate-900 p-4' : 'block'}`}>

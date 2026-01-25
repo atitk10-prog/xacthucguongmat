@@ -4,7 +4,7 @@ import { supabase } from '../../services/supabaseClient';
 import { faceService, faceMatcher, base64ToImage, stringToDescriptor, descriptorToString } from '../../services/faceService';
 import { qrScannerService } from '../../services/qrScannerService';
 import { Event, User, EventCheckin, CheckinMethod } from '../../types';
-import { Camera, X, CheckCircle, RefreshCw, AlertTriangle, ChevronLeft, Settings, Clock, User as UserIcon, QrCode, FlipHorizontal2 } from 'lucide-react';
+import { Camera, X, CheckCircle, RefreshCw, AlertTriangle, ChevronLeft, Settings, Clock, User as UserIcon, QrCode, FlipHorizontal2, Maximize2 } from 'lucide-react';
 
 // Interface for event participant with face data
 interface EventParticipant {
@@ -575,6 +575,19 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         const facing = newFacing || cameraFacing;
         if (newFacing) setCameraFacing(newFacing);
         setCheckinMode(mode);
+
+        // RESET TRACKING STATE TO PREVENT STALL/GLITCH
+        setIsProcessing(false);
+        setFaceDetected(false);
+        faceDetectedRef.current = false;
+        setRecognizedPerson(null);
+        recognizedPersonRef.current = null;
+        setLastFaceDetectedTime(null);
+        lastFaceDetectedTimeRef.current = null;
+        setFaceStableTime(0);
+        setLastReportedCheckinId(null);
+        lastReportedCheckinIdRef.current = null;
+
         setGuidance(mode === 'qr' ? 'Đang mở camera QR...' : (modelsReady && facesLoaded ? 'Đang tìm khuôn mặt...' : 'Đang khởi động AI...'));
         setRecognizedPerson(null);
         recognizedPersonRef.current = null;
@@ -916,7 +929,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         return () => {
             if (animationId) cancelAnimationFrame(animationId);
         };
-    }, [modelsReady, event?.require_face, autoCheckInMode, isProcessing, result, sensitivity]);
+    }, [modelsReady, event?.require_face, autoCheckInMode, isProcessing, result, sensitivity, checkinMode]);
 
     // Capture image from video
     const captureImage = (): string | null => {
@@ -1233,12 +1246,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 </div>
             )}
 
-            {/* Notification Toast */}
+            {/* Notification Toast - Hide Failure Toast on Mobile for cleaner view */}
             {notification && (
-                <div className={`fixed top-4 right-4 z-50 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-slide-in ${notification.type === 'success' ? 'bg-emerald-500 text-white' :
-                    notification.type === 'error' ? 'bg-red-500 text-white' :
-                        'bg-amber-500 text-white'
-                    }`}>
+                <div className={`fixed top-24 md:top-6 right-1/2 translate-x-1/2 md:translate-x-0 md:right-6 z-[120] px-6 py-4 rounded-xl shadow-2xl flex items-center gap-3 animate-slide-in 
+                    ${notification.type === 'error' ? 'hidden md:flex bg-red-500' :
+                        notification.type === 'success' ? 'bg-emerald-500' : 'bg-amber-500'} text-white`}>
                     {notification.type === 'success' ? (
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
                     ) : notification.type === 'error' ? (
@@ -1345,7 +1357,13 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         <span>Quay lại</span>
                     </button>
 
-                    <div className="flex-1 flex justify-center items-center gap-4">
+                    <div className="flex-1 flex justify-center items-center gap-3">
+                        {/* AI Signal Dot - Professional Sync from Boarding */}
+                        <div className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white/5 backdrop-blur-md rounded-xl border border-white/10 shadow-xl">
+                            <div className={`w-2 h-2 rounded-full ${modelsReady && facesLoaded ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.6)]' : 'bg-slate-500 animate-pulse'} transition-all duration-500`} />
+                            <span className="text-[10px] font-black text-white/70 uppercase tracking-tighter hidden sm:inline">AI</span>
+                        </div>
+
                         {!isOnline && (
                             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-2xl text-[10px] font-black animate-pulse">
                                 <AlertTriangle className="w-3.5 h-3.5" />
@@ -1405,6 +1423,18 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                             </button>
                         )}
 
+                        {/* Fullscreen Toggle */}
+                        <button
+                            onClick={() => {
+                                if (!document.fullscreenElement) document.documentElement.requestFullscreen();
+                                else if (document.exitFullscreen) document.exitFullscreen();
+                            }}
+                            className="w-11 h-11 bg-white/5 backdrop-blur-xl text-white rounded-2xl flex items-center justify-center border border-white/10 hover:bg-white/10 shadow-xl transition-all active:scale-95"
+                            title="Phóng to"
+                        >
+                            <Maximize2 className="w-5 h-5" />
+                        </button>
+
                         {event && (
                             <div className="bg-white/10 backdrop-blur-xl px-4 py-2.5 rounded-2xl border border-white/10 shadow-lg hidden sm:block">
                                 <p className="text-white text-xs font-black tracking-tight">{event.name}</p>
@@ -1413,13 +1443,13 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     </div>
                 </div>
 
-                {/* Sensitivity Slider */}
+                {/* Sensitivity Slider - Ultra Mini Mode */}
                 {checkinMode === 'face' && (
-                    <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2 z-20 w-[90%] max-w-xs group">
-                        <div className="bg-black/40 backdrop-blur-3xl rounded-[28px] p-4 border border-white/10 shadow-2xl transition-all hover:bg-black/60">
-                            <div className="flex justify-between items-center mb-2 px-1">
-                                <span className="text-white/50 text-[10px] font-black uppercase tracking-[0.1em]">Độ nhạy AI</span>
-                                <span className={`text-xs font-black px-2 py-0.5 rounded-full ${sensitivity < 35 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                    <div className="absolute bottom-4 md:bottom-8 left-1/2 transform -translate-x-1/2 z-20 w-[70%] max-w-[180px] group">
+                        <div className="bg-black/60 backdrop-blur-xl rounded-xl p-2 border border-white/10 shadow-2xl transition-all hover:bg-black/80">
+                            <div className="flex justify-between items-center mb-1 px-1">
+                                <span className="text-white/40 text-[8px] font-black uppercase tracking-widest">Nhạy</span>
+                                <span className={`text-[9px] font-black px-1.5 py-0.5 rounded-lg ${sensitivity < 35 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
                                     {sensitivity}%
                                 </span>
                             </div>
@@ -1430,7 +1460,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 step="5"
                                 value={sensitivity}
                                 onChange={(e) => setSensitivity(parseInt(e.target.value))}
-                                className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500 group-hover:accent-indigo-400 transition-all"
+                                className="w-full h-1 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500 group-hover:accent-indigo-400 transition-all opacity-40 group-hover:opacity-100"
                             />
                         </div>
                     </div>
@@ -1452,28 +1482,39 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 className="w-full h-full object-cover transform -scale-x-100 transition-opacity duration-700"
                             />
 
-                            {/* AI Status Badge - TOP LEFT */}
-                            <div className={`absolute top-4 left-4 z-30 px-3 py-1.5 rounded-xl text-xs font-bold backdrop-blur-md ${modelsReady && facesLoaded ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
-                                {modelsReady && facesLoaded ? '🤖 AI Sẵn sàng' : '⏳ Đang tải AI...'}
-                            </div>
 
-                            {/* Guidance Text - Below Header */}
-                            {guidance && (
-                                <div className="absolute top-20 left-1/2 -translate-x-1/2 z-30 px-4 py-2 rounded-full text-xs font-bold bg-black/60 text-white backdrop-blur-md border border-white/10 shadow-xl">
+                            {/* Guidance Text - Below Header - Conditional Hide when Result/Notification exists to avoid clutter */}
+                            {/* Hide "already check-in" white bubble on mobile as per user request */}
+                            {guidance && !showSuccessOverlay && !result && (
+                                <div className={`absolute top-24 md:top-28 left-1/2 -translate-x-1/2 z-30 px-5 py-2.5 rounded-2xl text-[11px] md:text-xs font-bold bg-black/70 text-white backdrop-blur-xl border border-white/20 shadow-2xl 
+                                    ${guidance.includes('check-in') ? 'hidden md:block' : ''}`}>
                                     {guidance}
                                 </div>
                             )}
 
-                            {/* Centered Scan Frame - Professional Fixed Unified Frame (Radar Only) */}
+                            {/* Centered Scan Frame - Professional Fixed Unified Frame with Visible Border */}
                             <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-20">
-                                <div className="w-full aspect-square max-w-[280px] md:max-w-[340px] relative">
-                                    {/* Radar Animation - Now the primary visual area */}
+                                <div className={`w-full aspect-square max-w-[280px] md:max-w-[340px] relative transition-all duration-500 ${faceDetected ? 'scale-[1.02]' : 'scale-100'}`}>
+                                    {/* Visible Guidance Border - Premium Bo góc lớn */}
+                                    <div className={`absolute inset-0 border-2 rounded-[40px] md:rounded-[50px] transition-all duration-500 ${multipleFaces ? 'border-red-500/50 shadow-[0_0_20px_rgba(239,68,68,0.3)]' :
+                                        faceDetected ? 'border-emerald-500/50 shadow-[0_0_20px_rgba(16,185,129,0.3)]' :
+                                            'border-white/20 shadow-[0_0_15px_rgba(255,255,255,0.1)]'
+                                        }`}>
+
+                                        {/* Corner Accents - Giúp người dùng tập trung vào giữa */}
+                                        <div className={`absolute -top-[2px] -left-[2px] w-12 h-12 border-t-4 border-l-4 rounded-tl-[40px] md:rounded-tl-[50px] transition-colors duration-500 ${multipleFaces ? 'border-red-500' : faceDetected ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                        <div className={`absolute -top-[2px] -right-[2px] w-12 h-12 border-t-4 border-r-4 rounded-tr-[40px] md:rounded-tr-[50px] transition-colors duration-500 ${multipleFaces ? 'border-red-500' : faceDetected ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                        <div className={`absolute -bottom-[2px] -left-[2px] w-12 h-12 border-b-4 border-l-4 rounded-bl-[40px] md:rounded-bl-[50px] transition-colors duration-500 ${multipleFaces ? 'border-red-500' : faceDetected ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                        <div className={`absolute -bottom-[2px] -right-[2px] w-12 h-12 border-b-4 border-r-4 rounded-br-[40px] md:rounded-br-[50px] transition-colors duration-500 ${multipleFaces ? 'border-red-500' : faceDetected ? 'border-emerald-500' : 'border-indigo-500/50'}`}></div>
+                                    </div>
+
+                                    {/* Radar Animation - Now inside the visual area */}
                                     <div className="absolute inset-0 overflow-hidden rounded-[40px] md:rounded-[50px] opacity-25 pointer-events-none">
                                         <div className="radar-beam" style={{ animationDuration: '2s' }}></div>
                                     </div>
 
                                     {/* Animated scan line (Traditional) */}
-                                    <div className="absolute inset-x-4 top-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-scan opacity-30"></div>
+                                    <div className={`absolute inset-x-10 top-0 h-1 bg-gradient-to-r from-transparent via-indigo-400 to-transparent shadow-[0_0_15px_rgba(99,102,241,0.5)] animate-scan opacity-30 ${faceDetected ? 'opacity-60' : ''}`}></div>
                                 </div>
                             </div>
                             <canvas ref={canvasRef} className="hidden" />
@@ -1627,14 +1668,14 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
 
                     )}
 
-                    {/* Already Checked-in Warning */}
+                    {/* Already Checked-in Warning - Adjusted position to avoid overlap with profile card */}
                     {faceDetected && facesLoaded && recognizedPerson && checkinCooldownsRef.current.has(recognizedPerson.id) &&
-                        (Date.now() - (checkinCooldownsRef.current.get(recognizedPerson.id) || 0) < COOLDOWN_PERIOD) && !showSuccessOverlay && (
-                            <div className="px-4 py-2 bg-emerald-500/90 rounded-full text-white text-xs font-bold flex items-center gap-2 animate-bounce-once">
+                        (Date.now() - (checkinCooldownsRef.current.get(recognizedPerson.id) || 0) < COOLDOWN_PERIOD) && !showSuccessOverlay && !result && (
+                            <div className="px-5 py-2.5 bg-emerald-500/90 backdrop-blur-xl rounded-2xl text-white text-[11px] md:text-xs font-black flex items-center gap-2 animate-bounce-subtle border border-emerald-400/50 shadow-2xl">
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
                                 </svg>
-                                Đã check-in! Vui lòng rời khỏi camera
+                                <span className="uppercase tracking-tight">Đã check-in! Vui lòng rời camera</span>
                             </div>
                         )}
 
