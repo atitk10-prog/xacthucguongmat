@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import * as faceapi from 'face-api.js';
 import { faceService } from '../../services/faceService';
 import { soundService } from '../../services/soundService';
 import { dataService } from '../../services/dataService';
@@ -32,6 +33,11 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
     const [matchedUser, setMatchedUser] = useState<User | null>(null);
     const [error, setError] = useState<string | null>(null);
 
+    const [attempts, setAttempts] = useState(0);
+    const [isScanning, setIsScanning] = useState(false);
+    const [scanProgress, setScanProgress] = useState(0);
+    const [lockoutTime, setLockoutTime] = useState<number | null>(null);
+
     // Sync ref
     useEffect(() => { isProcessingRef.current = isProcessing; }, [isProcessing]);
 
@@ -41,38 +47,10 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
         const init = async () => {
             try {
-                setGuidance('Đang tải AI nhận diện...');
                 setError(null);
 
-                // 1. Load Face Models
-                await faceService.loadModels();
-                setModelsReady(true);
-
-                // 2. Load Users with face_descriptor
-                setGuidance('Đang đồng bộ dữ liệu khuôn mặt...');
-                const response = await dataService.getUsers({ status: 'active' });
-                if (response.success && response.data) {
-                    faceService.faceMatcher.clearAll();
-                    let count = 0;
-                    for (const user of response.data) {
-                        if (user.face_descriptor) {
-                            try {
-                                const descriptor = faceService.stringToDescriptor(user.face_descriptor);
-                                if (descriptor.length > 0) {
-                                    faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
-                                    count++;
-                                }
-                            } catch (e) { console.warn('Invalid descriptor for', user.full_name); }
-                        }
-                    }
-                    console.log(`[FaceLogin] Loaded ${count} faces`);
-                    setUsersLoaded(true);
-                    setGuidance('Đưa khuôn mặt vào khung hình');
-                } else {
-                    setError('Không thể tải dữ liệu người dùng');
-                }
-
-                // 3. Start Camera
+                // 1. Start Camera IMMEDIATELY for fast UX
+                setGuidance('Đang mở camera...');
                 const newStream = await navigator.mediaDevices.getUserMedia({
                     video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
                 });
@@ -81,9 +59,37 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                     videoRef.current.srcObject = newStream;
                 }
 
+                // 2. Load Face Models in background
+                setGuidance('Đang khởi tạo AI...');
+                await faceService.loadModels();
+                setModelsReady(true);
+
+                // 3. Load Users in background WITHOUT blocking
+                setGuidance('Đưa khuôn mặt vào khung hình');
+                dataService.getUsers({ status: 'active' }).then(response => {
+                    if (response.success && response.data) {
+                        faceService.faceMatcher.clearAll();
+                        let count = 0;
+                        for (const user of response.data) {
+                            if (user.face_descriptor) {
+                                try {
+                                    const descriptor = faceService.stringToDescriptor(user.face_descriptor);
+                                    if (descriptor.length > 0) {
+                                        faceService.faceMatcher.registerFace(user.id, descriptor, user.full_name);
+                                        count++;
+                                    }
+                                } catch (e) { }
+                            }
+                        }
+                        setUsersLoaded(true);
+                    } else {
+                        console.error('Failed to load face data');
+                    }
+                });
+
             } catch (err) {
                 console.error('FaceLogin init error:', err);
-                setError('Lỗi khởi tạo camera hoặc AI');
+                setError('Không thể truy cập Camera. Vui lòng cấp quyền.');
             }
         };
 
@@ -99,7 +105,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
 
     // Face Detection Loop
     useEffect(() => {
-        if (!isOpen || !modelsReady || !usersLoaded || !videoRef.current || loginSuccess) return;
+        if (!isOpen || !modelsReady || !videoRef.current || loginSuccess || isScanning) return;
 
         let animationId: number;
         const STABILITY_THRESHOLD = 300; // Faster auth (0.3s)
@@ -107,13 +113,15 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         const CONFIDENCE_THRESHOLD = 42; // More practical sensitivity
 
         const loop = async () => {
-            if (!videoRef.current || videoRef.current.paused || videoRef.current.ended) {
+            if (!videoRef.current || videoRef.current.paused || videoRef.current.ended || loginSuccess || isScanning) {
                 animationId = requestAnimationFrame(loop);
                 return;
             }
 
-            if (isProcessingRef.current) {
-                setTimeout(() => { animationId = requestAnimationFrame(loop); }, 150);
+            if (lockoutTime && Date.now() < lockoutTime) {
+                const waitSecs = Math.ceil((lockoutTime - Date.now()) / 1000);
+                setGuidance(`Quá nhiều lần thử. Vui lòng đợi ${waitSecs}s`);
+                animationId = requestAnimationFrame(loop);
                 return;
             }
 
@@ -125,92 +133,57 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             lastProcessedTimeRef.current = now;
 
             try {
-                // Optimized: Detect ONLY ONE face for login
-                const detections = await faceService.detectFaces(videoRef.current, true);
-                const primaryDetection = detections.length > 0 ? detections[0] : null;
+                const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+                    .withFaceLandmarks();
 
-                const hasFace = !!primaryDetection;
+                const hasFace = !!detections;
                 setFaceDetected(hasFace);
 
-                if (hasFace && primaryDetection) {
-                    const box = primaryDetection.detection.box;
+                if (hasFace && detections) {
+                    const box = detections.detection.box;
                     const videoWidth = videoRef.current.videoWidth;
                     const faceWidthRatio = box.width / videoWidth;
 
-                    if (faceWidthRatio < 0.15) {
+                    if (faceWidthRatio < 0.2) {
                         setGuidance('Lại gần hơn chút nữa');
                         stableStartTimeRef.current = null;
                         setStabilityProgress(0);
-                        recognizedPersonRef.current = null;
-                        setDetectedPerson(null);
-                    } else if (faceWidthRatio > 0.6) {
+                    } else if (faceWidthRatio > 0.65) {
                         setGuidance('Lùi lại một chút');
                         stableStartTimeRef.current = null;
                         setStabilityProgress(0);
-                        recognizedPersonRef.current = null;
-                        setDetectedPerson(null);
+                    } else if (!usersLoaded) {
+                        setGuidance('Đang tải dữ liệu...');
                     } else {
-                        // Good size - identify
-                        const match = faceService.faceMatcher.findMatch(primaryDetection.descriptor, CONFIDENCE_THRESHOLD);
+                        // Face is in perfect position
+                        if (!stableStartTimeRef.current) stableStartTimeRef.current = now;
+                        const duration = now - stableStartTimeRef.current;
 
-                        if (match) {
-                            const prev = recognizedPersonRef.current;
+                        const progress = Math.min(100, (duration / 800) * 100);
+                        setStabilityProgress(progress);
+                        setGuidance('Giữ nguyên vị trí...');
 
-                            if (prev && prev.id === match.userId) {
-                                // Same person - track stability
-                                if (!stableStartTimeRef.current) stableStartTimeRef.current = now;
+                        if (duration >= 800) {
+                            // START RADAR SCAN
+                            setIsScanning(true);
+                            soundService.play('warning');
 
-                                const stableDuration = now - stableStartTimeRef.current;
-                                const progress = Math.min(100, (stableDuration / STABILITY_THRESHOLD) * 100);
-                                setStabilityProgress(progress);
-                                setGuidance(`Giữ yên... ${Math.round(progress)}%`);
-                                setDetectedPerson({ name: match.name, confidence: match.confidence });
-
-                                if (stableDuration >= STABILITY_THRESHOLD && !isProcessingRef.current) {
-                                    // TRIGGER LOGIN
-                                    setIsProcessing(true);
-                                    setGuidance('Đang xác thực...');
-
-                                    // Fetch full user data
-                                    const userRes = await dataService.getUser(match.userId);
-                                    if (userRes.success && userRes.data) {
-                                        soundService.play('success');
-                                        setLoginSuccess(true);
-                                        setMatchedUser(userRes.data);
-                                        setGuidance('Đăng nhập thành công!');
-
-                                        // Auto-close and login after 2s
-                                        setTimeout(() => {
-                                            onLoginSuccess(userRes.data!);
-                                        }, 2000);
-                                    } else {
-                                        soundService.play('error');
-                                        setError('Không thể lấy thông tin người dùng');
-                                        setIsProcessing(false);
-                                    }
+                            // Visual radar progress (1.5s total)
+                            let prog = 0;
+                            const interval = setInterval(() => {
+                                prog += 5;
+                                setScanProgress(prog);
+                                if (prog >= 100) {
+                                    clearInterval(interval);
+                                    performRadarAuth();
                                 }
-                            } else {
-                                // New person detected
-                                recognizedPersonRef.current = { id: match.userId, name: match.name, confidence: match.confidence };
-                                stableStartTimeRef.current = now;
-                                setStabilityProgress(0);
-                                setGuidance('Nhận diện được khuôn mặt, giữ yên...');
-                            }
-                        } else {
-                            // Unknown face
-                            setGuidance('Khuôn mặt chưa được đăng ký');
-                            setDetectedPerson(null);
-                            stableStartTimeRef.current = null;
-                            setStabilityProgress(0);
-                            recognizedPersonRef.current = null;
+                            }, 75);
                         }
                     }
                 } else {
                     setGuidance('Di chuyển khuôn mặt vào khung hình');
                     setStabilityProgress(0);
                     stableStartTimeRef.current = null;
-                    recognizedPersonRef.current = null;
-                    setDetectedPerson(null);
                 }
             } catch (e) {
                 console.error('FaceLogin detection error', e);
@@ -219,9 +192,60 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             animationId = requestAnimationFrame(loop);
         };
 
+        const performRadarAuth = async () => {
+            if (!videoRef.current) return;
+            setGuidance('Đang xác thực bảo mật...');
+
+            try {
+                const fullDetection = await faceService.getFaceDescriptor(videoRef.current);
+
+                if (fullDetection) {
+                    const match = faceService.faceMatcher.findMatch(fullDetection, CONFIDENCE_THRESHOLD);
+
+                    if (match) {
+                        const userRes = await dataService.getUser(match.userId);
+                        if (userRes.success && userRes.data) {
+                            soundService.play('success');
+                            setLoginSuccess(true);
+                            setMatchedUser(userRes.data);
+                            setGuidance('Xác thực thành công!');
+                            setTimeout(() => {
+                                onLoginSuccess(userRes.data!);
+                            }, 1000); // Shorter success wait
+                            return;
+                        }
+                    }
+                }
+
+                // Failed or no match
+                soundService.play('error');
+                const newAttempts = attempts + 1;
+                setAttempts(newAttempts);
+
+                if (newAttempts >= 5) {
+                    setLockoutTime(Date.now() + 60000); // 1 minute lockout
+                    setError('Quá 5 lần thử. Thử lại sau 1 phút.');
+                } else {
+                    setGuidance(`Không khớp. Thử lại lần ${newAttempts}/5`);
+                }
+
+                // Reset for next attempt
+                setTimeout(() => {
+                    setIsScanning(false);
+                    setScanProgress(0);
+                    stableStartTimeRef.current = null;
+                    setStabilityProgress(0);
+                }, 2000);
+
+            } catch (e) {
+                console.error('Radar auth error', e);
+                setIsScanning(false);
+            }
+        };
+
         loop();
         return () => cancelAnimationFrame(animationId);
-    }, [isOpen, modelsReady, usersLoaded, loginSuccess]);
+    }, [isOpen, modelsReady, usersLoaded, loginSuccess, isScanning, attempts, lockoutTime]);
 
     // Cleanup stream when modal closes
     useEffect(() => {
@@ -315,7 +339,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                         {/* Face Frame Overlay */}
                         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                             <div
-                                className={`w-48 h-60 rounded-[3rem] border-4 transition-all duration-300 ${faceDetected
+                                className={`w-48 h-64 rounded-[3rem] border-4 transition-all duration-300 relative ${faceDetected
                                     ? (guidance.includes('Lại gần') || guidance.includes('Lùi lại'))
                                         ? 'border-rose-500 shadow-[0_0_30px_rgba(244,63,94,0.4)]'
                                         : stabilityProgress >= 100
@@ -324,14 +348,27 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                                     : 'border-white/40'
                                     }`}
                             >
+                                {/* Radar Line */}
+                                {isScanning && (
+                                    <div
+                                        className="absolute left-0 right-0 h-1 bg-gradient-to-r from-transparent via-cyan-400 to-transparent shadow-[0_0_15px_cyan] z-20"
+                                        style={{ top: `${scanProgress}%` }}
+                                    />
+                                )}
+
+                                {/* Scanning Glow */}
+                                {isScanning && (
+                                    <div className="absolute inset-0 bg-cyan-400/10 animate-pulse" />
+                                )}
+
                                 {/* Progress Ring */}
-                                {faceDetected && stabilityProgress > 0 && stabilityProgress < 100 && (
+                                {faceDetected && !isScanning && stabilityProgress > 0 && stabilityProgress < 100 && (
                                     <svg className="absolute -inset-2 w-[calc(100%+16px)] h-[calc(100%+16px)]" viewBox="0 0 200 250">
                                         <ellipse
                                             cx="100"
                                             cy="125"
                                             rx="96"
-                                            ry="121"
+                                            ry="127"
                                             fill="none"
                                             stroke="rgba(99,102,241,0.3)"
                                             strokeWidth="4"
@@ -340,11 +377,11 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                                             cx="100"
                                             cy="125"
                                             rx="96"
-                                            ry="121"
+                                            ry="127"
                                             fill="none"
                                             stroke="#6366f1"
                                             strokeWidth="4"
-                                            strokeDasharray={`${stabilityProgress * 6.7} 670`}
+                                            strokeDasharray={`${stabilityProgress * 7} 700`}
                                             strokeLinecap="round"
                                             className="transition-all duration-100"
                                         />
