@@ -25,6 +25,7 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [modelsReady, setModelsReady] = useState(false);
     const [faceConfidence, setFaceConfidence] = useState<number | null>(null);
+    const [isLowLight, setIsLowLight] = useState(false);
 
     // 1. Load Event Data
     useEffect(() => {
@@ -257,12 +258,24 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
                                 Vui lòng cho phép truy cập GPS và Camera để xác thực vị trí và danh tính của bạn.
                             </p>
                         </div>
-                        <button
-                            onClick={startCheckin}
-                            className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-xl shadow-indigo-200 hover:bg-indigo-700 active:scale-95 transition-all"
-                        >
-                            BẮT ĐẦU NGAY
-                        </button>
+                        <div className="flex flex-col gap-4">
+                            <label className="flex items-center justify-center gap-2 text-slate-500 text-sm cursor-pointer hover:text-indigo-600 transition-colors">
+                                <input
+                                    type="checkbox"
+                                    checked={isLowLight}
+                                    onChange={(e) => setIsLowLight(e.target.checked)}
+                                    className="w-4 h-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                                />
+                                <span className="font-bold">Chế độ bù sáng ban đêm 🌙</span>
+                            </label>
+
+                            <button
+                                onClick={startCheckin}
+                                className="w-full py-4 bg-indigo-600 text-white rounded-2xl font-black text-lg shadow-xl shadow-indigo-200 hover:bg-indigo-700 active:scale-95 transition-all"
+                            >
+                                BẮT ĐẦU NGAY
+                            </button>
+                        </div>
                     </div>
                 )}
 
@@ -278,6 +291,11 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
                                 muted
                                 className="w-full h-full object-cover mirror"
                             />
+
+                            {/* Low Light Flash Overlay */}
+                            {isLowLight && (
+                                <div className="absolute inset-0 bg-white z-[5] animate-pulse pointer-events-none opacity-50 shadow-[inset_0_0_100px_rgba(255,255,255,1)]" />
+                            )}
 
                             {/* Overlay Scanning Effect */}
                             {status === 'verifying_face' && (

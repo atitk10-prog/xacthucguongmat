@@ -4,7 +4,7 @@ import { supabase } from '../../services/supabaseClient';
 import { faceService, faceMatcher, base64ToImage, stringToDescriptor, descriptorToString } from '../../services/faceService';
 import { qrScannerService } from '../../services/qrScannerService';
 import { Event, User, EventCheckin, CheckinMethod } from '../../types';
-import { Camera, X, CheckCircle, RefreshCw, AlertTriangle, ChevronLeft, Settings, Clock, User as UserIcon, QrCode, FlipHorizontal2, Maximize2, Users, Search } from 'lucide-react';
+import { Camera, X, CheckCircle, RefreshCw, AlertTriangle, ChevronLeft, Settings, Clock, User as UserIcon, QrCode, FlipHorizontal2, Maximize2, Users, Search, Moon } from 'lucide-react';
 
 // Interface for event participant with face data
 interface EventParticipant {
@@ -169,6 +169,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     const [showAttendeeModal, setShowAttendeeModal] = useState(false);
     const [checkedInUserIds, setCheckedInUserIds] = useState<Set<string>>(new Set());
     const [searchTerm, setSearchTerm] = useState('');
+    const [isLowLight, setIsLowLight] = useState(false);
     // Ref to track if success overlay is active (to silence redundant alerts)
     const successActiveRef = useRef(false);
     useEffect(() => {
@@ -1382,9 +1383,18 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                     <div className="flex-1 flex justify-center items-center gap-1.5 md:gap-3 px-2">
                         {/* AI Signal Dot - Small Style */}
                         <div className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/10">
-                            <div className={`w-2 h-2 rounded-full ${modelsReady && facesLoaded ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-500 animate-pulse'} transition-all`} />
-                            <span className="text-[10px] font-black text-white/70 uppercase tracking-tighter hidden sm:inline">AI</span>
+                            <div className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${isLoadingModels ? 'bg-amber-500 animate-pulse' : (modelsReady ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-slate-500')} transition-all`} />
+                            <span className="text-[10px] font-black text-white/50 uppercase tracking-tighter hidden sm:inline">AI Engine</span>
                         </div>
+
+                        {/* Night Mode Toggle */}
+                        <button
+                            onClick={() => setIsLowLight(!isLowLight)}
+                            className={`p-1.5 md:p-2 rounded-lg border transition-all active:scale-95 ${isLowLight ? 'bg-white text-indigo-600 border-white shadow-[0_0_15px_rgba(255,255,255,0.4)]' : 'bg-white/5 text-white/60 border-white/10'}`}
+                            title="Chế độ bù sáng ban đêm"
+                        >
+                            <Moon className={`w-4 h-4 ${isLowLight ? 'fill-indigo-600' : ''}`} />
+                        </button>
 
                         {!isOnline && (
                             <div className="flex items-center gap-1 px-1.5 py-1 bg-amber-500/20 text-amber-500 border border-amber-500/30 rounded-lg text-[9px] font-black animate-pulse">
@@ -1598,6 +1608,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                                 <p className="text-slate-400 text-sm font-medium">Đưa mã QR học sinh vào khung để ghi nhận điểm danh</p>
                             </div>
                         </div>
+                    )}
+
+                    {/* Low Light Flash Overlay */}
+                    {isLowLight && (
+                        <div className="absolute inset-0 bg-white z-[5] animate-pulse pointer-events-none opacity-40 shadow-[inset_0_0_100px_rgba(255,255,255,1)]" />
                     )}
 
                     {/* Auto check-in progress bar */}

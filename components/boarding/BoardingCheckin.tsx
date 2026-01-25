@@ -81,6 +81,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
     // Network & Sync status
     const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
     const [pendingSyncCount, setPendingSyncCount] = useState(0);
+    const [isLowLight, setIsLowLight] = useState(false);
 
     // HID Scanner Buffer
     const scannerBuffer = useRef<string>('');
@@ -645,6 +646,15 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                             </div>
                         )}
                         <div className={`w-1.5 h-1.5 md:w-2 md:h-2 rounded-full ${systemReady ? 'bg-emerald-500' : 'bg-red-500'} animate-pulse`}></div>
+
+                        {/* Night Mode Toggle */}
+                        <button
+                            onClick={() => setIsLowLight(!isLowLight)}
+                            className={`p-1.5 md:p-2 rounded-lg border transition-all active:scale-95 ${isLowLight ? 'bg-white text-indigo-600 border-white shadow-[0_0_15px_rgba(255,255,255,0.4)]' : 'bg-white/5 text-white/60 border-white/10'}`}
+                            title="Bù sáng ban đêm"
+                        >
+                            <Moon className={`w-4 h-4 ${isLowLight ? 'fill-indigo-600' : ''}`} />
+                        </button>
                         <span className="text-white/60 text-[10px] md:text-xs font-mono hidden md:inline">{new Date().toLocaleTimeString()}</span>
                     </div>
                 </div>
@@ -673,6 +683,11 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                                 <button onClick={() => switchCheckinMode('qr', cameraFacing === 'environment' ? 'user' : 'environment')} className="absolute bottom-4 right-4 p-2 bg-slate-800 rounded-full text-white"><FlipHorizontal2 /></button>
                             )}
                         </div>}
+
+                    {/* Low Light Flash Overlay */}
+                    {isLowLight && (
+                        <div className="absolute inset-0 bg-white z-[5] animate-pulse pointer-events-none opacity-40 shadow-[inset_0_0_100px_rgba(255,255,255,1)]" />
+                    )}
 
                     {/* Dynamic Face tracking frame */}
                     {checkinMode === 'face' && faceBox && (
