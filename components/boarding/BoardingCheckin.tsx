@@ -9,7 +9,7 @@ import { User, BoardingCheckin as BoardingCheckinType, BoardingConfig, BoardingT
 import {
     Camera, RefreshCw, UserCheck, AlertTriangle, CheckCircle,
     ArrowDown, ArrowUp, Clock, History, ChevronLeft, MapPin,
-    Moon, Sun, Sunrise, Sunset, Settings, Save, X, QrCode, User as UserIcon,
+    Moon, Sun, Sunrise, Sunset, Settings, Save, X, QrCode, User as UserIcon, Users,
     FlipHorizontal2, RotateCcw, CameraOff, Maximize2, Search, Filter
 } from 'lucide-react';
 import { Room } from '../../types';
@@ -111,8 +111,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 (item.name === entry.name && item.time === entry.time)
             );
             if (isDuplicate) return prev;
-            // Keep last 30 for better history
-            return [entry, ...prev.slice(0, 29)];
+            // Limit to 10 people as requested
+            return [entry, ...prev.slice(0, 9)];
         });
 
         // Update checkedInIds Set
@@ -331,8 +331,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 const roomsRes = await dataService.getRooms();
                 if (roomsRes.success && roomsRes.data) setRooms(roomsRes.data);
 
-                // LOAD RECENT CHECK-INS (LIMIT 30)
-                const recentRes = await dataService.getRecentBoardingLogs(30);
+                // LOAD RECENT CHECK-INS (LIMIT 10)
+                const recentRes = await dataService.getRecentBoardingLogs(10);
                 if (recentRes.success && recentRes.data) {
                     const mapped = recentRes.data.map(c => ({
                         name: c.user?.full_name || 'Học sinh',
@@ -445,7 +445,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 dataService.getRecentBoardingActivity({
                     date: new Date().toLocaleDateString('en-CA'),
                     slotId: found.id,
-                    limit: 15
+                    limit: 10
                 }).then(res => {
                     if (res.success && res.data) {
                         const newCheckedInIds = new Set<string>();
@@ -781,7 +781,16 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                         {selectedSlot ? <div><h2 className="text-white font-black text-xl">{selectedSlot.name}</h2><p className="text-white/40 text-xs">{selectedSlot.start_time} - {selectedSlot.end_time}</p></div> : <div className="text-center py-4 text-slate-500">Ngoài giờ</div>}
                     </div>
                     <div className="flex-1 bg-slate-800/50 p-5 rounded-3xl border border-white/10 overflow-hidden flex flex-col hidden md:flex">
-                        <h3 className="text-white/80 font-bold mb-4 flex items-center gap-2 text-sm uppercase"><History className="w-4 h-4" /> Vừa Check-in</h3>
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-white/80 font-bold flex items-center gap-2 text-sm uppercase"><History className="w-4 h-4" /> Vừa Check-in</h3>
+                            <button
+                                onClick={() => setShowAttendanceModal(true)}
+                                className="p-2 bg-indigo-600/30 hover:bg-indigo-600 text-indigo-400 hover:text-white rounded-xl transition-all border border-indigo-500/30"
+                                title="Xem tất cả"
+                            >
+                                <Users className="w-4 h-4" />
+                            </button>
+                        </div>
                         <div className="flex-1 overflow-y-auto space-y-3 custom-scrollbar">
                             {recentCheckins.length === 0 ? <p className="text-slate-600 text-center py-10 italic">Trống</p> : recentCheckins.map((item, i) => (
                                 <div key={i} className="flex items-center gap-3 bg-white/5 p-3 rounded-2xl border border-white/5">
@@ -803,7 +812,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                             onClick={() => setShowAttendanceModal(true)}
                             className="p-4 bg-emerald-600 rounded-full shadow-2xl text-white transform active:scale-95 transition-all"
                         >
-                            <UserIcon className="w-6 h-6" />
+                            <Users className="w-6 h-6" />
                             {checkedInIds.size > 0 && (
                                 <div className="absolute -top-1 -right-1 w-5 h-5 bg-white text-emerald-600 rounded-full flex items-center justify-center text-[10px] font-black border-2 border-emerald-600">
                                     {checkedInIds.size}
@@ -822,7 +831,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                             <div className="p-6 border-b border-white/5 flex items-center justify-between bg-slate-900/50">
                                 <div>
                                     <h2 className="text-xl font-black text-white flex items-center gap-3">
-                                        <UserIcon className="w-6 h-6 text-indigo-400" />
+                                        <Users className="w-6 h-6 text-indigo-400" />
                                         Danh sách điểm danh
                                     </h2>
                                     <p className="text-slate-400 text-xs font-medium mt-1">
