@@ -58,3 +58,10 @@ FROM boarding_time_slots;
 SELECT 'INSERT INTO teacher_permissions (module_id, module_name, is_enabled, can_edit, can_delete) VALUES (' || 
     quote_nullable(module_id) || ',' || quote_nullable(module_name) || ',' || is_enabled || ',' || can_edit || ',' || can_delete || ') ON CONFLICT (module_id) DO UPDATE SET is_enabled = EXCLUDED.is_enabled;'
 FROM teacher_permissions;
+
+-- 9. BẢNG BOARDING_ATTENDANCE (DỮ LIỆU ĐIỂM DANH NỘI TRÚ)
+-- Lưu ý: Lấy từ bảng boarding_checkins cũ nếu có, hoặc chính nó nếu đã đổi tên
+SELECT 'INSERT INTO boarding_attendance (id, user_id, slot_id, date, checkin_time, status) VALUES (' || 
+    quote_nullable(id) || ',' || quote_nullable(user_id) || ',' || quote_nullable(slot_id) || ',' || 
+    quote_nullable(date::text) || ',' || quote_nullable(checkin_time::text) || ',' || quote_nullable(status) || ') ON CONFLICT (id) DO NOTHING;'
+FROM boarding_attendance;

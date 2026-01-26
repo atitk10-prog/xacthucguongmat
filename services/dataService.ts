@@ -231,16 +231,18 @@ async function login(identifier: string, password: string): Promise<ApiResponse<
     try {
         // Simple password-based auth (no Supabase Auth, just table lookup)
         // Use maybeSingle() to avoid 406 error when no user found
-        const { data, error } = await supabase
+        const { data: users, error } = await supabase
             .from('users')
             .select('*')
             .or(`email.eq.${identifier},student_code.eq.${identifier}`)
-            .maybeSingle();
+            .limit(1);
 
         if (error) {
             console.error('Login query error:', error);
             return { success: false, error: 'Lỗi truy vấn database' };
         }
+
+        const data = users && users.length > 0 ? users[0] : null;
 
         if (!data) {
             return { success: false, error: 'Tài khoản không tồn tại (Email hoặc Mã SV sai)' };
@@ -824,13 +826,14 @@ async function createUser(userData: Partial<User> & { password?: string }): Prom
             }
         });
 
-        const { data, error } = await supabase
+        const { data: results, error } = await supabase
             .from('users')
             .insert(insertPayload)
-            .select()
-            .single();
+            .select();
 
         if (error) return { success: false, error: error.message };
+        const data = results && results.length > 0 ? results[0] : null;
+        if (!data) return { success: false, error: 'Không nhận được dữ liệu sau khi tạo' };
 
         // Auto-compute face descriptor if avatar is provided (runs in background)
         if (userData.avatar_url && !userData.face_descriptor) {
@@ -882,14 +885,15 @@ async function updateUser(id: string, userData: Partial<User> & { password?: str
             updatePayload.password_hash = password;
         }
 
-        const { data, error } = await supabase
+        const { data: results, error } = await supabase
             .from('users')
             .update(updatePayload)
             .eq('id', id)
-            .select()
-            .single();
+            .select();
 
         if (error) return { success: false, error: error.message };
+        const data = results && results.length > 0 ? results[0] : null;
+        if (!data) return { success: false, error: 'Không tìm thấy người dùng để cập nhật' };
 
         // Auto re-compute face descriptor if avatar changed (runs in background)
         // If avatar_url is provided, we ALWAYS re-compute to ensure Face ID matches the new image
@@ -1736,7 +1740,7 @@ async function boardingCheckin(
         }
 
         // 2. Lưu vào bảng log duy nhất (boarding_attendance)
-        const { data: attendanceData, error: attendanceError } = await supabase
+        const { data: results, error: attendanceError } = await supabase
             .from('boarding_attendance')
             .upsert({
                 user_id: userId,
@@ -1747,10 +1751,10 @@ async function boardingCheckin(
             }, {
                 onConflict: 'user_id, slot_id, date'
             })
-            .select()
-            .single();
+            .select();
 
         if (attendanceError) return { success: false, error: attendanceError.message };
+        const attendanceData = results && results.length > 0 ? results[0] : null;
 
         // 3. Xử lý trừ điểm nếu đi muộn
         if (status === 'late') {
