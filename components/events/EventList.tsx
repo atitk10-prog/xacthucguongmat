@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
+import { supabase } from '../../services/supabaseClient';
 import { Event, EventStatus, EventType, User } from '../../types';
 import QRCode from 'qrcode';
 import { Users, Search, CheckCircle, XCircle, X, ChevronRight, Filter } from 'lucide-react';
@@ -155,12 +156,61 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
         loadEvents();
         loadUsers();
 
+        // Real-time Subscriptions
+        const checkinsChannel = supabase
+            .channel('public:checkins')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'checkins' }, (payload) => {
+                const newCheckin = payload.new as any;
+                setCheckedInCounts(prev => ({
+                    ...prev,
+                    [newCheckin.event_id]: (prev[newCheckin.event_id] || 0) + 1
+                }));
+            })
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'checkins' }, (payload) => {
+                const oldCheckin = payload.old as any;
+                setCheckedInCounts(prev => ({
+                    ...prev,
+                    [oldCheckin.event_id]: Math.max(0, (prev[oldCheckin.event_id] || 1) - 1)
+                }));
+            })
+            .subscribe();
+
+        const participantsChannel = supabase
+            .channel('public:event_participants')
+            .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'event_participants' }, (payload) => {
+                const newParticipant = payload.new as any;
+                setParticipantCounts(prev => ({
+                    ...prev,
+                    [newParticipant.event_id]: (prev[newParticipant.event_id] || 0) + 1
+                }));
+            })
+            .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'event_participants' }, (payload) => {
+                const oldParticipant = payload.old as any;
+                setParticipantCounts(prev => ({
+                    ...prev,
+                    [oldParticipant.event_id]: Math.max(0, (prev[oldParticipant.event_id] || 1) - 1)
+                }));
+            })
+            .subscribe();
+
+        const eventsChannel = supabase
+            .channel('public:events')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => {
+                loadEvents(); // Reload event list on structural changes
+            })
+            .subscribe();
+
         // Tự động đóng hướng dẫn sau 10 giây (yêu cầu của nhà trường)
         const timer = setTimeout(() => {
             setShowTips(false);
         }, 10000);
 
-        return () => clearTimeout(timer);
+        return () => {
+            clearTimeout(timer);
+            supabase.removeChannel(checkinsChannel);
+            supabase.removeChannel(participantsChannel);
+            supabase.removeChannel(eventsChannel);
+        };
     }, []);
 
     // Calculate stats

@@ -92,9 +92,17 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
             .channel('boarding_dashboard_realtime')
             .on(
                 'postgres_changes',
-                { event: '*', schema: 'public', table: 'boarding_checkins' },
+                { event: '*', schema: 'public', table: 'boarding_attendance' },
                 () => {
-                    console.log('Realtime change detected');
+                    console.log('Realtime change detected in attendance');
+                    loadDashboardData(true); // Silent refresh
+                }
+            )
+            .on(
+                'postgres_changes',
+                { event: '*', schema: 'public', table: 'exit_permissions' },
+                () => {
+                    console.log('Realtime change detected in permissions');
                     loadDashboardData(true); // Silent refresh
                 }
             )

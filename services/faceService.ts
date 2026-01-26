@@ -40,9 +40,10 @@ const warmupModels = async (): Promise<void> => {
             ctx.fill();
         }
 
-        // Run detection to warm up all networks
+        // Run detection to warm up all networks using TinyFaceDetector (lighter)
+        // This ensures the backend (TensorFlow.js) is ready
         await faceapi
-            .detectSingleFace(dummyCanvas)
+            .detectSingleFace(dummyCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 160 }))
             .withFaceLandmarks()
             .withFaceDescriptor();
 
@@ -69,10 +70,16 @@ export async function loadModels(): Promise<void> {
     modelsLoading = true;
 
     try {
+        console.log('📦 Loading face models from CDN...');
+
+        // Load tiny detector FIRST (essential for browser stability)
+        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+
+        // Load others
         await Promise.all([
-            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), // TINY/FAST detection (Mô hình siêu nhẹ)
-            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), // Landmarks
-            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL) // Recognition
+            faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
         ]);
 
         // Warmup BEFORE marking as loaded
@@ -82,7 +89,13 @@ export async function loadModels(): Promise<void> {
         console.log('✅ Face models loaded and warmed up!');
     } catch (error) {
         console.error('❌ Failed to load face models:', error);
-        throw error;
+        // Set modelsLoaded to true anyway if tiny is loaded, to prevent blocking
+        if (faceapi.nets.tinyFaceDetector.isLoaded) {
+            console.warn('⚠️ Some models failed, but TinyFaceDetector is ready. Proceeding...');
+            modelsLoaded = true;
+        } else {
+            throw error;
+        }
     } finally {
         modelsLoading = false;
     }
@@ -98,7 +111,7 @@ export async function getFaceDescriptor(input: HTMLImageElement | HTMLVideoEleme
     if (!modelsLoaded) await loadModels();
 
     const detection = await faceapi
-        .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 160 }))
+        .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 320 })) // Increased size for better detection
         .withFaceLandmarks()
         .withFaceDescriptor();
 
@@ -112,14 +125,14 @@ export async function detectFaces(input: HTMLImageElement | HTMLVideoElement | H
 
     if (single) {
         const detection = await faceapi
-            .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 160 }))
+            .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 256 })) // Adjusted size
             .withFaceLandmarks()
             .withFaceDescriptor();
         return detection ? [detection] : [];
     }
 
     const detections = await faceapi
-        .detectAllFaces(input)
+        .detectAllFaces(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 256 })) // Force tiny detector
         .withFaceLandmarks()
         .withFaceDescriptors();
 

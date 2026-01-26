@@ -679,7 +679,7 @@ async function getUsers(options?: {
         const isPaging = options?.page !== undefined && options?.pageSize !== undefined;
 
         let query = supabase.from('users').select(
-            'id, full_name, email, role, avatar_url, status, student_code, organization, created_at, birth_date, room_id, total_points', // Removed face_descriptor
+            'id, full_name, email, role, avatar_url, status, student_code, organization, created_at, birth_date, room_id, face_descriptor, total_points',
             { count: isPaging ? 'exact' : undefined }
         );
 
@@ -803,18 +803,30 @@ async function createUser(userData: Partial<User> & { password?: string }): Prom
 
         const { password, ...rest } = userData; // Separate password
 
-        // Convert empty strings to null for UUID/Foreign Key fields
-        const sanitizedRest = { ...rest };
-        if (sanitizedRest.room_id === '') sanitizedRest.room_id = null;
-        if (sanitizedRest.class_id === '') sanitizedRest.class_id = null;
+        // Whitelist allowed columns to prevent 400 errors from extra fields
+        const allowedColumns = [
+            'email', 'full_name', 'role', 'class_id', 'room_id', 'zone',
+            'avatar_url', 'face_vector', 'face_descriptor', 'qr_code',
+            'status', 'student_code', 'organization', 'birth_date',
+            'total_points', 'password_hash', 'phone', 'address'
+        ];
+
+        const insertPayload: any = {
+            total_points: (userData as any).total_points ?? startPoints,
+            password_hash: password
+        };
+
+        Object.keys(rest).forEach(key => {
+            if (allowedColumns.includes(key)) {
+                let value = rest[key as keyof User];
+                if ((key === 'room_id' || key === 'class_id') && value === '') value = null;
+                insertPayload[key] = value;
+            }
+        });
 
         const { data, error } = await supabase
             .from('users')
-            .insert({
-                ...sanitizedRest,
-                total_points: (userData as any).total_points ?? startPoints,
-                password_hash: password // Map to password_hash
-            })
+            .insert(insertPayload)
             .select()
             .single();
 
@@ -1354,6 +1366,8 @@ async function saveEventParticipants(
                 birth_date: p.birth_date || null,
                 organization: p.organization || null,
                 address: p.address || null,
+                phone: (p as any).phone || null,
+                email: (p as any).email || null,
                 student_code: p.student_code || null,
                 qr_code: p.qr_code || null,
                 user_id: p.user_id || null, // Include user_id
@@ -1409,7 +1423,8 @@ async function saveEventParticipants(
                 if (p.full_name) userUpdatePayload.full_name = p.full_name;
                 if (p.birth_date) userUpdatePayload.birth_date = p.birth_date;
                 if (p.organization) userUpdatePayload.organization = p.organization;
-                // address is not in users table yet
+                if (p.address) userUpdatePayload.address = p.address;
+                if ((p as any).phone) userUpdatePayload.phone = (p as any).phone;
                 if (p.avatar_url) userUpdatePayload.avatar_url = p.avatar_url;
 
                 // Only update if there are fields to update

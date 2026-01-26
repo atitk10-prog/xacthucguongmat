@@ -47,6 +47,8 @@ export interface User {
   avatar_url?: string;
   birth_date?: string; // Added field
   total_points?: number; // Added field
+  phone?: string;
+  address?: string;
   face_vector?: string;
   face_descriptor?: string; // New field for JSON array
   student_code?: string; // Mã học sinh / nhân viên
@@ -113,6 +115,8 @@ export interface EventParticipant {
   birth_date?: string;
   organization?: string;
   address?: string;
+  phone?: string;
+  email?: string;
   created_at?: string;
   user_id?: string; // Link to system user
   student_code?: string; // Added field
