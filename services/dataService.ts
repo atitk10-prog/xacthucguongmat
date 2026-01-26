@@ -947,7 +947,7 @@ async function getAllStudentsForCheckin(requireFaceId: boolean = true): Promise<
     try {
         let query = supabase
             .from('users')
-            .select('id, full_name, email, avatar_url, student_code, organization, role, birth_date, room_id'); // Removed face_descriptor
+            .select('id, full_name, email, avatar_url, student_code, organization, role, birth_date, room_id, face_descriptor'); // Added face_descriptor back
 
         if (requireFaceId) {
             query = query.not('face_descriptor', 'is', null);
