@@ -70,6 +70,7 @@ export async function loadModels(): Promise<void> {
 
     try {
         await Promise.all([
+            faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL), // ACCURATE detection (Mô hình chính xác cao)
             faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), // TINY/FAST detection (Mô hình siêu nhẹ)
             faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), // Landmarks
             faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL) // Recognition
