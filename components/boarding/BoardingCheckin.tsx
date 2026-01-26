@@ -115,8 +115,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             return [entry, ...prev.slice(0, 9)];
         });
 
-        // Update checkedInIds Set
-        if (entry.userId) {
+        // Update checkedInIds Set - ONLY if it matches current slot to avoid mixing sessions
+        if (entry.userId && (!selectedSlot || entry.type === selectedSlot.name)) {
             setCheckedInIds(prev => {
                 const next = new Set(prev);
                 next.add(entry.userId!);
