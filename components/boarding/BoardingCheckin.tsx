@@ -331,22 +331,28 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 const roomsRes = await dataService.getRooms();
                 if (roomsRes.success && roomsRes.data) setRooms(roomsRes.data);
 
-                // LOAD RECENT CHECK-INS (LIMIT 10)
-                const recentRes = await dataService.getRecentBoardingLogs(10);
+                // LOAD RECENT CHECK-INS (ONLY TODAY, LIMIT 10)
+                const recentRes = await dataService.getRecentBoardingActivity({
+                    date: getTodayDateStr(),
+                    limit: 10
+                });
+
                 if (recentRes.success && recentRes.data) {
                     const mapped = recentRes.data.map(c => ({
-                        name: c.user?.full_name || 'Học sinh',
+                        name: c.name,
                         userId: c.user_id,
-                        time: new Date(c.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-                        type: c.slot?.name || 'Điểm danh',
-                        image: c.user?.avatar_url,
+                        time: new Date(c.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+                        type: c.slot_name || 'Điểm danh',
+                        image: c.avatar,
                         status: c.status === 'late' ? 'warning' : 'success'
                     }));
                     setRecentCheckins(mapped);
 
-                    // Sync checkedInIds
+                    // Sync checkedInIds for today
                     const ids = new Set<string>();
-                    recentRes.data.forEach(c => ids.add(c.user_id));
+                    recentRes.data.forEach(c => {
+                        if (c.user_id) ids.add(c.user_id);
+                    });
                     setCheckedInIds(ids);
                 }
 
