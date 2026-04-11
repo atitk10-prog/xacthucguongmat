@@ -120,7 +120,7 @@ const HelpCenter: React.FC = () => {
                         <div className="flex flex-wrap justify-center md:justify-start gap-4 pt-2">
                             <div className="bg-white/10 px-4 py-2 rounded-xl border border-white/10 text-sm font-bold flex items-center gap-2">
                                 <Icons.Dashboard className="w-4 h-4 text-indigo-400" />
-                                Hotline: 1900 xxxx
+                                Hotline: 0975957322
                             </div>
                             <div className="bg-white/10 px-4 py-2 rounded-xl border border-white/10 text-sm font-bold flex items-center gap-2">
                                 <Icons.FileText className="w-4 h-4 text-indigo-400" />

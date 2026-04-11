@@ -6,6 +6,7 @@ import {
     Calendar, Download, Filter, ChevronLeft, ChevronRight,
     CheckCircle, XCircle, Clock, AlertTriangle, Users, MinusCircle, RefreshCw
 } from 'lucide-react';
+import * as XLSX from 'xlsx';
 
 interface CheckinRecord {
     id: string;
@@ -45,16 +46,28 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
     const [filterOrg, setFilterOrg] = useState('');
     const [organizations, setOrganizations] = useState<string[]>([]);
     const [timeSlots, setTimeSlots] = useState<BoardingTimeSlot[]>([]);
+    const [allBoardingStudents, setAllBoardingStudents] = useState<any[]>([]);
+    const [onLeaveIds, setOnLeaveIds] = useState<Set<string>>(new Set());
 
     // Process Absent Modal State
     const [showAbsentModal, setShowAbsentModal] = useState(false);
     const [absentSlotId, setAbsentSlotId] = useState<string>('');
     const [isProcessing, setIsProcessing] = useState(false);
+    const [absentStep, setAbsentStep] = useState<'select' | 'preview' | 'result'>('select');
+    const [previewStudents, setPreviewStudents] = useState<{ id: string; name: string; code: string; organization: string; points: number; isExcused: boolean }[]>([]);
+    const [excludedIds, setExcludedIds] = useState<Set<string>>(new Set());
+    const [previewAbsentPoints, setPreviewAbsentPoints] = useState(10);
     const [processResult, setProcessResult] = useState<{
         processed: number;
         pointsDeducted: number;
         students: { name: string; code: string; organization: string; points: number; isExcused: boolean }[]
     } | null>(null);
+    const [finalizedSlots, setFinalizedSlots] = useState<Set<string>>(() => {
+        try {
+            const saved = localStorage.getItem('boarding_finalized_slots');
+            return saved ? new Set(JSON.parse(saved)) : new Set();
+        } catch { return new Set(); }
+    });
 
     // Process Late Modal State
     const [showLateModal, setShowLateModal] = useState(false);
@@ -88,13 +101,34 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
     const loadData = async () => {
         setIsLoading(true);
         try {
-            const res = await dataService.getBoardingCheckins({ date: selectedDate });
-            if (res.success && res.data) {
-                console.log('Boarding Checkins Data:', res.data); // Debugging
-                setCheckins(res.data as CheckinRecord[]);
-                // Extract unique organizations
-                const orgs = [...new Set(res.data.map(c => c.user?.organization).filter(Boolean))] as string[];
+            const today = selectedDate;
+            const [checkinsRes, studentsRes, leaveRes] = await Promise.all([
+                dataService.getBoardingCheckins({ date: today }),
+                dataService.getAllStudentsForCheckin(false),
+                dataService.getExitPermissions({ status: 'approved', startDate: today })
+            ]);
+
+            if (checkinsRes.success && checkinsRes.data) {
+                setCheckins(checkinsRes.data as CheckinRecord[]);
+                const orgs = [...new Set(checkinsRes.data.map(c => c.user?.organization).filter(Boolean))] as string[];
                 setOrganizations(orgs.sort());
+            }
+
+            if (studentsRes.success && studentsRes.data) {
+                setAllBoardingStudents(studentsRes.data);
+                // Also add orgs from all students
+                const allOrgs = [...new Set(studentsRes.data.map(s => s.organization).filter(Boolean))] as string[];
+                setOrganizations(prev => [...new Set([...prev, ...allOrgs])].sort());
+            }
+
+            if (leaveRes.success && leaveRes.data) {
+                const now = new Date();
+                const activeLeave = leaveRes.data.filter((req: any) => {
+                    const exitTime = new Date(req.exit_time);
+                    const returnTime = new Date(req.return_time);
+                    return exitTime <= now && now <= returnTime;
+                });
+                setOnLeaveIds(new Set(activeLeave.map((r: any) => r.user_id)));
             }
         } catch (err) {
             console.error('Failed to load boarding report:', err);
@@ -151,45 +185,86 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
     };
 
     const exportToExcel = () => {
-        const headers = ['STT', 'Họ tên', 'Mã HS', 'Lớp'];
-        if (timeSlots.length > 0) {
-            timeSlots.forEach(slot => headers.push(slot.name));
-        } else {
-            headers.push('Sáng vào', 'Trưa vào', 'Chiều vào', 'Tối vào');
-        }
-
-        const rows = filteredCheckins.map((c, index) => {
-            const row = [
-                `${index + 1}`,
-                c.user?.full_name || '',
-                c.user?.student_code || '',
-                c.user?.organization || ''
-            ];
-
-            if (timeSlots.length > 0) {
-                timeSlots.forEach(slot => {
-                    const slotData = c.slots?.[slot.id];
-                    row.push(slotData ? formatTime(slotData.time) : '-');
-                });
-            } else {
-                row.push(
-                    formatTime(c.morning_in),
-                    formatTime((c as any).noon_in),
-                    formatTime((c as any).afternoon_in),
-                    formatTime((c as any).evening_in)
-                );
-            }
-            return row;
+        // Build a checkin lookup: userId -> CheckinRecord
+        const checkinMap = new Map<string, CheckinRecord>();
+        checkins.forEach(c => {
+            if (c.user_id) checkinMap.set(c.user_id, c);
         });
 
-        const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-        const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `diem-danh-noi-tru-${selectedDate}.csv`;
-        a.click();
-        URL.revokeObjectURL(url);
+        // Helper: build rows for a list of students
+        const buildRows = (students: any[]) => {
+            // Sort by name (Vietnamese ABC)
+            const sorted = [...students].sort((a, b) =>
+                (a.full_name || '').localeCompare(b.full_name || '', 'vi')
+            );
+
+            return sorted.map((student, index) => {
+                const row: Record<string, any> = {
+                    'STT': index + 1,
+                    'Họ tên': student.full_name || '',
+                    'Mã HS': student.student_code || '',
+                    'Lớp': student.organization || ''
+                };
+
+                const checkin = checkinMap.get(student.id);
+                const isOnLeave = onLeaveIds.has(student.id);
+
+                if (timeSlots.length > 0) {
+                    timeSlots.forEach(slot => {
+                        const slotData = checkin?.slots?.[slot.id];
+                        if (slotData && slotData.time) {
+                            row[slot.name] = formatTime(slotData.time);
+                            row[`${slot.name} - TT`] = slotData.status === 'late' ? 'Trễ' : 'Đúng giờ';
+                        } else if (isOnLeave) {
+                            row[slot.name] = '-';
+                            row[`${slot.name} - TT`] = 'Có phép';
+                        } else {
+                            row[slot.name] = '-';
+                            row[`${slot.name} - TT`] = 'Vắng';
+                        }
+                    });
+                }
+                return row;
+            });
+        };
+
+        const wb = XLSX.utils.book_new();
+
+        // Sheet 1: Tổng hợp (all students)
+        const allStudents = filterOrg
+            ? allBoardingStudents.filter(s => s.organization === filterOrg)
+            : allBoardingStudents;
+        const allRows = buildRows(allStudents);
+        const wsAll = XLSX.utils.json_to_sheet(allRows);
+
+        // Set column widths
+        const colWidths = [{ wch: 5 }, { wch: 25 }, { wch: 12 }, { wch: 12 }];
+        timeSlots.forEach(() => { colWidths.push({ wch: 12 }, { wch: 12 }); });
+        wsAll['!cols'] = colWidths;
+
+        XLSX.utils.book_append_sheet(wb, wsAll, 'Tổng hợp');
+
+        // Tabs per class
+        const orgGroups = new Map<string, any[]>();
+        allStudents.forEach(s => {
+            const org = s.organization || 'Khác';
+            if (!orgGroups.has(org)) orgGroups.set(org, []);
+            orgGroups.get(org)!.push(s);
+        });
+
+        // Sort class names
+        const sortedOrgs = [...orgGroups.keys()].sort((a, b) => a.localeCompare(b, 'vi'));
+        for (const org of sortedOrgs) {
+            const students = orgGroups.get(org)!;
+            const rows = buildRows(students);
+            const ws = XLSX.utils.json_to_sheet(rows);
+            ws['!cols'] = colWidths;
+            // Sheet name max 31 chars
+            const sheetName = org.length > 31 ? org.substring(0, 31) : org;
+            XLSX.utils.book_append_sheet(wb, ws, sheetName);
+        }
+
+        XLSX.writeFile(wb, `diem-danh-noi-tru-${selectedDate}.xlsx`);
     };
 
     const exportAbsentToExcel = () => {
@@ -221,16 +296,45 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
         URL.revokeObjectURL(url);
     };
 
-    // Handle processing absent students
-    const handleProcessAbsent = async () => {
+    // Handle preview absent students (step 1 — no deductions)
+    const handlePreviewAbsent = async () => {
         if (!absentSlotId) return;
         setIsProcessing(true);
-        setProcessResult(null);
 
         try {
-            const res = await dataService.processAbsentStudents(selectedDate, absentSlotId);
+            const res = await dataService.previewAbsentStudents(selectedDate, absentSlotId);
+            if (res.success && res.data) {
+                setPreviewStudents(res.data.students);
+                setPreviewAbsentPoints(res.data.absentPoints);
+                setExcludedIds(new Set());
+                setAbsentStep('preview');
+            } else {
+                toastError(res.error || 'Lỗi tải danh sách');
+            }
+        } catch (err: any) {
+            toastError(err.message || 'Lỗi hệ thống');
+        } finally {
+            setIsProcessing(false);
+        }
+    };
+
+    // Handle confirm absent (step 2 — deduct points with exclusions)
+    const handleConfirmAbsent = async () => {
+        if (!absentSlotId) return;
+        setIsProcessing(true);
+
+        try {
+            const res = await dataService.processAbsentStudents(selectedDate, absentSlotId, Array.from(excludedIds));
             if (res.success && res.data) {
                 setProcessResult(res.data);
+                setAbsentStep('result');
+                // Track as finalized + persist to localStorage
+                setFinalizedSlots(prev => {
+                    const next = new Set(prev);
+                    next.add(`${absentSlotId}_${selectedDate}`);
+                    try { localStorage.setItem('boarding_finalized_slots', JSON.stringify([...next])); } catch {}
+                    return next;
+                });
                 toastSuccess(`Đã xử lý ${res.data.processed} học sinh vắng`);
             } else {
                 toastError(res.error || 'Lỗi xử lý');
@@ -240,6 +344,15 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
         } finally {
             setIsProcessing(false);
         }
+    };
+
+    const toggleExclude = (studentId: string) => {
+        setExcludedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(studentId)) next.delete(studentId);
+            else next.add(studentId);
+            return next;
+        });
     };
 
     // Handle viewing/processing late students
@@ -283,151 +396,265 @@ const BoardingReport: React.FC<BoardingReportProps> = ({ onBack, currentUser, te
         );
     };
 
-    // Modal UI for Absent Processing
-    const renderAbsentModal = () => (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-            <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200">
-                <div className="bg-slate-50 px-8 py-6 border-b border-slate-100 flex justify-between items-center">
-                    <div>
-                        <h3 className="text-xl font-bold text-slate-800">Xử lý học sinh vắng</h3>
-                        <p className="text-sm text-slate-500 mt-1">Hệ thống sẽ tự động trừ điểm học sinh vắng mặt không phép</p>
+    // Modal UI for Absent Processing — 3 steps
+    const renderAbsentModal = () => {
+        const nonExcusedPreview = previewStudents.filter(s => !s.isExcused);
+        const checkedCount = nonExcusedPreview.filter(s => !excludedIds.has(s.id)).length;
+
+        return (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200">
+                    <div className="bg-slate-50 px-8 py-6 border-b border-slate-100 flex justify-between items-center">
+                        <div>
+                            <h3 className="text-xl font-bold text-slate-800">
+                                {absentStep === 'select' ? 'Xử lý học sinh vắng' : absentStep === 'preview' ? 'Xem trước danh sách vắng' : 'Kết quả xử lý'}
+                            </h3>
+                            <p className="text-sm text-slate-500 mt-1">
+                                {absentStep === 'select' ? 'Chọn khung giờ cần chốt vắng' : absentStep === 'preview' ? 'Bỏ tick học sinh không muốn trừ điểm' : 'Đã hoàn tất chốt vắng'}
+                            </p>
+                        </div>
+                        <button onClick={() => { setShowAbsentModal(false); setAbsentStep('select'); setProcessResult(null); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                            <XCircle className="w-6 h-6 text-slate-400" />
+                        </button>
                     </div>
-                    <button onClick={() => setShowAbsentModal(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                        <XCircle className="w-6 h-6 text-slate-400" />
-                    </button>
-                </div>
 
-                <div className="p-8">
-                    {!processResult ? (
-                        <div className="space-y-6">
-                            <div>
-                                <label className="block text-sm font-bold text-slate-700 mb-2">Chọn khung giờ xử lý</label>
-                                <div className="grid grid-cols-2 gap-3">
-                                    {timeSlots.map(slot => (
-                                        <button
-                                            key={slot.id}
-                                            onClick={() => setAbsentSlotId(slot.id)}
-                                            className={`flex items-center gap-3 px-4 py-3 rounded-2xl border-2 transition-all ${absentSlotId === slot.id
-                                                ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-md translate-y-[-2px]'
-                                                : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-slate-200 hover:bg-white'
-                                                }`}
-                                        >
-                                            <Clock className={`w-5 h-5 ${absentSlotId === slot.id ? 'text-indigo-600' : 'text-slate-400'}`} />
-                                            <span className="font-bold">{slot.name}</span>
-                                        </button>
-                                    ))}
+                    <div className="p-8">
+                        {/* STEP 1: Select Slot */}
+                        {absentStep === 'select' && (
+                            <div className="space-y-6">
+                                <div>
+                                    <label className="block text-sm font-bold text-slate-700 mb-2">Chọn khung giờ xử lý</label>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        {timeSlots.map(slot => {
+                                            const isFinalized = finalizedSlots.has(`${slot.id}_${selectedDate}`);
+                                            return (
+                                                <button
+                                                    key={slot.id}
+                                                    onClick={() => !isFinalized && setAbsentSlotId(slot.id)}
+                                                    disabled={isFinalized}
+                                                    className={`flex items-center gap-3 px-4 py-3 rounded-2xl border-2 transition-all ${isFinalized
+                                                        ? 'border-emerald-200 bg-emerald-50 text-emerald-600 cursor-not-allowed opacity-80'
+                                                        : absentSlotId === slot.id
+                                                            ? 'border-indigo-600 bg-indigo-50 text-indigo-700 shadow-md translate-y-[-2px]'
+                                                            : 'border-slate-100 bg-slate-50 text-slate-500 hover:border-slate-200 hover:bg-white'
+                                                        }`}
+                                                >
+                                                    {isFinalized ? <CheckCircle className="w-5 h-5 text-emerald-500" /> : <Clock className={`w-5 h-5 ${absentSlotId === slot.id ? 'text-indigo-600' : 'text-slate-400'}`} />}
+                                                    <span className="font-bold">{slot.name}</span>
+                                                    {isFinalized && <span className="text-[10px] bg-emerald-200 text-emerald-700 px-2 py-0.5 rounded-full font-bold ml-auto">ĐÃ CHỐT</span>}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
+
+                                <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-4">
+                                    <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0" />
+                                    <div className="text-sm text-amber-800">
+                                        <p className="font-bold">Lưu ý:</p>
+                                        <ul className="list-disc ml-4 space-y-1 mt-1">
+                                            <li>Bước tiếp theo sẽ <b>xem trước DS</b>, chưa trừ điểm.</li>
+                                            <li>Bạn có thể bỏ tick HS không muốn trừ.</li>
+                                            <li>HS có <b>đơn xin phép</b> sẽ tự động được miễn.</li>
+                                        </ul>
+                                    </div>
+                                </div>
+
+                                <button
+                                    onClick={handlePreviewAbsent}
+                                    disabled={isProcessing || !absentSlotId || finalizedSlots.has(`${absentSlotId}_${selectedDate}`)}
+                                    className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                >
+                                    {isProcessing ? (
+                                        <><RefreshCw className="w-5 h-5 animate-spin" /> Đang tải...</>
+                                    ) : (
+                                        <><Filter className="w-5 h-5" /> Xem danh sách vắng</>
+                                    )}
+                                </button>
                             </div>
+                        )}
 
-                            <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex gap-4">
-                                <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0" />
-                                <div className="text-sm text-amber-800">
-                                    <p className="font-bold">Lưu ý:</p>
-                                    <ul className="list-disc ml-4 space-y-1 mt-1">
-                                        <li>Điểm trừ sẽ được áp dụng trực tiếp cho học sinh vắng mặt.</li>
-                                        <li>Hệ thống sẽ bỏ qua học sinh có <b>đơn xin phép</b> đã được duyệt.</li>
-                                        <li>Hành động này không thể hoàn tác.</li>
-                                    </ul>
+                        {/* STEP 2: Preview with checkboxes */}
+                        {absentStep === 'preview' && (
+                            <div className="space-y-4">
+                                <div className="flex items-center justify-between">
+                                    <h4 className="text-lg font-bold text-slate-800">
+                                        Danh sách vắng ({previewStudents.length})
+                                    </h4>
+                                    <div className="flex gap-2 text-sm">
+                                        <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full font-bold">-{previewAbsentPoints} điểm</span>
+                                        <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full font-bold">Sẽ trừ: {checkedCount}</span>
+                                    </div>
                                 </div>
-                            </div>
 
-                            <button
-                                onClick={handleProcessAbsent}
-                                disabled={isProcessing}
-                                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
-                            >
-                                {isProcessing ? (
-                                    <>
-                                        <RefreshCw className="w-5 h-5 animate-spin" />
-                                        Đang xử lý...
-                                    </>
-                                ) : (
-                                    <>
-                                        <CheckCircle className="w-5 h-5" />
-                                        Bắt đầu xử lý vắng mặt
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    ) : (
-                        <div className="space-y-6">
-                            <div className="flex items-center gap-4 bg-emerald-50 border border-emerald-200 rounded-3xl p-6">
-                                <div className="w-16 h-16 bg-emerald-500 rounded-2xl flex items-center justify-center text-white shadow-lg">
-                                    <CheckCircle className="w-10 h-10" />
-                                </div>
-                                <div className="flex-1">
-                                    <h4 className="text-lg font-bold text-emerald-800">Xử lý thành công!</h4>
-                                    <p className="text-emerald-700">Đã trừ <b>{processResult.pointsDeducted} điểm</b> cho <b>{processResult.processed} học sinh</b>.</p>
-                                </div>
-                            </div>
-
-                            <div className="border border-slate-200 rounded-2xl overflow-hidden">
-                                <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 font-bold text-slate-700 flex justify-between">
-                                    <span>Danh sách học sinh vắng</span>
-                                    <span className="bg-slate-200 text-slate-600 px-2 rounded-lg text-xs flex items-center">{processResult.students.length} người</span>
-                                </div>
-                                <div className="max-h-60 overflow-y-auto">
-                                    <table className="w-full">
-                                        <thead className="bg-slate-50 text-xs text-slate-400 uppercase font-bold sticky top-0">
-                                            <tr>
-                                                <th className="px-4 py-2 text-left">Học sinh</th>
-                                                <th className="px-4 py-2 text-left">Lớp</th>
-                                                <th className="px-4 py-2 text-center">Điểm</th>
-                                                <th className="px-4 py-2 text-right">Trạng thái</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody className="divide-y divide-slate-100">
-                                            {processResult.students.map((s, i) => (
-                                                <tr key={i} className={`hover:bg-slate-50 ${s.isExcused ? 'bg-emerald-50/30' : ''}`}>
-                                                    <td className="px-4 py-2 text-sm font-medium text-slate-700">{s.name}</td>
-                                                    <td className="px-4 py-2 text-sm text-slate-500">{s.organization}</td>
-                                                    <td className={`px-4 py-2 text-sm text-center font-bold ${s.isExcused ? 'text-slate-400' : 'text-red-600'}`}>
-                                                        {s.isExcused ? '0' : `-${s.points}`}
-                                                    </td>
-                                                    <td className="px-4 py-2 text-right">
-                                                        {s.isExcused ? (
-                                                            <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">CÓ PHÉP</span>
-                                                        ) : (
-                                                            <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">VẮNG</span>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            ))}
-                                            {processResult.students.length === 0 && (
+                                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                                    <div className="max-h-72 overflow-y-auto">
+                                        <table className="w-full">
+                                            <thead className="bg-slate-50 text-xs text-slate-400 uppercase font-bold sticky top-0">
                                                 <tr>
-                                                    <td colSpan={2} className="px-4 py-8 text-center text-slate-400 italic">Không có học sinh nào vắng mặt.</td>
+                                                    <th className="px-4 py-2 text-center w-10">
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={excludedIds.size === 0}
+                                                            onChange={() => {
+                                                                if (excludedIds.size === 0) {
+                                                                    setExcludedIds(new Set(nonExcusedPreview.map(s => s.id)));
+                                                                } else {
+                                                                    setExcludedIds(new Set());
+                                                                }
+                                                            }}
+                                                            className="w-4 h-4 rounded accent-indigo-600"
+                                                        />
+                                                    </th>
+                                                    <th className="px-4 py-2 text-left">Học sinh</th>
+                                                    <th className="px-4 py-2 text-left">Mã HS</th>
+                                                    <th className="px-4 py-2 text-left">Lớp</th>
+                                                    <th className="px-4 py-2 text-right">Trạng thái</th>
                                                 </tr>
-                                            )}
-                                        </tbody>
-                                    </table>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {previewStudents.map((s, i) => (
+                                                    <tr key={i} className={`hover:bg-slate-50 ${s.isExcused ? 'bg-emerald-50/30' : excludedIds.has(s.id) ? 'bg-slate-50 opacity-60' : ''}`}>
+                                                        <td className="px-4 py-2 text-center">
+                                                            {s.isExcused ? (
+                                                                <span className="text-emerald-500 text-lg">✓</span>
+                                                            ) : (
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={!excludedIds.has(s.id)}
+                                                                    onChange={() => toggleExclude(s.id)}
+                                                                    className="w-4 h-4 rounded accent-indigo-600"
+                                                                />
+                                                            )}
+                                                        </td>
+                                                        <td className="px-4 py-2 text-sm font-medium text-slate-700">{s.name}</td>
+                                                        <td className="px-4 py-2 text-sm text-slate-500 font-mono">{s.code}</td>
+                                                        <td className="px-4 py-2 text-sm text-slate-500">{s.organization}</td>
+                                                        <td className="px-4 py-2 text-right">
+                                                            {s.isExcused ? (
+                                                                <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">CÓ PHÉP</span>
+                                                            ) : excludedIds.has(s.id) ? (
+                                                                <span className="text-[10px] bg-slate-200 text-slate-500 px-2 py-0.5 rounded-full font-bold">BỎ QUA</span>
+                                                            ) : (
+                                                                <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">-{previewAbsentPoints}đ</span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {previewStudents.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan={5} className="px-4 py-8 text-center text-slate-400 italic">Không có học sinh nào vắng mặt.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={() => setAbsentStep('select')}
+                                        className="flex-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold py-4 rounded-2xl transition-all"
+                                    >
+                                        ← Quay lại
+                                    </button>
+                                    <button
+                                        onClick={handleConfirmAbsent}
+                                        disabled={isProcessing || checkedCount === 0}
+                                        className="flex-1 bg-red-600 hover:bg-red-700 text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+                                    >
+                                        {isProcessing ? (
+                                            <><RefreshCw className="w-5 h-5 animate-spin" /> Đang xử lý...</>
+                                        ) : (
+                                            <><CheckCircle className="w-5 h-5" /> Xác nhận chốt ({checkedCount} HS)</>
+                                        )}
+                                    </button>
                                 </div>
                             </div>
+                        )}
 
-                            <div className="flex gap-3">
-                                <button
-                                    onClick={exportAbsentToExcel}
-                                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2"
-                                >
-                                    <Download className="w-5 h-5" />
-                                    Xuất Excel danh sách
-                                </button>
-                                <button
-                                    onClick={() => {
-                                        setShowAbsentModal(false);
-                                        setProcessResult(null);
-                                        loadData();
-                                    }}
-                                    className="flex-1 bg-slate-800 hover:bg-slate-900 text-white font-bold py-4 rounded-2xl shadow-lg transition-all"
-                                >
-                                    Đóng và Quay lại
-                                </button>
+                        {/* STEP 3: Result */}
+                        {absentStep === 'result' && processResult && (
+                            <div className="space-y-6">
+                                <div className="flex items-center gap-4 bg-emerald-50 border border-emerald-200 rounded-3xl p-6">
+                                    <div className="w-16 h-16 bg-emerald-500 rounded-2xl flex items-center justify-center text-white shadow-lg">
+                                        <CheckCircle className="w-10 h-10" />
+                                    </div>
+                                    <div className="flex-1">
+                                        <h4 className="text-lg font-bold text-emerald-800">Xử lý thành công!</h4>
+                                        <p className="text-emerald-700">Đã trừ <b>{processResult.pointsDeducted} điểm</b> cho <b>{processResult.processed} học sinh</b>.</p>
+                                    </div>
+                                </div>
+
+                                <div className="border border-slate-200 rounded-2xl overflow-hidden">
+                                    <div className="bg-slate-50 px-4 py-3 border-b border-slate-200 font-bold text-slate-700 flex justify-between">
+                                        <span>Danh sách học sinh vắng</span>
+                                        <span className="bg-slate-200 text-slate-600 px-2 rounded-lg text-xs flex items-center">{processResult.students.length} người</span>
+                                    </div>
+                                    <div className="max-h-60 overflow-y-auto">
+                                        <table className="w-full">
+                                            <thead className="bg-slate-50 text-xs text-slate-400 uppercase font-bold sticky top-0">
+                                                <tr>
+                                                    <th className="px-4 py-2 text-left">Học sinh</th>
+                                                    <th className="px-4 py-2 text-left">Lớp</th>
+                                                    <th className="px-4 py-2 text-center">Điểm</th>
+                                                    <th className="px-4 py-2 text-right">Trạng thái</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-100">
+                                                {processResult.students.map((s, i) => (
+                                                    <tr key={i} className={`hover:bg-slate-50 ${s.isExcused ? 'bg-emerald-50/30' : ''}`}>
+                                                        <td className="px-4 py-2 text-sm font-medium text-slate-700">{s.name}</td>
+                                                        <td className="px-4 py-2 text-sm text-slate-500">{s.organization}</td>
+                                                        <td className={`px-4 py-2 text-sm text-center font-bold ${s.isExcused ? 'text-slate-400' : 'text-red-600'}`}>
+                                                            {s.isExcused ? '0' : `-${s.points}`}
+                                                        </td>
+                                                        <td className="px-4 py-2 text-right">
+                                                            {s.isExcused ? (
+                                                                <span className="text-[10px] bg-emerald-100 text-emerald-700 px-2 py-0.5 rounded-full font-bold">MIỄN</span>
+                                                            ) : (
+                                                                <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-bold">VẮNG</span>
+                                                            )}
+                                                        </td>
+                                                    </tr>
+                                                ))}
+                                                {processResult.students.length === 0 && (
+                                                    <tr>
+                                                        <td colSpan={4} className="px-4 py-8 text-center text-slate-400 italic">Không có học sinh nào vắng mặt.</td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-3">
+                                    <button
+                                        onClick={exportAbsentToExcel}
+                                        className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-2xl shadow-lg transition-all flex items-center justify-center gap-2"
+                                    >
+                                        <Download className="w-5 h-5" />
+                                        Xuất Excel
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            setShowAbsentModal(false);
+                                            setAbsentStep('select');
+                                            setProcessResult(null);
+                                            loadData();
+                                        }}
+                                        className="flex-1 bg-slate-800 hover:bg-slate-900 text-white font-bold py-4 rounded-2xl shadow-lg transition-all"
+                                    >
+                                        Đóng
+                                    </button>
+                                </div>
                             </div>
-                        </div>
-                    )}
+                        )}
+                    </div>
                 </div>
             </div>
-        </div>
-    );
+        );
+    };
 
     // Modal UI for Late Processing
     const renderLateModal = () => (

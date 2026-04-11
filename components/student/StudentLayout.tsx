@@ -23,7 +23,7 @@ export default function StudentLayout({ currentUser, onLogout }: StudentLayoutPr
     const navItems: { id: StudentTab; icon: React.ReactNode; label: string }[] = [
         { id: 'dashboard', icon: <Home size={24} />, label: 'Trang chủ' },
         { id: 'card', icon: <QrCode size={24} />, label: 'Thẻ' },
-        { id: 'rules', icon: <BookOpen size={24} />, label: 'Nội quy' },
+        { id: 'certificates', icon: <Award size={24} />, label: 'Chứng nhận' },
         { id: 'requests', icon: <FileText size={24} />, label: 'Đơn từ' },
         { id: 'profile', icon: <UserIcon size={24} />, label: 'Cá nhân' },
     ];

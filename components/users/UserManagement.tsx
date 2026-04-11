@@ -10,7 +10,7 @@ interface UserManagementProps {
 }
 
 
-// ... (imports)
+
 
 // Helper: Compress Image
 const compressImage = (file: File): Promise<File> => {
@@ -91,12 +91,13 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
         email: '',
         password: '',
         full_name: '',
-        student_code: '', // New field
+        student_code: '',
         role: 'student',
         class_id: '',
         room_id: '',
-        organization: '', // New field (Tổ/Lớp)
-        birth_date: '', // New field
+        zone: '',
+        organization: '',
+        birth_date: '',
         status: 'active',
         avatar_url: ''
     });
@@ -330,7 +331,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
         if (!file) return;
 
         setIsBatchProcessing(true);
-        setUploadLogs(['⏳ Đang đọc file Excel...']);
+        setUploadLogs(['[...] Đang đọc file Excel...']);
 
         try {
             const data = await file.arrayBuffer();
@@ -342,20 +343,16 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
             const headers = (jsonData[0] as string[]).map(h => h.toLowerCase().trim());
             const rows = jsonData.slice(1);
 
-            setUploadLogs(prev => [`✅ Đã đọc ${rows.length} dòng dữ liệu.`, '⏳ Bắt đầu nhập...', ...prev]);
+            setUploadLogs(prev => [`[OK] Đã đọc ${rows.length} dòng dữ liệu.`, '[...] Bắt đầu nhập...', ...prev]);
 
             let successCount = 0;
             let failCount = 0;
 
-            for (const row of rows) {
-                const r = row as any[];
+            for (let ri = 0; ri < rows.length; ri++) {
+                const r = rows[ri] as any[];
                 if (!r || r.length === 0) continue;
 
-                // Map columns (basic mapping)
-                // Expected: Full Name | Email | Student Code | Organization | Role | Password
-                // Indices depend on file. Let's try to map by header names or assume standard order
-
-                // Helper to get value by rough header match
+                // Map columns by header name matching
                 const getVal = (keys: string[]) => {
                     const idx = headers.findIndex(h => keys.some(k => h.includes(k)));
                     return idx !== -1 ? r[idx] : undefined;
@@ -367,31 +364,49 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                 const org = getVal(['lớp', 'tổ', 'class', 'org']);
                 const roleRaw = getVal(['vai trò', 'role'])?.toString().toLowerCase();
                 const birthDateRaw = getVal(['ngày sinh', 'sinh nhật', 'birthday', 'dob']);
+                const passwordRaw = getVal(['mật khẩu', 'password', 'pass']);
+                const roomName = getVal(['phòng', 'room', 'nội trú'])?.toString().trim();
 
-                // Defaults
-                if (!fullName) {
-                    // Skip empty rows
-                    continue;
+                if (!fullName) continue; // Skip empty rows
+
+                // Update progress every 5 rows
+                if (ri % 5 === 0) {
+                    setUploadLogs(prev => [`[${ri + 1}/${rows.length}] Đang xử lý...`, ...prev]);
                 }
 
                 const role = (roleRaw?.includes('giáo viên') ? 'teacher' :
                     roleRaw?.includes('quản trị') ? 'admin' : 'student') as any;
 
-                const payload = {
+                // Look up room_id and zone from room name
+                let roomId = '';
+                let zone = '';
+                if (roomName) {
+                    const matchedRoom = rooms.find((rm: any) =>
+                        rm.name.toLowerCase() === roomName.toLowerCase()
+                    );
+                    if (matchedRoom) {
+                        roomId = matchedRoom.id;
+                        zone = matchedRoom.zone || '';
+                    } else {
+                        setUploadLogs(prev => [`[?] ${fullName}: Không tìm thấy phòng "${roomName}", bỏ qua gán phòng`, ...prev]);
+                    }
+                }
+
+                const payload: any = {
                     full_name: fullName,
-                    email: email || `${code || Date.now()}@school.edu.vn`, // Dummy email if missing
-                    password: '123', // Default password
+                    email: email || `${code || Date.now()}@school.edu.vn`,
+                    password: passwordRaw?.toString() || '123456',
                     student_code: code?.toString() || '',
                     organization: org?.toString() || '',
-                    birth_date: birthDateRaw ? new Date(birthDateRaw).toISOString() : null, // Handle date parsing carefully if needed
+                    birth_date: birthDateRaw ? new Date(birthDateRaw).toISOString() : null,
                     role: role,
-                    status: 'active' as const
+                    status: 'active' as const,
+                    ...(roomId && { room_id: roomId, zone: zone })
                 };
 
                 // Check existing by code
                 let exists = false;
                 if (payload.student_code) {
-                    // Use maybeSingle to avoid 406 error if record not found
                     const { data: exUser, error: findError } = await supabase
                         .from('users')
                         .select('id')
@@ -407,15 +422,15 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                 if (!exists) {
                     const res = await dataService.createUser(payload);
                     if (res.success) {
-                        setUploadLogs(prev => [`Đã thêm: ${payload.full_name}`, ...prev]);
+                        setUploadLogs(prev => [`[OK] Đã thêm: ${payload.full_name}`, ...prev]);
                         successCount++;
                     } else {
                         console.error('Create User Error:', res.error);
-                        setUploadLogs(prev => [`Lỗi thêm ${payload.full_name}: ${JSON.stringify(res.error)}`, ...prev]);
+                        setUploadLogs(prev => [`[!] Lỗi thêm ${payload.full_name}: ${JSON.stringify(res.error)}`, ...prev]);
                         failCount++;
                     }
                 } else {
-                    setUploadLogs(prev => [`Bỏ qua (Đã tồn tại): ${payload.full_name} (${payload.student_code})`, ...prev]);
+                    setUploadLogs(prev => [`[--] Bỏ qua (Đã tồn tại): ${payload.full_name} (${payload.student_code})`, ...prev]);
                 }
             }
             setUploadLogs(prev => [`---`, `HOÀN TẤT NHẬP DỮ LIỆU`, `Thêm mới: ${successCount}`, `Bỏ qua/Lỗi: ${failCount}`, `Vui lòng kiểm tra chi tiết bên dưới.`, ...prev]);
@@ -425,7 +440,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
 
         } catch (error: any) {
             console.error('Batch Process Error:', error);
-            setUploadLogs(prev => [`❌ Lỗi nghiêm trọng: ${error.message}`, ...prev]);
+            setUploadLogs(prev => [`[!] Lỗi nghiêm trọng: ${error.message}`, ...prev]);
             toastError('Có lỗi xảy ra: ' + error.message);
         } finally {
             setIsBatchProcessing(false);
@@ -471,6 +486,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
             role: 'student',
             class_id: '',
             room_id: '',
+            zone: '',
             organization: '',
             birth_date: '',
             status: 'active',
@@ -630,7 +646,7 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                         </thead>
                         <tbody className="divide-y divide-slate-100">
                             {filteredUsers.length === 0 ? (
-                                <tr><td colSpan={5} className="px-4 py-12 text-center text-slate-400">Không tìm thấy dữ liệu</td></tr>
+                                <tr><td colSpan={6} className="px-4 py-12 text-center text-slate-400">Không tìm thấy dữ liệu</td></tr>
                             ) : (
                                 filteredUsers.map(user => (
                                     <tr key={user.id} className="hover:bg-slate-50 transition-colors">
@@ -958,13 +974,16 @@ const UserManagement: React.FC<UserManagementProps> = ({ onBack }) => {
                                     <li><strong>Lớp</strong> (Tổ, Organization)</li>
                                     <li><strong>Vai trò</strong> (Học sinh/Giáo viên/Quản trị)</li>
                                     <li><strong>Email</strong> (Mặc định: <code>mã@school.edu.vn</code>)</li>
+                                    <li><strong>Mật khẩu</strong> (Mặc định: <code>123456</code>)</li>
+                                    <li><strong>Phòng</strong> (Tên phòng nội trú, ví dụ: <code>P101</code>)</li>
                                 </ul>
                                 <button
                                     onClick={() => {
                                         const wb = XLSX.utils.book_new();
                                         const ws = XLSX.utils.json_to_sheet([
-                                            { "Họ tên": "Nguyễn Văn A", "Mã số": "SV001", "Ngày sinh": "2005-01-01", "Lớp": "12A1", "Vai trò": "Học sinh", "Email": "" },
-                                            { "Họ tên": "Trần Thị B", "Mã số": "GV002", "Ngày sinh": "1990-05-15", "Lớp": "Tổ Toán", "Vai trò": "Giáo viên", "Email": "gv002@school.edu.vn" }
+                                            { "Họ tên": "Nguyễn Văn A", "Mã số": "SV001", "Ngày sinh": "2005-01-01", "Lớp": "12A1", "Vai trò": "Học sinh", "Email": "", "Mật khẩu": "", "Phòng": "P101" },
+                                            { "Họ tên": "Trần Thị B", "Mã số": "GV002", "Ngày sinh": "1990-05-15", "Lớp": "Tổ Toán", "Vai trò": "Giáo viên", "Email": "gv002@school.edu.vn", "Mật khẩu": "teacher123", "Phòng": "" },
+                                            { "Họ tên": "Lê Văn C", "Mã số": "SV003", "Ngày sinh": "2006-03-20", "Lớp": "11B2", "Vai trò": "Học sinh", "Email": "", "Mật khẩu": "", "Phòng": "P203" }
                                         ]);
                                         XLSX.utils.book_append_sheet(wb, ws, "Danh sách");
                                         XLSX.writeFile(wb, "mau_danh_sach_nguoi_dung.xlsx");

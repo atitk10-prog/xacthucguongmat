@@ -50,6 +50,8 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
     });
     const [recentCheckins, setRecentCheckins] = useState<RecentCheckin[]>([]);
     const [notCheckedInStudents, setNotCheckedInStudents] = useState<User[]>([]);
+    const [allNotCheckedInStudents, setAllNotCheckedInStudents] = useState<User[]>([]);
+    const [showAllNotCheckedIn, setShowAllNotCheckedIn] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [currentTime, setCurrentTime] = useState(new Date());
@@ -158,7 +160,16 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
         if (!rawData) return;
 
         const { students: allStudentsData, checkins: todayCheckins, rooms, leaveRequests } = rawData;
-        const onLeaveIds = new Set(leaveRequests.map((req: any) => req.user_id));
+
+        // Filter leave requests: only show currently active (exit_time <= now <= return_time)
+        const now = new Date();
+        const activeLeaveRequests = leaveRequests.filter((req: any) => {
+            const exitTime = new Date(req.exit_time);
+            const returnTime = new Date(req.return_time);
+            return exitTime <= now && now <= returnTime;
+        });
+
+        const onLeaveIds = new Set(activeLeaveRequests.map((req: any) => req.user_id));
         setOnLeaveStudents(onLeaveIds);
 
         const leaveUsers = allStudentsData.filter(s => onLeaveIds.has(s.id));
@@ -224,7 +235,8 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
             onTimeRate
         });
 
-        setNotCheckedInStudents(notCheckedIn.slice(0, 10));
+        setAllNotCheckedInStudents(notCheckedIn);
+        setNotCheckedInStudents(notCheckedIn);
 
         // Recent checkins
         interface FlatSlotCheckin extends RecentCheckin {
@@ -512,47 +524,53 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                                 </span>
                             </h3>
                         </div>
-                        <div className="divide-y divide-slate-100 max-h-[220px] overflow-y-auto">
-                            {notCheckedInStudents.length === 0 ? (
+                        <div className="divide-y divide-slate-100 max-h-[280px] overflow-y-auto">
+                            {allNotCheckedInStudents.length === 0 ? (
                                 <div className="p-8 text-center text-emerald-600">
                                     <CheckCircle className="w-10 h-10 mx-auto mb-2" />
                                     <p className="font-bold">Tất cả đã check-in!</p>
                                 </div>
                             ) : (
-                                notCheckedInStudents.map((student, i) => (
-                                    <div key={i} className="p-3 flex items-center gap-3 hover:bg-slate-50 transition-colors">
-                                        <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-500 font-bold text-xs sm:text-sm flex-shrink-0">
-                                            {student.full_name.charAt(0)}
+                                <>
+                                    {(showAllNotCheckedIn ? allNotCheckedInStudents : allNotCheckedInStudents.slice(0, 8)).map((student, i) => (
+                                        <div key={i} className="p-3 flex items-center gap-3 hover:bg-slate-50 transition-colors">
+                                            <div className="w-8 h-8 bg-slate-200 rounded-full flex items-center justify-center text-slate-500 font-bold text-xs sm:text-sm flex-shrink-0">
+                                                {student.full_name.charAt(0)}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <p className="font-medium text-slate-900 text-xs sm:text-sm truncate">{student.full_name}</p>
+                                                <p className="text-[10px] text-slate-500 truncate">{student.organization || student.student_code}</p>
+                                            </div>
+                                            <div className="text-[9px] font-bold text-red-400 flex-shrink-0 uppercase">Chưa điểm danh</div>
                                         </div>
-                                        <div className="flex-1 min-w-0">
-                                            <p className="font-medium text-slate-900 text-xs sm:text-sm truncate">{student.full_name}</p>
-                                            <p className="text-[10px] text-slate-500 truncate">{student.organization || student.student_code}</p>
-                                        </div>
-                                        <div className="text-[9px] font-bold text-red-400 flex-shrink-0 uppercase">Chưa điểm danh</div>
-                                    </div>
-                                ))
+                                    ))}
+                                    {allNotCheckedInStudents.length > 8 && (
+                                        <button
+                                            onClick={() => setShowAllNotCheckedIn(!showAllNotCheckedIn)}
+                                            className="w-full py-3 text-center text-sm font-bold text-indigo-600 hover:bg-indigo-50 transition-colors"
+                                        >
+                                            {showAllNotCheckedIn ? '← Thu gọn' : `Xem tất cả ${allNotCheckedInStudents.length} học sinh →`}
+                                        </button>
+                                    )}
+                                </>
                             )}
                         </div>
                     </div>
 
-                    {/* Approved Leave Section */}
-                    <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
-                        <div className="p-4 border-b border-slate-100 bg-blue-50/50">
-                            <h3 className="font-bold text-blue-900 flex items-center gap-2">
-                                <ExternalLink className="w-5 h-5 text-blue-500" />
-                                Học Sinh Vắng Có Phép
-                                <span className="ml-auto bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-bold">
-                                    {onLeaveUserRecords.length} đơn
-                                </span>
-                            </h3>
-                        </div>
-                        <div className="divide-y divide-slate-100 max-h-[160px] overflow-y-auto">
-                            {onLeaveUserRecords.length === 0 ? (
-                                <div className="p-4 text-center text-slate-400 text-sm italic">
-                                    Không có học sinh nào vắng có phép hôm nay
-                                </div>
-                            ) : (
-                                onLeaveUserRecords.map((student, i) => (
+                    {/* Approved Leave Section — only show when there are active leaves */}
+                    {onLeaveUserRecords.length > 0 && (
+                        <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                            <div className="p-4 border-b border-slate-100 bg-blue-50/50">
+                                <h3 className="font-bold text-blue-900 flex items-center gap-2">
+                                    <ExternalLink className="w-5 h-5 text-blue-500" />
+                                    Đang vắng có phép
+                                    <span className="ml-auto bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full text-xs font-bold">
+                                        {onLeaveUserRecords.length} HS
+                                    </span>
+                                </h3>
+                            </div>
+                            <div className="divide-y divide-slate-100 max-h-[160px] overflow-y-auto">
+                                {onLeaveUserRecords.map((student, i) => (
                                     <div key={i} className="p-3 flex items-center gap-3 hover:bg-slate-50 transition-colors">
                                         <div className="w-8 h-8 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center font-bold text-xs sm:text-sm flex-shrink-0">
                                             {student.full_name.charAt(0)}
@@ -564,13 +582,13 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                                             </p>
                                         </div>
                                         <div className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-[8px] sm:text-[10px] font-bold uppercase flex-shrink-0">
-                                            Có phép
+                                            Đang nghỉ
                                         </div>
                                     </div>
-                                ))
-                            )}
+                                ))}
+                            </div>
                         </div>
-                    </div>
+                    )}
                 </div>
             </div>
 

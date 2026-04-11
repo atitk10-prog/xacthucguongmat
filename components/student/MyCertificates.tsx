@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
+import QRCode from 'qrcode';
 import { Award, Calendar, Download, Eye, X, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
 import { dataService } from '../../services/dataService';
 import { User, Certificate } from '../../types';
-import { getTemplateComponent } from '../../services/certificateExportService';
+import { getTemplateComponent, generateSingleExportPDF } from '../../services/certificateExportService';
 
 interface MyCertificatesProps {
     user: User;
@@ -12,13 +13,60 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
     const [certificates, setCertificates] = useState<Certificate[]>([]);
     const [loading, setLoading] = useState(true);
     const [selectedCert, setSelectedCert] = useState<Certificate | null>(null);
+    const [resolvedConfig, setResolvedConfig] = useState<any>(null);
     const [loadingCertDetail, setLoadingCertDetail] = useState(false);
+    const [downloadingId, setDownloadingId] = useState<string | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
+    const [configCache, setConfigCache] = useState<Record<string, any>>({});
+    const [certQR, setCertQR] = useState('');
     const itemsPerPage = 6;
+
+    // Resolve full config by merging lightweight metadata with shared config from config_id
+    const resolveConfig = async (cert: Certificate): Promise<any> => {
+        const meta = (cert.metadata || {}) as any;
+        const configId = meta.config_id;
+
+        // If metadata already has images (old format), use directly
+        if (meta.bgImage || meta.logoImage || meta.signatureImage) {
+            return meta;
+        }
+
+        // If has config_id, load from shared config
+        if (configId) {
+            // Check cache first
+            if (configCache[configId]) {
+                return { ...configCache[configId], ...meta };
+            }
+            // Load from DB
+            try {
+                const res = await dataService.getCertificateConfigs();
+                if (res.success && res.data) {
+                    const preset = res.data.find((p: any) => p.id === configId);
+                    if (preset?.config) {
+                        setConfigCache(prev => ({ ...prev, [configId]: preset.config }));
+                        return { ...preset.config, ...meta };
+                    }
+                }
+            } catch (e) {
+                console.warn('Failed to load config:', e);
+            }
+        }
+
+        return meta;
+    };
 
     useEffect(() => {
         loadCertificates();
     }, [user]);
+
+    // Generate QR locally when a cert is selected
+    useEffect(() => {
+        if (selectedCert) {
+            QRCode.toDataURL(selectedCert.id, { margin: 1, width: 150 })
+                .then(url => setCertQR(url))
+                .catch(() => setCertQR(''));
+        }
+    }, [selectedCert]);
 
     const loadCertificates = async () => {
         if (!user) return;
@@ -39,25 +87,23 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
     const paginatedCerts = certificates.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
     const handlePreview = async (cert: Certificate) => {
-        // Load full certificate with metadata if not already loaded
-        if (!cert.metadata) {
-            setLoadingCertDetail(true);
-            try {
-                const fullCert = await dataService.getCertificateById(cert.id);
-                if (fullCert.success && fullCert.data) {
-                    setSelectedCert(fullCert.data);
-                } else {
-                    // Fallback to basic cert if full load fails
-                    setSelectedCert(cert);
-                }
-            } catch (err) {
-                console.error('Failed to load certificate details:', err);
-                setSelectedCert(cert);
-            } finally {
-                setLoadingCertDetail(false);
+        setLoadingCertDetail(true);
+        try {
+            let fullCert = cert;
+            if (!cert.metadata) {
+                const res = await dataService.getCertificateById(cert.id);
+                if (res.success && res.data) fullCert = res.data;
             }
-        } else {
+            // Resolve full config (merge with shared config from config_id)
+            const config = await resolveConfig(fullCert);
+            setResolvedConfig(config);
+            setSelectedCert(fullCert);
+        } catch (err) {
+            console.error('Failed to load certificate details:', err);
+            setResolvedConfig(cert.metadata || {});
             setSelectedCert(cert);
+        } finally {
+            setLoadingCertDetail(false);
         }
     };
 
@@ -121,16 +167,37 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
                             >
                                 <Eye size={18} /> Xem ảnh
                             </button>
-                            {cert.pdf_url && (
-                                <a
-                                    href={cert.pdf_url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 text-white font-black hover:bg-indigo-700 shadow-lg shadow-indigo-100 py-3 rounded-2xl transition-all active:scale-95"
-                                >
-                                    <Download size={18} /> Tải PDF
-                                </a>
-                            )}
+                            <button
+                                disabled={downloadingId === cert.id}
+                                onClick={async () => {
+                                    setDownloadingId(cert.id);
+                                    try {
+                                        let fullCert = cert;
+                                        if (!cert.metadata || Object.keys(cert.metadata).length === 0) {
+                                            const res = await dataService.getCertificateById(cert.id);
+                                            if (res.success && res.data) fullCert = res.data;
+                                        }
+                                        // Resolve full config for export
+                                        const exportConfig = await resolveConfig(fullCert);
+                                        const items = [{
+                                            cert: fullCert,
+                                            user: user,
+                                            config: exportConfig,
+                                            overrideName: user.full_name
+                                        }];
+                                        const fileName = `${fullCert.title.replace(/\s+/g, '_')}_${user.full_name.replace(/\s+/g, '_')}.pdf`;
+                                        await generateSingleExportPDF(items, fileName);
+                                    } catch (e) {
+                                        console.error('PDF export failed:', e);
+                                    } finally {
+                                        setDownloadingId(null);
+                                    }
+                                }}
+                                className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 text-white font-black hover:bg-indigo-700 shadow-lg shadow-indigo-100 py-3 rounded-2xl transition-all active:scale-95 disabled:opacity-50 disabled:cursor-wait"
+                            >
+                                {downloadingId === cert.id ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                                {downloadingId === cert.id ? 'Đang tải...' : 'Tải PDF'}
+                            </button>
                         </div>
                     </div>
                 ))}
@@ -220,9 +287,9 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
                                         issuedDate: selectedCert.metadata?.issuedDate || (selectedCert.issued_date ? new Date(selectedCert.issued_date).toLocaleDateString('vi-VN') : ''),
                                         type: selectedCert.type || 'excellent',
                                         verifyCode: selectedCert.id.split('-').pop() || '',
-                                        verifyQR: `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${selectedCert.id}`
+                                        verifyQR: certQR
                                     },
-                                    customConfig: selectedCert.metadata as any
+                                    customConfig: resolvedConfig || selectedCert.metadata as any
                                 })}
                             </div>
 
@@ -241,18 +308,33 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
                                     onClick={() => setSelectedCert(null)}
                                     className="flex-1 md:flex-none px-10 py-4 bg-white border border-slate-200 text-slate-600 rounded-2xl font-black hover:bg-slate-100 transition-all shadow-sm"
                                 >
-                                    Hủy bỏ
+                                    Đóng
                                 </button>
-                                {selectedCert.pdf_url && (
-                                    <a
-                                        href={selectedCert.pdf_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex-1 md:flex-none px-10 py-4 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 text-center"
-                                    >
-                                        Tải PDF Ngay
-                                    </a>
-                                )}
+                                <button
+                                    disabled={downloadingId === selectedCert.id}
+                                    onClick={async () => {
+                                        setDownloadingId(selectedCert.id);
+                                        try {
+                                            const exportConfig = resolvedConfig || selectedCert.metadata || {};
+                                            const items = [{
+                                                cert: selectedCert,
+                                                user: user,
+                                                config: exportConfig,
+                                                overrideName: user.full_name
+                                            }];
+                                            const fileName = `${selectedCert.title.replace(/\s+/g, '_')}_${user.full_name.replace(/\s+/g, '_')}.pdf`;
+                                            await generateSingleExportPDF(items, fileName);
+                                        } catch (e) {
+                                            console.error('PDF export failed:', e);
+                                        } finally {
+                                            setDownloadingId(null);
+                                        }
+                                    }}
+                                    className="flex-1 md:flex-none px-10 py-4 bg-indigo-600 text-white rounded-2xl font-black hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 text-center flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait"
+                                >
+                                    {downloadingId === selectedCert.id ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
+                                    {downloadingId === selectedCert.id ? 'Đang tải...' : 'Tải PDF Ngay'}
+                                </button>
                             </div>
                         </div>
                     </div>

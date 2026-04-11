@@ -4,8 +4,23 @@
  */
 
 import { supabase, isSupabaseConfigured } from './supabaseClient';
-import { User, Event, EventCheckin, EventParticipant, BoardingConfig, BoardingTimeSlot, Certificate, PointLog } from '../types';
+import { User, Event, EventCheckin, EventParticipant, BoardingConfig, BoardingTimeSlot, Certificate, PointLog, Room } from '../types';
 import { faceService, descriptorToString, base64ToImage } from './faceService';
+
+// =====================================================
+// GPS UTILITY
+// =====================================================
+function haversineDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+    const R = 6371e3; // Earth radius in metres
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+        Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return R * c;
+}
 
 // =====================================================
 // CACHING SYSTEM (kept for offline support)
@@ -223,6 +238,21 @@ const getTodayDateStr = () => {
     return new Date().toLocaleDateString('en-CA');
 };
 
+// Guest staff token - configurable via env variable
+const GUEST_STAFF_TOKEN = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_GUEST_TOKEN) || 'EDUCHECK_STAFF';
+
+/**
+ * Simple password hashing using SHA-256 (Web Crypto API)
+ * For production, consider bcryptjs for salted hashing
+ */
+async function hashPassword(password: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(password + '_educheck_salt_2024');
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 async function login(identifier: string, password: string): Promise<ApiResponse<{ user: User; token: string }>> {
     if (!isSupabaseConfigured()) {
         return { success: false, error: 'Supabase chưa được cấu hình' };
@@ -243,15 +273,16 @@ async function login(identifier: string, password: string): Promise<ApiResponse<
         }
 
         if (!data) {
-            return { success: false, error: 'Tài khoản không tồn tại (Email hoặc Mã SV sai)' };
+            return { success: false, error: 'Tài khoản không tồn tại (Email hoặc Mã HS sai)' };
         }
 
-        // Simple password check (in production, use proper hashing)
-        if (data.password_hash !== password) {
+        // Password check using SHA-256 hash comparison
+        const inputHash = await hashPassword(password);
+        if (data.password_hash !== inputHash && data.password_hash !== password) {
             return { success: false, error: 'Mật khẩu không đúng' };
         }
 
-        const token = `token_${data.id}_${Date.now()}`;
+        const token = crypto.randomUUID ? crypto.randomUUID() : `token_${Date.now()}_${Math.random().toString(36).substring(2, 15)}`;
         const user = data as User;
 
         setToken(token);
@@ -813,7 +844,7 @@ async function createUser(userData: Partial<User> & { password?: string }): Prom
             .insert({
                 ...sanitizedRest,
                 total_points: (userData as any).total_points ?? startPoints,
-                password_hash: password // Map to password_hash
+                password_hash: password ? await hashPassword(password) : password // Hash password before storing
             })
             .select()
             .single();
@@ -867,7 +898,7 @@ async function updateUser(id: string, userData: Partial<User> & { password?: str
 
         // Only update password_hash if password is provided
         if (password) {
-            updatePayload.password_hash = password;
+            updatePayload.password_hash = await hashPassword(password);
         }
 
         const { data, error } = await supabase
@@ -954,16 +985,20 @@ async function getAllStudentsForCheckin(requireFaceId: boolean = true): Promise<
 
 async function getEvents(filters?: { status?: string }): Promise<ApiResponse<Event[]>> {
     try {
-        const cached = getFromCache<Event[]>('events');
+        const cached = getFromCache<Event[]>('events' + (filters?.status || ''));
         if (cached) return { success: true, data: cached };
 
         let query = supabase.from('events').select('*');
+
+        if (filters?.status && filters.status !== 'all') {
+            query = query.eq('status', filters.status);
+        }
 
         const { data, error } = await query.order('created_at', { ascending: false });
 
         if (error) return { success: false, error: error.message };
 
-        setCache('events', data, CACHE_TTL.events);
+        setCache('events' + (filters?.status || ''), data, CACHE_TTL.events);
         return { success: true, data: data as Event[] };
     } catch (err) {
         return { success: false, error: 'Lỗi tải danh sách sự kiện' };
@@ -1096,6 +1131,99 @@ async function deleteEvent(id: string): Promise<ApiResponse<void>> {
 // CHECK-IN API
 // =====================================================
 
+// ── Session-level caches to reduce Supabase API calls ──
+// Event cache: avoids re-fetching event data on every scan (TTL 10 min)
+const eventSessionCache = new Map<string, { data: any; timestamp: number }>();
+const EVENT_SESSION_TTL = 10 * 60 * 1000; // 10 minutes
+
+// Checkin session cache: pre-loaded set of already checked-in IDs per event
+// Avoids a SELECT query for each duplicate check
+const checkinSessionCache = new Map<string, Set<string>>();
+
+function getEventFromSessionCache(eventId: string): any | null {
+    const entry = eventSessionCache.get(eventId);
+    if (!entry) return null;
+    if (Date.now() - entry.timestamp > EVENT_SESSION_TTL) {
+        eventSessionCache.delete(eventId);
+        return null;
+    }
+    return entry.data;
+}
+
+function setEventSessionCache(eventId: string, data: any): void {
+    eventSessionCache.set(eventId, { data, timestamp: Date.now() });
+}
+
+/**
+ * Pre-load all existing checkins for an event into local Set.
+ * Call this ONCE when entering check-in page to avoid per-scan DB queries.
+ * Returns count of pre-loaded checkins.
+ */
+async function preloadEventCheckins(eventId: string): Promise<{ success: boolean; count: number }> {
+    try {
+        const { data, error } = await supabase
+            .from('checkins')
+            .select('user_id, participant_id')
+            .eq('event_id', eventId);
+
+        if (error) {
+            console.error('preloadEventCheckins error:', error);
+            return { success: false, count: 0 };
+        }
+
+        const idSet = new Set<string>();
+        (data || []).forEach((row: any) => {
+            if (row.user_id) idSet.add(`u:${row.user_id}`);
+            if (row.participant_id) idSet.add(`p:${row.participant_id}`);
+        });
+
+        checkinSessionCache.set(eventId, idSet);
+        console.log(`📋 [Cache] Pre-loaded ${idSet.size} checkin IDs for event ${eventId}`);
+        return { success: true, count: idSet.size };
+    } catch (err) {
+        console.error('preloadEventCheckins error:', err);
+        return { success: false, count: 0 };
+    }
+}
+
+/**
+ * Clear session caches (call when leaving check-in page)
+ */
+function clearCheckinSessionCache(eventId?: string): void {
+    if (eventId) {
+        checkinSessionCache.delete(eventId);
+        eventSessionCache.delete(eventId);
+    } else {
+        checkinSessionCache.clear();
+        eventSessionCache.clear();
+    }
+    console.log('🗑️ [Cache] Checkin session cache cleared');
+}
+
+/**
+ * Check if a user/participant is already checked in (local cache first, then DB fallback)
+ */
+function isAlreadyCheckedInLocal(eventId: string, userId?: string, participantId?: string): boolean {
+    const idSet = checkinSessionCache.get(eventId);
+    if (!idSet) return false; // Cache not loaded, will fall back to DB
+    if (userId && idSet.has(`u:${userId}`)) return true;
+    if (participantId && idSet.has(`p:${participantId}`)) return true;
+    return false;
+}
+
+/**
+ * Add a newly checked-in ID to local cache
+ */
+function addToCheckinSessionCache(eventId: string, userId?: string, participantId?: string): void {
+    let idSet = checkinSessionCache.get(eventId);
+    if (!idSet) {
+        idSet = new Set<string>();
+        checkinSessionCache.set(eventId, idSet);
+    }
+    if (userId) idSet.add(`u:${userId}`);
+    if (participantId) idSet.add(`p:${participantId}`);
+}
+
 
 async function checkin(data: {
     event_id: string;
@@ -1106,6 +1234,10 @@ async function checkin(data: {
     checkin_mode?: 'student' | 'event';
     device_info?: string;
     ip_address?: string;
+    custom_checkin_time?: string; // For offline sync: original check-in timestamp
+    checkin_latitude?: number;
+    checkin_longitude?: number;
+    checkin_accuracy?: number;
 }): Promise<ApiResponse<{ checkin: EventCheckin; event: Event }>> {
     try {
         if (!data.user_id && !data.participant_id) {
@@ -1121,10 +1253,11 @@ async function checkin(data: {
                     alreadyExists: true
                 } as any;
             }
+            const offlineCheckinTime = new Date().toISOString();
             console.log(`📡 [Offline] No network. Queuing event check-in for id: ${data.user_id || data.participant_id}`);
             addToOfflineQueue({
                 type: 'checkin',
-                data: data
+                data: { ...data, custom_checkin_time: offlineCheckinTime }
             });
 
             // Return a "pseudo-success" structure
@@ -1138,8 +1271,8 @@ async function checkin(data: {
                         event_id: data.event_id,
                         user_id: data.user_id || '',
                         participant_id: data.participant_id || '',
-                        checkin_time: new Date().toISOString(),
-                        status: 'on_time', // Assume on_time, will be corrected on server
+                        checkin_time: offlineCheckinTime,
+                        status: 'on_time', // Will be recalculated with correct time on sync
                         points_earned: 0
                     } as any,
                     event: { id: data.event_id, start_time: new Date().toISOString() } as any
@@ -1147,29 +1280,8 @@ async function checkin(data: {
             } as any;
         }
 
-        // Get event first
-        const { data: event, error: eventError } = await supabase
-            .from('events')
-            .select('*')
-            .eq('id', data.event_id)
-            .single();
-
-        if (eventError || !event) {
-            return { success: false, error: 'Sự kiện không tồn tại' };
-        }
-
-        // Check if already checked in
-        let query = supabase.from('checkins').select('id').eq('event_id', data.event_id);
-
-        if (data.participant_id) {
-            query = query.eq('participant_id', data.participant_id);
-        } else if (data.user_id) {
-            query = query.eq('user_id', data.user_id);
-        }
-
-        const { data: existingCheckin } = await query.single();
-
-        if (existingCheckin) {
+        // ── OPTIMIZATION: Check local cache for duplicates first (0 DB queries) ──
+        if (isAlreadyCheckedInLocal(data.event_id, data.user_id, data.participant_id)) {
             return {
                 success: true,
                 message: 'Bạn đã check-in sự kiện này rồi',
@@ -1177,20 +1289,107 @@ async function checkin(data: {
             } as any;
         }
 
-        // Calculate status
-        const checkinTime = new Date();
+        // ── OPTIMIZATION: Get event from session cache first (0 DB queries if cached) ──
+        let event = getEventFromSessionCache(data.event_id);
+        if (!event) {
+            const { data: eventData, error: eventError } = await supabase
+                .from('events')
+                .select('*')
+                .eq('id', data.event_id)
+                .single();
+
+            if (eventError || !eventData) {
+                return { success: false, error: 'Sự kiện không tồn tại' };
+            }
+            event = eventData;
+            setEventSessionCache(data.event_id, event);
+        }
+
+        // BUG FIX #1: Validate event hasn't ended (1h grace period)
+        const now = new Date();
+        const eventEndTime = new Date(event.end_time);
+        if (now > new Date(eventEndTime.getTime() + 60 * 60 * 1000)) {
+            return { success: false, error: 'Sự kiện đã kết thúc. Không thể check-in.' };
+        }
+
+        // IMPROVEMENT #6: Warn if check-in too early (>2h before start)
+        const eventStartTimeCheck = new Date(event.start_time);
+        const hoursBeforeStart = (eventStartTimeCheck.getTime() - now.getTime()) / (1000 * 60 * 60);
+        if (hoursBeforeStart > 2) {
+            return { success: false, error: `Sự kiện chưa bắt đầu (còn ${Math.round(hoursBeforeStart)} giờ nữa).` };
+        }
+
+        // ── DB duplicate check (only if local cache not loaded or as safety net) ──
+        const hasCacheLoaded = checkinSessionCache.has(data.event_id);
+        if (!hasCacheLoaded) {
+            // Fallback: check DB if cache wasn't pre-loaded
+            let existingCheckin = null;
+            if (data.participant_id && data.user_id) {
+                const { data: existing } = await supabase
+                    .from('checkins')
+                    .select('id')
+                    .eq('event_id', data.event_id)
+                    .or(`participant_id.eq.${data.participant_id},user_id.eq.${data.user_id}`)
+                    .limit(1)
+                    .maybeSingle();
+                existingCheckin = existing;
+            } else if (data.participant_id) {
+                const { data: existing } = await supabase
+                    .from('checkins').select('id')
+                    .eq('event_id', data.event_id)
+                    .eq('participant_id', data.participant_id)
+                    .maybeSingle();
+                existingCheckin = existing;
+            } else if (data.user_id) {
+                const { data: existing } = await supabase
+                    .from('checkins').select('id')
+                    .eq('event_id', data.event_id)
+                    .eq('user_id', data.user_id)
+                    .maybeSingle();
+                existingCheckin = existing;
+            }
+
+            if (existingCheckin) {
+                // Add to local cache so next scan is instant
+                addToCheckinSessionCache(data.event_id, data.user_id, data.participant_id);
+                return {
+                    success: true,
+                    message: 'Bạn đã check-in sự kiện này rồi',
+                    alreadyExists: true
+                } as any;
+            }
+        }
+
+        // Calculate status (BUG FIX #2 & #7: Use custom_checkin_time for offline sync)
+        const checkinTime = data.custom_checkin_time ? new Date(data.custom_checkin_time) : new Date();
         const eventStartTime = new Date(event.start_time);
         const lateThreshold = event.late_threshold_mins || 15;
         const diffMinutes = (checkinTime.getTime() - eventStartTime.getTime()) / (1000 * 60);
 
         const status = diffMinutes > lateThreshold ? 'late' : 'on_time';
 
-        // Calculate points based on mode
+        // Calculate points based on status
         let points = 0;
-        if (data.checkin_mode !== 'event') {
-            points = status === 'on_time'
-                ? (event.points_on_time ?? 10)
-                : (event.points_late ?? -5);
+        points = status === 'on_time'
+            ? (event.points_on_time ?? 10)
+            : (event.points_late ?? -5);
+
+        // Anti-fake GPS detection
+        let gpsSuspicious = false;
+        if (data.checkin_latitude !== undefined && data.checkin_longitude !== undefined) {
+            const acc = data.checkin_accuracy || 0;
+            // Fake GPS apps: accuracy = 0, < 1m, or coords at (0,0)
+            if (acc === 0 || acc < 1) gpsSuspicious = true;
+            if (data.checkin_latitude === 0 && data.checkin_longitude === 0) gpsSuspicious = true;
+            // Check distance from event location
+            if (event.latitude && event.longitude) {
+                const dist = haversineDistance(
+                    data.checkin_latitude, data.checkin_longitude,
+                    event.latitude, event.longitude
+                );
+                const radius = event.radius_meters || 100;
+                if (dist > radius * 2) gpsSuspicious = true; // >2x radius = suspicious
+            }
         }
 
         // Create checkin
@@ -1206,7 +1405,11 @@ async function checkin(data: {
                 face_verified: data.face_verified || false,
                 points_earned: points,
                 device_info: data.device_info,
-                ip_address: data.ip_address
+                ip_address: data.ip_address,
+                checkin_latitude: data.checkin_latitude || null,
+                checkin_longitude: data.checkin_longitude || null,
+                checkin_accuracy: data.checkin_accuracy || null,
+                gps_suspicious: gpsSuspicious
             })
             .select()
             .single();
@@ -1215,10 +1418,13 @@ async function checkin(data: {
             return { success: false, error: checkinError.message };
         }
 
+        // ── OPTIMIZATION: Add to local cache after successful insert ──
+        addToCheckinSessionCache(data.event_id, data.user_id, data.participant_id);
+
         // --- INTEGRATE ACTUAL POINTS ---
         // If checkin_mode is not 'event' (meaning it's a points-enabled checkin), 
         // update the user's total_points and create a notification.
-        if (data.checkin_mode !== 'event' && points !== 0) {
+        if (data.user_id && points !== 0) {
             try {
                 const reason = status === 'on_time'
                     ? `Tham gia sự kiện "${event.name}" đúng giờ`
@@ -1443,6 +1649,40 @@ async function saveEventParticipants(
             }
         });
 
+        // AUTO-NOTIFY: Gửi thông báo cho participants mới có user_id
+        if (newParticipants.length > 0) {
+            const newWithUserId = savedParticipants.filter(p => p.user_id);
+            if (newWithUserId.length > 0) {
+                // Get event name for notification
+                const { data: eventData } = await supabase
+                    .from('events')
+                    .select('name, start_time')
+                    .eq('id', eventId)
+                    .single();
+
+                if (eventData) {
+                    const startTime = new Date(eventData.start_time).toLocaleString('vi-VN', {
+                        day: '2-digit', month: '2-digit', year: 'numeric',
+                        hour: '2-digit', minute: '2-digit'
+                    });
+
+                    const notifications = newWithUserId.map(p => ({
+                        user_id: p.user_id!,
+                        type: 'event_invite',
+                        title: `📋 Bạn được thêm vào sự kiện`,
+                        message: `Bạn đã được thêm vào sự kiện "${eventData.name}" lúc ${startTime}. Hãy check-in đúng giờ!`,
+                        is_read: false,
+                        metadata: { event_id: eventId }
+                    }));
+
+                    supabase.from('notifications').insert(notifications)
+                        .then(res => {
+                            if (!res.error) console.log(`📢 Sent ${notifications.length} event invite notifications`);
+                        });
+                }
+            }
+        }
+
         return { success: true, data: savedParticipants };
     } catch (err) {
         return { success: false, error: 'Lỗi lưu danh sách người tham gia' };
@@ -1540,13 +1780,7 @@ async function uploadParticipantAvatarWithFaceID(
 // =====================================================
 // ROOMS API
 // =====================================================
-interface Room {
-    id: string;
-    name: string;
-    zone: string;
-    capacity: number;
-    manager_id?: string;
-}
+// Room imported from types.ts — no duplicate needed
 
 async function getRooms(): Promise<ApiResponse<Room[]>> {
     try {
@@ -1669,6 +1903,39 @@ interface BoardingCheckinRecord {
 
 export type CheckinType = 'morning_in' | 'morning_out' | 'noon_in' | 'noon_out' | 'afternoon_in' | 'afternoon_out' | 'evening_in' | 'evening_out' | string;
 
+// ── Boarding session cache (like event checkin cache) ──
+const boardingCheckinCache = new Map<string, Set<string>>();
+
+async function preloadBoardingCheckins(slotId: string, date?: string): Promise<{ success: boolean; count: number }> {
+    try {
+        const targetDate = date || getTodayDateStr();
+        const cacheKey = `${slotId}_${targetDate}`;
+
+        const { data, error } = await supabase
+            .from('boarding_attendance')
+            .select('user_id')
+            .eq('slot_id', slotId)
+            .eq('date', targetDate);
+
+        if (error) return { success: false, count: 0 };
+
+        const idSet = new Set<string>();
+        (data || []).forEach((row: any) => {
+            if (row.user_id) idSet.add(row.user_id);
+        });
+
+        boardingCheckinCache.set(cacheKey, idSet);
+        console.log(`📋 [Cache] Pre-loaded ${idSet.size} boarding checkins for slot ${slotId}`);
+        return { success: true, count: idSet.size };
+    } catch (err) {
+        return { success: false, count: 0 };
+    }
+}
+
+function clearBoardingCheckinCache(): void {
+    boardingCheckinCache.clear();
+}
+
 async function boardingCheckin(
     userId: string,
     slotId: string,
@@ -1701,23 +1968,41 @@ async function boardingCheckin(
             };
         }
 
-        // 1. Kiểm tra xem đã có bản ghi điểm danh cho slot này hôm nay chưa
-        const { data: existingAttendance } = await supabase
-            .from('boarding_attendance')
-            .select('*')
-            .eq('user_id', userId)
-            .eq('slot_id', slotId)
-            .eq('date', today)
-            .maybeSingle();
-
-        if (existingAttendance) {
-            console.log(`ℹ️ [BoardingCheckin] User ${userId} already checked in for slot ${slotId} today.`);
+        // ── OPTIMIZATION: Check local cache first ──
+        const cacheKey = `${slotId}_${today}`;
+        const cachedSet = boardingCheckinCache.get(cacheKey);
+        if (cachedSet && cachedSet.has(userId)) {
             return {
                 success: true,
                 message: 'Bạn đã điểm danh rồi',
-                data: existingAttendance,
                 alreadyExists: true
             };
+        }
+
+        // 1. Kiểm tra xem đã có bản ghi điểm danh cho slot này hôm nay chưa (DB fallback)
+        if (!cachedSet) {
+            const { data: existingAttendance } = await supabase
+                .from('boarding_attendance')
+                .select('*')
+                .eq('user_id', userId)
+                .eq('slot_id', slotId)
+                .eq('date', today)
+                .maybeSingle();
+
+            if (existingAttendance) {
+                // Add to cache for future checks
+                let set = boardingCheckinCache.get(cacheKey);
+                if (!set) { set = new Set(); boardingCheckinCache.set(cacheKey, set); }
+                set.add(userId);
+
+                console.log(`ℹ️ [BoardingCheckin] User ${userId} already checked in for slot ${slotId} today.`);
+                return {
+                    success: true,
+                    message: 'Bạn đã điểm danh rồi',
+                    data: existingAttendance,
+                    alreadyExists: true
+                };
+            }
         }
 
         // 2. Lưu vào bảng log duy nhất (boarding_attendance)
@@ -1736,6 +2021,13 @@ async function boardingCheckin(
             .single();
 
         if (attendanceError) return { success: false, error: attendanceError.message };
+
+        // ── OPTIMIZATION: Add to cache after successful insert ──
+        {
+            let set = boardingCheckinCache.get(cacheKey);
+            if (!set) { set = new Set(); boardingCheckinCache.set(cacheKey, set); }
+            set.add(userId);
+        }
 
         // 3. Xử lý trừ điểm nếu đi muộn
         if (status === 'late') {
@@ -1912,8 +2204,9 @@ async function getRecentBoardingActivity(options?: {
 }
 
 // Fetch raw boarding logs (not grouped) for sidebar
-async function getRecentBoardingLogs(limit: number = 30): Promise<ApiResponse<any[]>> {
+async function getRecentBoardingLogs(limit: number = 15, date?: string): Promise<ApiResponse<any[]>> {
     try {
+        const targetDate = date || new Date().toLocaleDateString('en-CA');
         const { data, error } = await supabase
             .from('boarding_attendance')
             .select(`
@@ -1921,6 +2214,7 @@ async function getRecentBoardingLogs(limit: number = 30): Promise<ApiResponse<an
                 user:users!user_id(full_name, avatar_url, student_code, organization),
                 slot:boarding_time_slots!slot_id(name)
             `)
+            .eq('date', targetDate)
             .order('checkin_time', { ascending: false })
             .limit(limit);
 
@@ -2038,6 +2332,7 @@ async function deleteTimeSlot(id: string): Promise<ApiResponse<void>> {
 function getCurrentTimeSlot(slots: BoardingTimeSlot[]): BoardingTimeSlot | null {
     const now = new Date();
     const currentMinutes = now.getHours() * 60 + now.getMinutes();
+    const GRACE_MINUTES = 60; // Grace period cho check-in trễ
 
     for (const slot of slots) {
         if (!slot.is_active) continue;
@@ -2047,7 +2342,7 @@ function getCurrentTimeSlot(slots: BoardingTimeSlot[]): BoardingTimeSlot | null 
         const startMinutes = startH * 60 + startM;
         const endMinutes = endH * 60 + endM;
 
-        if (currentMinutes >= startMinutes && currentMinutes <= endMinutes) {
+        if (currentMinutes >= startMinutes && currentMinutes <= endMinutes + GRACE_MINUTES) {
             return slot;
         }
     }
@@ -2308,8 +2603,8 @@ async function addPoints(userId: string, points: number, reason: string, type: s
     }
 }
 
-async function deductPoints(userId: string, points: number, reason: string): Promise<ApiResponse<void>> {
-    return addPoints(userId, -points, reason);
+async function deductPoints(userId: string, points: number, reason: string, type: string = 'manual'): Promise<ApiResponse<void>> {
+    return addPoints(userId, -points, reason, type);
 }
 
 // =====================================================
@@ -2392,6 +2687,80 @@ function subscribeToNotifications(userId: string, callback: (payload: any) => vo
 }
 
 /**
+ * Tạo 1 notification cho 1 user
+ */
+async function createNotification(userId: string, type: string, title: string, message: string, metadata?: any): Promise<ApiResponse<void>> {
+    try {
+        const { error } = await supabase
+            .from('notifications')
+            .insert({
+                user_id: userId,
+                type,
+                title,
+                message,
+                is_read: false,
+                metadata: metadata || null
+            });
+
+        if (error) {
+            console.error('createNotification error:', error);
+            return { success: false, error: error.message };
+        }
+        return { success: true };
+    } catch (err: any) {
+        return { success: false, error: err.message };
+    }
+}
+
+/**
+ * Gửi thông báo cho tất cả participants có user_id trong sự kiện
+ */
+async function notifyEventParticipants(
+    eventId: string,
+    title: string,
+    message: string,
+    type: string = 'event_invite'
+): Promise<ApiResponse<{ sent: number; failed: number }>> {
+    try {
+        const { data: participants, error } = await supabase
+            .from('event_participants')
+            .select('user_id')
+            .eq('event_id', eventId)
+            .not('user_id', 'is', null);
+
+        if (error) return { success: false, error: error.message };
+        if (!participants || participants.length === 0) {
+            return { success: true, data: { sent: 0, failed: 0 }, message: 'Không có người tham gia có tài khoản' };
+        }
+
+        const uniqueUserIds = [...new Set(participants.map(p => p.user_id).filter(Boolean))];
+        const notifications = uniqueUserIds.map(userId => ({
+            user_id: userId,
+            type,
+            title,
+            message,
+            is_read: false,
+            metadata: { event_id: eventId }
+        }));
+
+        const { error: insertError } = await supabase
+            .from('notifications')
+            .insert(notifications);
+
+        if (insertError) {
+            console.error('notifyEventParticipants insert error:', insertError);
+            return { success: false, error: insertError.message };
+        }
+
+        console.log(`📢 [Notify] Sent ${uniqueUserIds.length} notifications for event ${eventId}`);
+        return { success: true, data: { sent: uniqueUserIds.length, failed: 0 } };
+    } catch (err: any) {
+        console.error('notifyEventParticipants error:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+/**
  * Đăng ký lắng nghe đơn xin phép ra ngoài mới (cho Admin)
  */
 function subscribeToExitPermissions(callback: (payload: any) => void) {
@@ -2453,14 +2822,26 @@ async function getRanking(options?: {
     limit?: number;
     page?: number;
     organization?: string;
+    dateRange?: 'week' | 'month' | 'semester' | 'all';
 }): Promise<ApiResponse<RankingUser[]>> {
     try {
         const type = options?.type || 'student';
         const limit = options?.limit || 50;
         const page = options?.page || 0;
         const offset = page * limit;
+        const dateRange = options?.dateRange || 'all';
 
-        const cacheKey = `ranking_${type}_${options?.role || 'all'}_${options?.organization || 'all'}_${page}`;
+        // Calculate start date for attendance filter
+        let attendanceStartDate: string | null = null;
+        if (dateRange !== 'all') {
+            const startDate = new Date();
+            if (dateRange === 'week') startDate.setDate(startDate.getDate() - 7);
+            else if (dateRange === 'month') startDate.setMonth(startDate.getMonth() - 1);
+            else if (dateRange === 'semester') startDate.setMonth(startDate.getMonth() - 6);
+            attendanceStartDate = startDate.toLocaleDateString('en-CA');
+        }
+
+        const cacheKey = `ranking_${type}_${options?.role || 'all'}_${options?.organization || 'all'}_${dateRange}_${page}`;
         const cached = getFromCache<RankingUser[]>(cacheKey);
         if (cached) return { success: true, data: cached };
 
@@ -2482,12 +2863,26 @@ async function getRanking(options?: {
             const { data, error } = await query;
             if (error) return { success: false, error: error.message };
 
-            // Fetch attendance stats
+            // Fetch attendance stats + absent count with date filter
             const userIds = (data || []).map(u => u.id);
-            const { data: attendanceData } = await supabase
+
+            let attendanceQuery = supabase
                 .from('boarding_attendance')
                 .select('user_id, status')
                 .in('user_id', userIds);
+            if (attendanceStartDate) attendanceQuery = attendanceQuery.gte('date', attendanceStartDate);
+
+            let absentQuery = supabase
+                .from('point_logs')
+                .select('user_id')
+                .in('user_id', userIds)
+                .eq('type', 'boarding_absent');
+            if (attendanceStartDate) absentQuery = absentQuery.gte('created_at', new Date(attendanceStartDate).toISOString());
+
+            const [{ data: attendanceData }, { data: absentLogs }] = await Promise.all([
+                attendanceQuery,
+                absentQuery
+            ]);
 
             const attendanceMap: Record<string, { on_time: number, late: number, absent: number }> = {};
             userIds.forEach(uid => {
@@ -2498,7 +2893,13 @@ async function getRanking(options?: {
                 if (attendanceMap[log.user_id]) {
                     if (log.status === 'on_time') attendanceMap[log.user_id].on_time++;
                     else if (log.status === 'late') attendanceMap[log.user_id].late++;
-                    else if (log.status === 'absent' || log.status === 'excused') attendanceMap[log.user_id].absent++;
+                }
+            });
+
+            // Count absences from point_logs (boarding_absent type)
+            absentLogs?.forEach(log => {
+                if (attendanceMap[log.user_id]) {
+                    attendanceMap[log.user_id].absent++;
                 }
             });
 
@@ -2516,21 +2917,44 @@ async function getRanking(options?: {
             // Class Ranking: Group by organization
             const { data, error } = await supabase
                 .from('users')
-                .select('organization, total_points')
+                .select('id, organization, total_points')
                 .eq('role', 'student')
                 .not('organization', 'is', null);
 
             if (error) return { success: false, error: error.message };
 
+            // Fetch class-level attendance stats
+            const allStudentIds = (data || []).map(u => u.id);
+            let classAttendanceQuery = supabase
+                .from('boarding_attendance')
+                .select('user_id, status')
+                .in('user_id', allStudentIds);
+            if (attendanceStartDate) classAttendanceQuery = classAttendanceQuery.gte('date', attendanceStartDate);
+
+            const { data: classAttendanceData } = await classAttendanceQuery;
+
+            // Build user→org map for attendance aggregation
+            const userOrgMap: Record<string, string> = {};
+            data?.forEach(u => { userOrgMap[u.id] = u.organization; });
+
             // Manual grouping
-            const classMap: Record<string, { name: string, total: number, count: number }> = {};
+            const classMap: Record<string, { name: string, total: number, count: number, on_time: number, late: number }> = {};
             data?.forEach(u => {
                 const org = u.organization;
                 if (!classMap[org]) {
-                    classMap[org] = { name: org, total: 0, count: 0 };
+                    classMap[org] = { name: org, total: 0, count: 0, on_time: 0, late: 0 };
                 }
                 classMap[org].total += u.total_points || 0;
                 classMap[org].count++;
+            });
+
+            // Aggregate attendance by class
+            classAttendanceData?.forEach(log => {
+                const org = userOrgMap[log.user_id];
+                if (org && classMap[org]) {
+                    if (log.status === 'on_time') classMap[org].on_time++;
+                    else if (log.status === 'late') classMap[org].late++;
+                }
             });
 
             const classList = Object.values(classMap).map(c => ({
@@ -2538,7 +2962,9 @@ async function getRanking(options?: {
                 full_name: c.name,
                 total_points: c.total,
                 student_count: c.count,
-                average_points: Math.round((c.total / c.count) * 10) / 10
+                average_points: Math.round((c.total / c.count) * 10) / 10,
+                on_time_count: c.on_time,
+                late_count: c.late
             })).sort((a, b) => b.average_points - a.average_points);
 
             const result = classList.slice(offset, offset + limit).map((c, i) => ({
@@ -2586,11 +3012,9 @@ async function getDetailedPointLogs(options: {
             else if (options.range === 'week') startDate.setDate(startDate.getDate() - 7);
             else if (options.range === 'month') startDate.setMonth(startDate.getMonth() - 1);
             query = query.gte('created_at', startDate.toISOString());
-            console.log('getDetailedPointLogs range filter:', startDate.toISOString());
         }
 
         const { data: logs, error } = await query;
-        console.log('getDetailedPointLogs logs result:', { count: logs?.length, error });
 
         if (error) throw error;
         if (!logs || logs.length === 0) return { success: true, data: [] };
@@ -2657,9 +3081,9 @@ async function getEventReport(eventId: string): Promise<ApiResponse<EventReport>
                 .select('id, user_id, full_name, organization')
                 .eq('event_id', eventId),
 
-            // Get Checkins
+            // Get Checkins (include GPS data for map)
             supabase.from('checkins')
-                .select('id, participant_id, user_id, checkin_time, status, points_earned')
+                .select('id, participant_id, user_id, checkin_time, status, points_earned, checkin_latitude, checkin_longitude, checkin_accuracy, gps_suspicious')
                 .eq('event_id', eventId),
 
             // Get Approved Exit Permissions (Excused Leaves)
@@ -2748,25 +3172,36 @@ async function getEventReport(eventId: string): Promise<ApiResponse<EventReport>
 
 async function getCertificates(userId?: string): Promise<ApiResponse<Certificate[]>> {
     try {
-        // OPTIMIZATION: Exclude heavy 'metadata' column to prevent statement timeout
-        // Metadata contains base64 images which are too large for bulk fetching
-        let query = supabase
-            .from('certificates')
-            .select('id, user_id, event_id, type, title, issued_date, qr_verify, pdf_url, status, template_id, user:users(id, full_name)')
-            .order('issued_date', { ascending: false })
-            .limit(200); // Limit results for performance
-
         if (userId) {
-            query = query.eq('user_id', userId);
-        }
+            // Student view: Fetch with metadata for rendering certificates
+            // Limited to their own certs so data size is manageable
+            const { data, error } = await supabase
+                .from('certificates')
+                .select('*')
+                .eq('user_id', userId)
+                .order('issued_date', { ascending: false })
+                .limit(50);
 
-        const { data, error } = await query;
+            if (error) {
+                console.error('getCertificates (student) error:', error);
+                return { success: false, error: error.message };
+            }
+            return { success: true, data: data as Certificate[] };
+        } else {
+            // Admin view: Include metadata for recipient_name display
+            // metadata contains base64 images but needed for name resolution
+            const { data, error } = await supabase
+                .from('certificates')
+                .select('id, user_id, event_id, type, title, issued_date, qr_verify, pdf_url, status, template_id, metadata')
+                .order('issued_date', { ascending: false })
+                .limit(100);
 
-        if (error) {
-            console.error('getCertificates error:', error);
-            return { success: false, error: error.message };
+            if (error) {
+                console.error('getCertificates (admin) error:', error);
+                return { success: false, error: error.message };
+            }
+            return { success: true, data: data as Certificate[] };
         }
-        return { success: true, data: data as Certificate[] };
     } catch (err) {
         return { success: false, error: 'Lỗi tải danh sách chứng nhận' };
     }
@@ -2831,7 +3266,7 @@ async function createCertificate(certData: Partial<Certificate>): Promise<ApiRes
                 type: certData.type || 'participation',
                 title: certData.title || 'Chứng nhận tham gia',
                 issued_date: certData.issued_date || new Date().toISOString(),
-                template_id: certData.template_id || 'modern',
+                template_id: certData.template_id || 'custom',
                 metadata: certData.metadata || {}
             })
             .select()
@@ -2847,21 +3282,39 @@ async function createCertificate(certData: Partial<Certificate>): Promise<ApiRes
 
 async function createCertificatesBulk(certsData: Partial<Certificate>[]): Promise<ApiResponse<Certificate[]>> {
     try {
-        const { data, error } = await supabase
-            .from('certificates')
-            .insert(certsData.map(c => ({
-                user_id: c.user_id,
-                event_id: c.event_id,
-                type: c.type || 'participation',
-                title: c.title || 'Chứng nhận tham gia',
-                issued_date: c.issued_date || new Date().toISOString(),
-                template_id: c.template_id || 'modern',
-                metadata: c.metadata || {}
-            })))
-            .select();
+        const payload = certsData.map(c => ({
+            user_id: c.user_id,
+            event_id: c.event_id,
+            type: c.type || 'participation',
+            title: c.title || 'Chứng nhận tham gia',
+            issued_date: c.issued_date || new Date().toISOString(),
+            template_id: c.template_id || 'custom',
+            metadata: c.metadata || {}
+        }));
 
-        if (error) return { success: false, error: error.message };
-        return { success: true, data: data as Certificate[] };
+        // Insert one by one to handle individual failures gracefully
+        const results: Certificate[] = [];
+        const errors: string[] = [];
+
+        for (const item of payload) {
+            const { data, error } = await supabase
+                .from('certificates')
+                .insert(item)
+                .select()
+                .single();
+
+            if (data) {
+                results.push(data as Certificate);
+            } else if (error) {
+                console.warn('Insert failed for', item.user_id, ':', error.message);
+                errors.push(error.message);
+            }
+        }
+
+        if (results.length > 0) {
+            return { success: true, data: results };
+        }
+        return { success: false, error: errors[0] || 'Không tạo được chứng nhận nào' };
     } catch (err) {
         return { success: false, error: 'Lỗi tạo hàng loạt' };
     }
@@ -3321,6 +3774,8 @@ export const dataService = {
     // Check-in
     checkin,
     getEventCheckins,
+    preloadEventCheckins,
+    clearCheckinSessionCache,
 
     // Participants
     getEventParticipants,
@@ -3342,6 +3797,8 @@ export const dataService = {
 
     // Boarding Check-in
     boardingCheckin,
+    preloadBoardingCheckins,
+    clearBoardingCheckinCache,
     syncOfflineData,
     getOfflineQueueLength,
     getBoardingCheckins,
@@ -3379,6 +3836,8 @@ export const dataService = {
     getNotifications,
     markNotificationsRead,
     subscribeToNotifications,
+    createNotification,
+    notifyEventParticipants,
 
     // Ranking
     getRanking,
@@ -3409,12 +3868,14 @@ export const dataService = {
     getPendingExitPermissionsCount,
 
     // Absent & Late Processing
+    previewAbsentStudents,
     processAbsentStudents,
     getLateStudents,
     processLateStudents,
     processEventAbsence,
     getPointStatistics,
     getDetailedPointLogs,
+    getStudentBehaviorData,
 
     // Cache
     clearCache,
@@ -3425,8 +3886,47 @@ export const dataService = {
     computeAndSaveFaceDescriptor,
     onFaceComputeComplete,
     getFaceComputeStatus,
-    getPendingFaceComputes
+    getPendingFaceComputes,
+
+    // Security
+    GUEST_STAFF_TOKEN,
+    hashPassword,
+
+    // School Settings
+    getSchoolSettings,
+    updateSchoolSetting,
 };
+
+// ===================== SCHOOL SETTINGS =====================
+async function getSchoolSettings(): Promise<ApiResponse<Record<string, string>>> {
+    try {
+        const { data, error } = await supabase
+            .from('school_settings')
+            .select('key, value');
+        if (error) throw error;
+        const settings: Record<string, string> = {};
+        (data || []).forEach((row: any) => {
+            settings[row.key] = row.value || '';
+        });
+        return { success: true, data: settings };
+    } catch (err: any) {
+        console.error('getSchoolSettings error:', err);
+        return { success: false, error: err.message };
+    }
+}
+
+async function updateSchoolSetting(key: string, value: string): Promise<ApiResponse<any>> {
+    try {
+        const { error } = await supabase
+            .from('school_settings')
+            .upsert({ key, value, updated_at: new Date().toISOString() }, { onConflict: 'key' });
+        if (error) throw error;
+        return { success: true, data: { key, value } };
+    } catch (err: any) {
+        console.error('updateSchoolSetting error:', err);
+        return { success: false, error: err.message };
+    }
+}
 
 /**
  * Process absent students for a specific date and slot.
@@ -3435,11 +3935,83 @@ export const dataService = {
  * 2. Don't have an approved exit permission for that date
  */
 /**
- * Process absent students for a specific date and slot.
+ * Preview DS học sinh vắng — KHÔNG trừ điểm
+ */
+async function previewAbsentStudents(
+    targetDate: string,
+    slotId: string
+): Promise<ApiResponse<{
+    students: { id: string; name: string; code: string; organization: string; points: number; isExcused: boolean }[];
+    absentPoints: number;
+}>> {
+    try {
+        const { data: slot } = await supabase
+            .from('boarding_time_slots')
+            .select('*')
+            .eq('id', slotId)
+            .single();
+
+        if (!slot) return { success: false, error: 'Không tìm thấy khung giờ' };
+
+        const configsRes = await getConfigs();
+        let absentPoints = 10;
+        if (configsRes.success && configsRes.data) {
+            const config = configsRes.data.find(c => c.key === 'points_absent_boarding');
+            if (config) absentPoints = Math.abs(parseInt(config.value) || 10);
+        }
+
+        const { data: attendance } = await supabase
+            .from('boarding_attendance')
+            .select('user_id')
+            .eq('slot_id', slotId)
+            .eq('date', targetDate);
+
+        const checkedInUsers = new Set(attendance?.map(a => a.user_id) || []);
+        const studentsRes = await getAllStudentsForCheckin(false);
+        if (!studentsRes.success || !studentsRes.data) return { success: false, error: 'Không tải được danh sách học sinh' };
+
+        const { data: permissions } = await supabase
+            .from('exit_permissions')
+            .select('user_id, exit_time, return_time')
+            .eq('status', 'approved')
+            .lte('exit_time', `${targetDate}T23:59:59`)
+            .gte('return_time', `${targetDate}T00:00:00`);
+
+        const excusedUsers = new Set<string>();
+        if (permissions) {
+            for (const perm of permissions) {
+                excusedUsers.add(perm.user_id);
+            }
+        }
+
+        const absentStudents: { id: string; name: string; code: string; organization: string; points: number; isExcused: boolean }[] = [];
+        for (const student of studentsRes.data) {
+            if (!checkedInUsers.has(student.id)) {
+                const isExcused = excusedUsers.has(student.id);
+                absentStudents.push({
+                    id: student.id,
+                    name: student.full_name,
+                    code: student.student_code || '',
+                    organization: student.organization || '',
+                    points: isExcused ? 0 : absentPoints,
+                    isExcused
+                });
+            }
+        }
+
+        return { success: true, data: { students: absentStudents, absentPoints } };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi xem trước danh sách vắng' };
+    }
+}
+
+/**
+ * Chốt vắng mặt — có guard chống trùng + excludedUserIds
  */
 async function processAbsentStudents(
     targetDate: string,
-    slotId: string
+    slotId: string,
+    excludedUserIds?: string[]
 ): Promise<ApiResponse<{
     processed: number;
     pointsDeducted: number;
@@ -3468,11 +4040,10 @@ async function processAbsentStudents(
             .eq('date', targetDate);
 
         const checkedInUsers = new Set(attendance?.map(a => a.user_id) || []);
+        const excludedSet = new Set(excludedUserIds || []);
         const studentsRes = await getAllStudentsForCheckin(false);
         if (!studentsRes.success || !studentsRes.data) return { success: false, error: 'Không tải được danh sách học sinh' };
 
-        // Improved query to find approved permissions that overlap with targetDate
-        // We look for permissions that start before end of day AND end after start of day
         const { data: permissions } = await supabase
             .from('exit_permissions')
             .select('user_id, exit_time, return_time')
@@ -3483,36 +4054,47 @@ async function processAbsentStudents(
         const excusedUsers = new Set<string>();
         if (permissions) {
             for (const perm of permissions) {
-                // Since the DB already filtered correctly, any permission in 'permissions'
-                // overlaps with targetDate. We add them to excusedUsers.
                 excusedUsers.add(perm.user_id);
             }
         }
 
+        // Guard: check which users already had points deducted for this slot+date
+        const startOfDay = `${targetDate}T00:00:00`;
+        const endOfDay = `${targetDate}T23:59:59`;
+        const { data: existingLogs } = await supabase
+            .from('point_logs')
+            .select('user_id')
+            .eq('type', 'boarding_absent')
+            .gte('created_at', startOfDay)
+            .lte('created_at', endOfDay)
+            .ilike('reason', `%${slot.name}%`);
+
+        const alreadyDeducted = new Set(existingLogs?.map(l => l.user_id) || []);
+
         const absentStudents: { name: string; code: string; organization: string; points: number; isExcused: boolean }[] = [];
+        let actualDeducted = 0;
+
         for (const student of studentsRes.data) {
             if (!checkedInUsers.has(student.id)) {
                 const isExcused = excusedUsers.has(student.id);
+                const isExcluded = excludedSet.has(student.id);
 
-                // If excused, we show 0 points and mark as excused
-                // If the user wants them GONE, we will filter in the UI/Excel
-                // but for now let's pass them with 0 points to be safe.
-                const pointsToDeduct = isExcused ? 0 : absentPoints;
-
-                if (!isExcused) {
+                if (!isExcused && !isExcluded && !alreadyDeducted.has(student.id)) {
                     await deductPoints(
                         student.id,
-                        pointsToDeduct,
-                        `Vắng điểm danh ${slot.name} ngày ${targetDate}`
+                        absentPoints,
+                        `Vắng điểm danh ${slot.name} ngày ${targetDate}`,
+                        'boarding_absent'
                     );
+                    actualDeducted++;
                 }
 
                 absentStudents.push({
                     name: student.full_name,
                     code: student.student_code || '',
                     organization: student.organization || '',
-                    points: pointsToDeduct,
-                    isExcused: isExcused
+                    points: (isExcused || isExcluded || alreadyDeducted.has(student.id)) ? 0 : absentPoints,
+                    isExcused: isExcused || isExcluded
                 });
             }
         }
@@ -3520,16 +4102,17 @@ async function processAbsentStudents(
         return {
             success: true,
             data: {
-                processed: absentStudents.filter(s => !s.isExcused).length,
+                processed: actualDeducted,
                 pointsDeducted: absentPoints,
                 students: absentStudents
             },
-            message: `Đã xử lý ${absentStudents.filter(s => !s.isExcused).length} học sinh vắng ${slot.name}`
+            message: `Đã xử lý ${actualDeducted} học sinh vắng ${slot.name}`
         };
     } catch (err: any) {
         return { success: false, error: err.message || 'Lỗi xử lý vắng' };
     }
 }
+
 
 /**
  * Get list of students who checked in late for a specific date and slot.
@@ -3630,21 +4213,33 @@ async function processEventAbsence(eventId: string, absentPoints: number = -10, 
 
         const { data: absentStudents, error: absentErr } = await supabase
             .from('event_participants')
-            .select('user_id')
+            .select('id, user_id')
             .eq('event_id', eventId)
             .not('user_id', 'is', null);
 
         if (absentErr) throw new Error(absentErr.message);
 
+        // FIX: Fetch user_id from checkins (not participant_id) to correctly compare
         const { data: checkinData, error: checkinErr } = await supabase
             .from('checkins')
-            .select('participant_id')
+            .select('participant_id, user_id')
             .eq('event_id', eventId);
 
         if (checkinErr) throw new Error(checkinErr.message);
 
-        const checkedInIds = new Set(checkinData?.map(c => c.participant_id).filter(Boolean));
-        let actuallyAbsent = absentStudents?.filter(s => !checkedInIds.has(s.user_id)) || [];
+        // Build a set of user_ids who checked in (via direct user_id OR via participant mapping)
+        const participantToUserMap = new Map(absentStudents?.map(s => [s.id, s.user_id]) || []);
+        const checkedInUserIds = new Set<string>();
+        checkinData?.forEach(c => {
+            if (c.user_id) {
+                checkedInUserIds.add(c.user_id);
+            }
+            if (c.participant_id && participantToUserMap.has(c.participant_id)) {
+                checkedInUserIds.add(participantToUserMap.get(c.participant_id)!);
+            }
+        });
+
+        let actuallyAbsent = absentStudents?.filter(s => !checkedInUserIds.has(s.user_id)) || [];
 
         if (selectedUserIds && selectedUserIds.length > 0) {
             const selectedSet = new Set(selectedUserIds);
@@ -3655,12 +4250,34 @@ async function processEventAbsence(eventId: string, absentPoints: number = -10, 
             return { success: true, message: 'Không có học sinh nào vắng mặt' };
         }
 
+        // DUPLICATE PREVENTION: Check which users already had absence points deducted for this event
+        const { data: existingLogs } = await supabase
+            .from('point_logs')
+            .select('user_id')
+            .eq('event_id', eventId)
+            .eq('type', 'event_absence');
+
+        const alreadyProcessedIds = new Set((existingLogs || []).map(l => l.user_id));
+        const newAbsent = actuallyAbsent.filter(s => !alreadyProcessedIds.has(s.user_id));
+        const skippedCount = actuallyAbsent.length - newAbsent.length;
+
+        if (newAbsent.length === 0) {
+            return { 
+                success: true, 
+                message: `Tất cả ${actuallyAbsent.length} học sinh vắng đã được chốt trước đó. Không trừ điểm lần nữa.` 
+            };
+        }
+
         const reason = `Vắng mặt sự kiện "${event.name}"`;
-        for (const student of actuallyAbsent) {
+        for (const student of newAbsent) {
             await addPoints(student.user_id, absentPoints, reason, 'event_absence', eventId);
         }
 
-        return { success: true, message: `Đã xử lý vắng mặt cho ${actuallyAbsent.length} học sinh.` };
+        const msg = skippedCount > 0
+            ? `Đã xử lý ${newAbsent.length} học sinh mới. Bỏ qua ${skippedCount} HS đã chốt trước đó.`
+            : `Đã xử lý vắng mặt cho ${newAbsent.length} học sinh.`;
+
+        return { success: true, message: msg };
     } catch (err: any) {
         return { success: false, error: err.message || 'Lỗi xử lý vắng mặt sự kiện' };
     }
@@ -3670,56 +4287,142 @@ async function processEventAbsence(eventId: string, absentPoints: number = -10, 
  * Lấy dữ liệu thống kê điểm số
  */
 async function getPointStatistics(options: {
-    range: 'day' | 'week' | 'month';
+    range: 'day' | 'week' | 'month' | 'quarter' | 'year' | 'custom';
     userId?: string;
+    startDate?: string; // ISO date for custom range
+    endDate?: string;
 }): Promise<ApiResponse<any>> {
     try {
-        const cacheKey = `point_stats_${options.range}_${options.userId || 'all'}`;
+        const cacheKey = `point_stats_${options.range}_${options.userId || 'all'}_${options.startDate || ''}_${options.endDate || ''}`;
         const cached = getFromCache<any>(cacheKey);
         if (cached) return { success: true, data: cached };
 
         const now = new Date();
         let startDate = new Date();
+        let prevStartDate = new Date();
+        let prevEndDate = new Date();
 
-        if (options.range === 'day') startDate.setHours(0, 0, 0, 0);
-        else if (options.range === 'week') startDate.setDate(now.getDate() - 7);
-        else if (options.range === 'month') startDate.setMonth(now.getMonth() - 1);
+        if (options.range === 'custom' && options.startDate && options.endDate) {
+            startDate = new Date(options.startDate);
+            const endMs = new Date(options.endDate).getTime() - new Date(options.startDate).getTime();
+            prevEndDate = new Date(startDate);
+            prevStartDate = new Date(startDate.getTime() - endMs);
+        } else if (options.range === 'day') {
+            startDate.setHours(0, 0, 0, 0);
+            prevStartDate = new Date(startDate);
+            prevStartDate.setDate(prevStartDate.getDate() - 1);
+            prevEndDate = new Date(startDate);
+        } else if (options.range === 'week') {
+            startDate.setDate(now.getDate() - 7);
+            prevStartDate = new Date(startDate);
+            prevStartDate.setDate(prevStartDate.getDate() - 7);
+            prevEndDate = new Date(startDate);
+        } else if (options.range === 'month') {
+            startDate.setMonth(now.getMonth() - 1);
+            prevStartDate = new Date(startDate);
+            prevStartDate.setMonth(prevStartDate.getMonth() - 1);
+            prevEndDate = new Date(startDate);
+        } else if (options.range === 'quarter') {
+            startDate.setMonth(now.getMonth() - 3);
+            prevStartDate = new Date(startDate);
+            prevStartDate.setMonth(prevStartDate.getMonth() - 3);
+            prevEndDate = new Date(startDate);
+        } else if (options.range === 'year') {
+            startDate.setFullYear(now.getFullYear() - 1);
+            prevStartDate = new Date(startDate);
+            prevStartDate.setFullYear(prevStartDate.getFullYear() - 1);
+            prevEndDate = new Date(startDate);
+        }
 
-        let query = supabase
+        // Fetch current + previous period in parallel
+        let currentQuery = supabase
             .from('point_logs')
-            .select('points, type, created_at')
+            .select('points, type, created_at, user_id')
             .gte('created_at', startDate.toISOString());
+        
+        // Apply end date for custom range
+        if (options.range === 'custom' && options.endDate) {
+            currentQuery = currentQuery.lte('created_at', new Date(options.endDate + 'T23:59:59').toISOString());
+        }
+        let prevQuery = supabase
+            .from('point_logs')
+            .select('points, type')
+            .gte('created_at', prevStartDate.toISOString())
+            .lt('created_at', prevEndDate.toISOString());
 
-        if (options.userId) query = query.eq('user_id', options.userId);
+        if (options.userId) {
+            currentQuery = currentQuery.eq('user_id', options.userId);
+            prevQuery = prevQuery.eq('user_id', options.userId);
+        }
 
-        const { data, error } = await query;
+        const [{ data, error }, { data: prevData }] = await Promise.all([currentQuery, prevQuery]);
         if (error) throw error;
 
-        // Ensure we handle potential null/undefined data
         const logs = data || [];
+        const prevLogs = prevData || [];
 
         const totalPoints = logs.reduce((sum, log) => sum + (log.points || 0), 0);
         const totalAdded = logs.filter(log => (log.points || 0) > 0).reduce((sum, log) => sum + log.points, 0);
         const totalDeducted = logs.filter(log => (log.points || 0) < 0).reduce((sum, log) => sum + Math.abs(log.points), 0);
 
-        // Group by category
-        const byCategory = {
-            boarding: 0,
-            event: 0,
-            manual: 0
-        };
+        // Previous period totals for comparison
+        const prevAdded = prevLogs.filter(log => (log.points || 0) > 0).reduce((sum, log) => sum + log.points, 0);
+        const prevDeducted = prevLogs.filter(log => (log.points || 0) < 0).reduce((sum, log) => sum + Math.abs(log.points), 0);
+        const prevLogsCount = prevLogs.length;
 
+        // Group by category
+        const byCategory: Record<string, number> = { boarding: 0, event: 0, manual: 0 };
         logs.forEach(log => {
             const p = log.points || 0;
             const t = log.type || '';
-            if (t.startsWith('boarding_')) {
-                byCategory.boarding += p;
-            } else if (t.startsWith('event_')) {
-                byCategory.event += p;
-            } else {
-                byCategory.manual += p;
-            }
+            if (t.startsWith('boarding_')) byCategory.boarding += p;
+            else if (t.startsWith('event_')) byCategory.event += p;
+            else byCategory.manual += p;
         });
+
+        // Daily trend: group by date
+        const dailyMap: Record<string, { added: number; deducted: number; count: number }> = {};
+        logs.forEach(log => {
+            const dateKey = new Date(log.created_at).toLocaleDateString('vi-VN');
+            if (!dailyMap[dateKey]) dailyMap[dateKey] = { added: 0, deducted: 0, count: 0 };
+            if ((log.points || 0) > 0) dailyMap[dateKey].added += log.points;
+            else dailyMap[dateKey].deducted += Math.abs(log.points);
+            dailyMap[dateKey].count++;
+        });
+        const dailyTrend = Object.entries(dailyMap).map(([date, v]) => ({
+            date, added: v.added, deducted: v.deducted, count: v.count
+        }));
+
+        // Top users: aggregate by user_id
+        const userAgg: Record<string, { added: number; deducted: number }> = {};
+        logs.forEach(log => {
+            if (!log.user_id) return;
+            if (!userAgg[log.user_id]) userAgg[log.user_id] = { added: 0, deducted: 0 };
+            if ((log.points || 0) > 0) userAgg[log.user_id].added += log.points;
+            else userAgg[log.user_id].deducted += Math.abs(log.points);
+        });
+
+        const topUserIds = Object.keys(userAgg);
+        let userNames: Record<string, { name: string; org: string }> = {};
+        if (topUserIds.length > 0) {
+            const { data: users } = await supabase
+                .from('users')
+                .select('id, full_name, organization')
+                .in('id', topUserIds.slice(0, 200));
+            users?.forEach(u => { userNames[u.id] = { name: u.full_name, org: u.organization || '' }; });
+        }
+
+        const topAdded = Object.entries(userAgg)
+            .map(([id, v]) => ({ userId: id, name: userNames[id]?.name || 'N/A', org: userNames[id]?.org || '', points: v.added }))
+            .filter(u => u.points > 0)
+            .sort((a, b) => b.points - a.points)
+            .slice(0, 5);
+
+        const topDeducted = Object.entries(userAgg)
+            .map(([id, v]) => ({ userId: id, name: userNames[id]?.name || 'N/A', org: userNames[id]?.org || '', points: v.deducted }))
+            .filter(u => u.points > 0)
+            .sort((a, b) => b.points - a.points)
+            .slice(0, 5);
 
         const resultData = {
             totalPoints,
@@ -3727,16 +4430,275 @@ async function getPointStatistics(options: {
             totalDeducted,
             byCategory,
             logsCount: logs.length,
-            range: options.range
+            range: options.range,
+            dailyTrend,
+            topAdded,
+            topDeducted,
+            prevAdded,
+            prevDeducted,
+            prevLogsCount
         };
 
-        setCache(cacheKey, resultData, 30000); // 30s cache
-        return {
-            success: true,
-            data: resultData
-        };
+        setCache(cacheKey, resultData, 30000);
+        return { success: true, data: resultData };
     } catch (err: any) {
         console.error('getPointStatistics error:', err);
         return { success: false, error: err.message || 'Lỗi tải thống kê điểm' };
+    }
+}
+
+/**
+ * AI Behavior Analysis — Per-student behavior data with weekly trends & alerts
+ */
+async function getStudentBehaviorData(options: {
+    classFilter?: string;
+    weeks?: number;
+    startDate?: string; // ISO date for custom range
+    endDate?: string;
+}): Promise<ApiResponse<any>> {
+    try {
+        const weeks = options.weeks || 4;
+        const cacheKey = `behavior_${options.classFilter || 'all'}_${weeks}w_${options.startDate || ''}_${options.endDate || ''}`;
+        const cached = getFromCache<any>(cacheKey);
+        if (cached) return { success: true, data: cached };
+
+        const now = new Date();
+        let startDate: Date;
+        let endDate: Date = new Date();
+
+        if (options.startDate && options.endDate) {
+            startDate = new Date(options.startDate);
+            endDate = new Date(options.endDate);
+        } else {
+            startDate = new Date();
+            startDate.setDate(now.getDate() - (weeks * 7));
+        }
+
+        // Calculate actual weeks between dates for boundary building
+        const totalDays = Math.ceil((endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+        const actualWeeks = Math.max(1, Math.ceil(totalDays / 7));
+
+        // 1. Fetch all point_logs in period
+        const { data: pointLogs, error: plErr } = await supabase
+            .from('point_logs')
+            .select('user_id, points, reason, type, created_at')
+            .gte('created_at', startDate.toISOString())
+            .lte('created_at', endDate.toISOString())
+            .order('created_at', { ascending: true });
+        if (plErr) throw plErr;
+
+        // 2. Fetch all boarding_attendance in period
+        const startDateStr = startDate.toISOString().split('T')[0];
+        const endDateStr = endDate.toISOString().split('T')[0];
+        const { data: attendanceLogs, error: atErr } = await supabase
+            .from('boarding_attendance')
+            .select('user_id, date, status')
+            .gte('date', startDateStr)
+            .lte('date', endDateStr);
+        if (atErr) throw atErr;
+
+        // 3. Get student users
+        let userQuery = supabase
+            .from('users')
+            .select('id, full_name, organization, total_points')
+            .eq('role', 'student')
+            .eq('status', 'active');
+        if (options.classFilter) {
+            userQuery = userQuery.eq('organization', options.classFilter);
+        }
+        const { data: students, error: uErr } = await userQuery;
+        if (uErr) throw uErr;
+
+        // Build week boundaries dynamically
+        const weekBoundaries: { start: Date; end: Date; label: string }[] = [];
+        for (let i = 0; i < actualWeeks; i++) {
+            const ws = new Date(startDate.getTime() + i * 7 * 24 * 60 * 60 * 1000);
+            ws.setHours(0, 0, 0, 0);
+            const we = new Date(ws.getTime() + 7 * 24 * 60 * 60 * 1000 - 1);
+            if (we > endDate) we.setTime(endDate.getTime());
+            weekBoundaries.push({
+                start: ws,
+                end: we,
+                label: `${ws.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })} - ${we.toLocaleDateString('vi-VN', { day: '2-digit', month: '2-digit' })}`
+            });
+        }
+
+        const getWeekIndex = (dateStr: string) => {
+            const d = new Date(dateStr);
+            for (let i = 0; i < weekBoundaries.length; i++) {
+                if (d >= weekBoundaries[i].start && d <= weekBoundaries[i].end) return i;
+            }
+            return -1;
+        };
+
+        // 4. Build per-student data
+        const studentMap = new Map<string, any>();
+        (students || []).forEach(s => {
+            studentMap.set(s.id, {
+                userId: s.id,
+                name: s.full_name,
+                class: s.organization || 'N/A',
+                totalPoints: s.total_points || 0,
+                weeklyTrend: weekBoundaries.map(wb => ({
+                    week: wb.label,
+                    weekStart: wb.start.toISOString(),
+                    pointsAdded: 0,
+                    pointsDeducted: 0,
+                    lateCount: 0,
+                    absentCount: 0,
+                })),
+                totalLate: 0,
+                totalAbsent: 0,
+                totalDeducted: 0,
+                totalAdded: 0,
+                trend: 'stable',
+                trendDetail: '',
+                alertLevel: 'green',
+                alertReasons: [],
+                repeatedViolations: [],
+                _violationMap: {} as Record<string, number>,
+            });
+        });
+
+        // Fill point_logs data
+        (pointLogs || []).forEach(log => {
+            const s = studentMap.get(log.user_id);
+            if (!s) return;
+            const wi = getWeekIndex(log.created_at);
+            const pts = log.points || 0;
+            if (pts > 0) {
+                s.totalAdded += pts;
+                if (wi >= 0) s.weeklyTrend[wi].pointsAdded += pts;
+            } else {
+                s.totalDeducted += Math.abs(pts);
+                if (wi >= 0) s.weeklyTrend[wi].pointsDeducted += Math.abs(pts);
+            }
+            // Track violation reasons for negative points
+            if (pts < 0 && log.reason) {
+                const key = log.reason.replace(/ngày \d{4}-\d{2}-\d{2}/g, '').replace(/ngày \d{2}\/\d{2}\/\d{4}/g, '').trim();
+                s._violationMap[key] = (s._violationMap[key] || 0) + 1;
+            }
+        });
+
+        // Fill boarding_attendance data
+        (attendanceLogs || []).forEach(log => {
+            const s = studentMap.get(log.user_id);
+            if (!s) return;
+            const wi = getWeekIndex(log.date + 'T12:00:00');
+            if (log.status === 'late') {
+                s.totalLate++;
+                if (wi >= 0) s.weeklyTrend[wi].lateCount++;
+            }
+        });
+
+        // Count absences from point_logs type='boarding_absent'
+        (pointLogs || []).forEach(log => {
+            if (log.type !== 'boarding_absent') return;
+            const s = studentMap.get(log.user_id);
+            if (!s) return;
+            s.totalAbsent++;
+            const wi = getWeekIndex(log.created_at);
+            if (wi >= 0) s.weeklyTrend[wi].absentCount++;
+        });
+
+        // 5. Classify each student
+        const allStudents: any[] = [];
+        studentMap.forEach(s => {
+            // Repeated violations
+            s.repeatedViolations = Object.entries(s._violationMap)
+                .filter(([_, count]) => (count as number) >= 2)
+                .map(([reason, count]) => ({ reason, count }))
+                .sort((a: any, b: any) => b.count - a.count)
+                .slice(0, 5);
+            delete s._violationMap;
+
+            // Trend: compare last 2 weeks
+            const wt = s.weeklyTrend;
+            if (wt.length >= 2) {
+                const last = wt[wt.length - 1];
+                const prev = wt[wt.length - 2];
+                const lastScore = last.pointsDeducted + (last.lateCount * 2);
+                const prevScore = prev.pointsDeducted + (prev.lateCount * 2);
+                if (lastScore < prevScore * 0.7) {
+                    s.trend = 'improving';
+                    s.trendDetail = 'Vi phạm giảm so với tuần trước';
+                } else if (lastScore > prevScore * 1.3 && lastScore > 0) {
+                    s.trend = 'declining';
+                    s.trendDetail = 'Vi phạm tăng so với tuần trước';
+                } else {
+                    s.trend = 'stable';
+                    s.trendDetail = 'Ổn định';
+                }
+            }
+
+            // Alert level
+            const lastWeek = wt[wt.length - 1];
+            const reasons: string[] = [];
+
+            // Check declining 3 weeks
+            let decliningWeeks = 0;
+            for (let i = 1; i < wt.length; i++) {
+                if (wt[i].pointsDeducted > wt[i - 1].pointsDeducted && wt[i].pointsDeducted > 0) decliningWeeks++;
+            }
+
+            if (lastWeek.lateCount >= 4) reasons.push(`Đi muộn ${lastWeek.lateCount} lần/tuần`);
+            if (lastWeek.absentCount >= 2) reasons.push(`Vắng ${lastWeek.absentCount} lần/tuần`);
+            if (decliningWeeks >= 3) reasons.push('Điểm trừ tăng 3 tuần liên tiếp');
+            if (s.repeatedViolations.length > 0) reasons.push(`Vi phạm lặp: ${s.repeatedViolations[0].reason} (${s.repeatedViolations[0].count} lần)`);
+
+            if (lastWeek.lateCount >= 4 || lastWeek.absentCount >= 2 || decliningWeeks >= 3) {
+                s.alertLevel = 'red';
+            } else if (lastWeek.lateCount >= 2 || decliningWeeks >= 2) {
+                s.alertLevel = 'yellow';
+            } else if (s.trend === 'improving' && s.totalAdded > s.totalDeducted && lastWeek.lateCount === 0) {
+                s.alertLevel = 'star';
+            } else {
+                s.alertLevel = 'green';
+            }
+            s.alertReasons = reasons;
+
+            allStudents.push(s);
+        });
+
+        // Sort: red first, then yellow, green, star
+        const alertOrder: Record<string, number> = { red: 0, yellow: 1, green: 2, star: 3 };
+        allStudents.sort((a, b) => (alertOrder[a.alertLevel] ?? 2) - (alertOrder[b.alertLevel] ?? 2));
+
+        // Class summary
+        const classMap: Record<string, any> = {};
+        allStudents.forEach(s => {
+            if (!classMap[s.class]) classMap[s.class] = { className: s.class, studentCount: 0, totalPts: 0, redCount: 0, yellowCount: 0, greenCount: 0, starCount: 0 };
+            const c = classMap[s.class];
+            c.studentCount++;
+            c.totalPts += s.totalPoints;
+            if (s.alertLevel === 'red') c.redCount++;
+            else if (s.alertLevel === 'yellow') c.yellowCount++;
+            else if (s.alertLevel === 'star') c.starCount++;
+            else c.greenCount++;
+        });
+        const classSummary = Object.values(classMap).map((c: any) => ({
+            ...c,
+            avgPoints: c.studentCount > 0 ? Math.round(c.totalPts / c.studentCount) : 0,
+        }));
+
+        const report = {
+            summary: {
+                totalStudents: allStudents.length,
+                alertRed: allStudents.filter(s => s.alertLevel === 'red').length,
+                alertYellow: allStudents.filter(s => s.alertLevel === 'yellow').length,
+                alertGreen: allStudents.filter(s => s.alertLevel === 'green').length,
+                alertStar: allStudents.filter(s => s.alertLevel === 'star').length,
+            },
+            students: allStudents,
+            classSummary,
+            generatedAt: new Date().toISOString(),
+            weeksAnalyzed: actualWeeks,
+        };
+
+        setCache(cacheKey, report, 60000);
+        return { success: true, data: report };
+    } catch (err: any) {
+        console.error('getStudentBehaviorData error:', err);
+        return { success: false, error: err.message || 'Lỗi phân tích hành vi' };
     }
 }

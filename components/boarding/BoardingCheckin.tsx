@@ -111,8 +111,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 (item.name === entry.name && item.time === entry.time)
             );
             if (isDuplicate) return prev;
-            // Keep last 30 for better history
-            return [entry, ...prev.slice(0, 29)];
+            // Keep last 15 for sidebar
+            return [entry, ...prev.slice(0, 14)];
         });
 
         // Update checkedInIds Set
@@ -331,23 +331,64 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
                 const roomsRes = await dataService.getRooms();
                 if (roomsRes.success && roomsRes.data) setRooms(roomsRes.data);
 
-                // LOAD RECENT CHECK-INS (LIMIT 30)
-                const recentRes = await dataService.getRecentBoardingLogs(30);
-                if (recentRes.success && recentRes.data) {
-                    const mapped = recentRes.data.map(c => ({
-                        name: c.user?.full_name || 'Học sinh',
-                        userId: c.user_id,
-                        time: new Date(c.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-                        type: c.slot?.name || 'Điểm danh',
-                        image: c.user?.avatar_url,
-                        status: c.status === 'late' ? 'warning' : 'success'
-                    }));
-                    setRecentCheckins(mapped);
+                // LOAD RECENT CHECK-INS — chỉ lấy hôm nay, tối đa 15
+                // Xác định slot đang active để lọc chính xác hơn
+                const now = new Date();
+                const nowMins = now.getHours() * 60 + now.getMinutes();
+                let initSlot: BoardingTimeSlot | null = null;
+                if (slotsRes.success && slotsRes.data) {
+                    for (const s of slotsRes.data) {
+                        if (!s.is_active) continue;
+                        const [sh, sm] = s.start_time.split(':').map(Number);
+                        const [eh, em] = s.end_time.split(':').map(Number);
+                        const start = sh * 60 + sm, end = eh * 60 + em;
+                        if (nowMins >= start && nowMins <= end + 60) { initSlot = s; break; }
+                    }
+                }
 
-                    // Sync checkedInIds
-                    const ids = new Set<string>();
-                    recentRes.data.forEach(c => ids.add(c.user_id));
-                    setCheckedInIds(ids);
+                if (initSlot) {
+                    // ── OPTIMIZATION: Pre-load existing checkins for this slot ──
+                    await dataService.preloadBoardingCheckins(initSlot.id);
+
+                    // Có slot active → lấy check-in theo slot + ngày hôm nay
+                    const activityRes = await dataService.getRecentBoardingActivity({
+                        date: now.toLocaleDateString('en-CA'),
+                        slotId: initSlot.id,
+                        limit: 15
+                    });
+                    if (activityRes.success && activityRes.data) {
+                        const newCheckedInIds = new Set<string>();
+                        setRecentCheckins(activityRes.data.map(item => {
+                            if (item.user_id) newCheckedInIds.add(item.user_id);
+                            return {
+                                name: item.name,
+                                userId: item.user_id,
+                                time: new Date(item.time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+                                type: item.slot_name || initSlot!.name,
+                                image: item.avatar,
+                                status: item.status === 'late' ? 'warning' : 'success'
+                            };
+                        }));
+                        setCheckedInIds(newCheckedInIds);
+                    }
+                } else {
+                    // Ngoài giờ → lấy check-in hôm nay (không lọc slot)
+                    const recentRes = await dataService.getRecentBoardingLogs(15);
+                    if (recentRes.success && recentRes.data) {
+                        const mapped = recentRes.data.map(c => ({
+                            name: c.user?.full_name || 'Học sinh',
+                            userId: c.user_id,
+                            time: new Date(c.checkin_time).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
+                            type: c.slot?.name || 'Điểm danh',
+                            image: c.user?.avatar_url,
+                            status: c.status === 'late' ? 'warning' : 'success'
+                        }));
+                        setRecentCheckins(mapped);
+
+                        const ids = new Set<string>();
+                        recentRes.data.forEach(c => ids.add(c.user_id));
+                        setCheckedInIds(ids);
+                    }
                 }
 
                 // Set initial queue count
@@ -382,6 +423,8 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
             clearInterval(syncInterval);
+            // ── OPTIMIZATION: Clear boarding cache when leaving ──
+            dataService.clearBoardingCheckinCache();
         };
     }, []);
 

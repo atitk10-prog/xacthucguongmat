@@ -1,13 +1,16 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { TEMPLATE_OPTIONS, CertificateTemplateId, CertificateTemplateProps } from './templates/types';
+import React, { useState, useEffect } from 'react';
+import QRCode from 'qrcode';
+import { TEMPLATE_OPTIONS, CertificateTemplateId } from './templates/types';
 import { dataService } from '../../services/dataService';
 import { compressImage } from '../../services/imageService';
+import { uploadCertificateImage, uploadConfigImages } from '../../services/storageService';
 import { User, Event, Certificate } from '../../types';
 import { generateSingleExportPDF, generateBatchPDF, getTemplateComponent } from '../../services/certificateExportService';
 import {
-    Loader2, Landmark, Sparkles, Cpu, Crown, Upload, Image as ImageIcon, LayoutTemplate,
-    Rocket, Eye, Archive, Download, CheckCircle, AlertCircle, Award, Settings2, Edit3, ChevronDown,
-    Palette, Type, Users, Search, ChevronLeft, ChevronRight
+    Loader2, Landmark, Sparkles, Crown, Upload, Image as ImageIcon, LayoutTemplate,
+    Eye, Archive, Download, CheckCircle, AlertCircle, Award, Settings2, Edit3,
+    Palette, Type, Users, Search, ChevronLeft, ChevronRight, Calendar,
+    GraduationCap, BookOpen, UsersRound, UserCheck, UserX
 } from 'lucide-react';
 
 import { ToastProvider, useToast } from '../ui/Toast';
@@ -52,10 +55,12 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
     const [activeTab, setActiveTab] = useState<'design' | 'content' | 'recipients'>('design'); // UI Tab State
     const [savedPresets, setSavedPresets] = useState<any[]>([]); // Presets
     const [presetToDelete, setPresetToDelete] = useState<{ id: string, idx: number, name: string } | null>(null);
+    const [certToDelete, setCertToDelete] = useState<{ id: string, title: string } | null>(null);
 
-    // Pagination/Search States
     const [recipientSearch, setRecipientSearch] = useState('');
     const [recipientPage, setRecipientPage] = useState(1);
+    const [roleFilter, setRoleFilter] = useState<'all' | 'student' | 'teacher'>('student');
+    const [eventAttendFilter, setEventAttendFilter] = useState<'attended' | 'absent'>('attended');
     const recipientsPerPage = 20;
 
     const [recentCertsPage, setRecentCertsPage] = useState(1);
@@ -68,6 +73,14 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
     const [topLimit, setTopLimit] = useState<number>(10);
     const [isFetchingTop, setIsFetchingTop] = useState(false);
     const [topStudents, setTopStudents] = useState<any[]>([]);
+
+    // Local QR for preview (replaces external API)
+    const [demoQR, setDemoQR] = useState('');
+    useEffect(() => {
+        QRCode.toDataURL('DEMO-PREVIEW', { margin: 1, width: 150 })
+            .then(url => setDemoQR(url))
+            .catch(() => {});
+    }, []);
 
     // Load presets and last config on mount
     useEffect(() => {
@@ -170,9 +183,9 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         bgImage?: string;
         logoImage?: string;
         paperSize: 'A4' | 'A5' | 'B4' | 'A3';
-        fontStyle?: 'serif' | 'sans' | 'handwriting' | 'times';
-        titleFont?: 'serif' | 'sans' | 'handwriting' | 'times';
-        recipientFont?: 'serif' | 'sans' | 'handwriting' | 'times';
+        fontStyle?: string;
+        titleFont?: string;
+        recipientFont?: string;
         textColor?: string;
         logoAlignment?: 'left' | 'center' | 'right';
         logoScale?: number; // 0.5 to 1.5 default 1
@@ -312,12 +325,10 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         try {
             const [usersResult, eventsResult, certsResult, presetsResult] = await Promise.all([
                 dataService.getUsers(),
-                dataService.getEvents({ status: 'completed' }),
+                dataService.getEvents(),
                 dataService.getCertificates(),
                 dataService.getCertificateConfigs()
             ]);
-            console.log('📜 History Fetch Result:', certsResult);
-            console.log('👥 Users Fetch Result:', usersResult);
 
             if (usersResult.success && usersResult.data) setUsers(usersResult.data);
             if (eventsResult.success && eventsResult.data) setEvents(eventsResult.data);
@@ -384,17 +395,27 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                 const result = reader.result as string;
                 if (result) {
                     try {
-                        // Compress before saving to state/DB
-                        // Background: use JPEG (no transparency needed)
-                        // Logo/Signature/Seal: use PNG to preserve transparency
+                        // Compress before uploading
                         const isBackground = field === 'bgImage';
                         const targetWidth = isBackground ? 1600 : 800;
-                        const preserveTransparency = !isBackground; // true for logo, signature, seal
+                        const preserveTransparency = !isBackground;
                         const compressed = await compressImage(result, targetWidth, targetWidth, 0.7, preserveTransparency);
-                        setCustomConfig(prev => ({ ...prev, [field]: compressed }));
-                        toastSuccess("Đã tải và tối ưu ảnh!");
+
+                        // Upload to Supabase Storage
+                        const category = field === 'bgImage' ? 'backgrounds' : field === 'signatureImage' ? 'signatures' : field === 'sealImage' ? 'seals' : 'logos';
+                        const uploadRes = await uploadCertificateImage(compressed, category as any);
+
+                        if (uploadRes.success && uploadRes.url) {
+                            setCustomConfig(prev => ({ ...prev, [field]: uploadRes.url }));
+                            toastSuccess("Đã tải ảnh lên Storage!");
+                        } else {
+                            // Fallback: store compressed base64 if upload fails
+                            console.warn('Storage upload failed, using base64 fallback:', uploadRes.error);
+                            setCustomConfig(prev => ({ ...prev, [field]: compressed }));
+                            toastSuccess("Đã tải ảnh (lưu cục bộ)!");
+                        }
                     } catch (e) {
-                        console.error("Compression failed", e);
+                        console.error("Processing failed", e);
                         setCustomConfig(prev => ({ ...prev, [field]: result }));
                         toastSuccess("Đã tải ảnh lên!");
                     }
@@ -471,17 +492,24 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         setResult(null);
 
         try {
-            // STEP 1: AUTO-SAVE PRESET FOR LIGHTWEIGHT STORAGE
-            // Compress images and save as a reusable preset
-            // Skip compression for signature/seal/logo under 0.5MB to preserve quality
-            const optimizedConfig = { ...customConfig };
+            // STEP 1: Upload any remaining base64 images to Storage before saving
+            let optimizedConfig;
+            try {
+                optimizedConfig = await uploadConfigImages({ ...customConfig });
+            } catch (uploadErr) {
+                console.warn('Storage upload failed, using compression fallback:', uploadErr);
+                optimizedConfig = { ...customConfig };
+            }
+
+            // Compress any images that failed to upload (still base64)
             const SIZE_THRESHOLD = 0.5 * 1024 * 1024; // 0.5MB in bytes
             const getBase64Size = (base64: string) => (base64.length * 3) / 4;
 
             try {
-                // Background: Always compress with JPEG
+                // Background: Compress but keep reasonable quality for viewing
                 if (optimizedConfig.bgImage && optimizedConfig.bgImage.startsWith('data:')) {
-                    optimizedConfig.bgImage = await compressImage(optimizedConfig.bgImage, 800, 800, 0.4, false);
+                    optimizedConfig.bgImage = await compressImage(optimizedConfig.bgImage, 1600, 1200, 0.7, false);
+                    toastSuccess('⚠️ Ảnh nền đã được lưu ở chất lượng vừa phải. Để xuất PDF sắc nét, hãy tải ảnh nền gốc (chất lượng cao) trước khi xuất.');
                 }
                 // Signature: Only compress if > 0.5MB
                 if (optimizedConfig.signatureImage && optimizedConfig.signatureImage.startsWith('data:')) {
@@ -505,48 +533,46 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                 console.warn('Image compression failed:', compressionError);
             }
 
-            // Generate a unique name for the auto-saved preset
-            const presetName = `Auto: ${formData.title || 'Chứng nhận'} - ${new Date().toLocaleDateString('vi-VN')}`;
-
-            // Save the preset first
-            const presetRes = await dataService.saveCertificateConfig({
-                name: presetName,
-                template_id: formData.template_id,
-                config: {
-                    ...optimizedConfig,
-                    manualEventName: formData.manualEventName,
-                    issuedDate: formData.issuedDate
-                },
-                is_default: false
-            });
-
-            let configId: string | undefined;
-            if (presetRes.success && presetRes.data) {
-                configId = presetRes.data.id;
-                // Update local presets list
-                setSavedPresets(prev => [presetRes.data, ...prev]);
-                toastSuccess("Mẫu đã được lưu tự động. Vui lòng không xóa để đảm bảo các chứng nhận hiển thị đúng.");
-            } else {
-                console.warn('Failed to save preset, falling back to metadata storage:', presetRes.error);
-            }
+            // NO auto-save preset — user can manually save via "Lưu mẫu" button
+            // Store full config directly in certificate metadata for student viewing
 
             // STEP 2: CREATE CERTIFICATES WITH FULL METADATA
-            // Always include metadata for backward compatibility (even if config_id exists)
-            // This ensures certificates display correctly whether or not SQL migration was run
-            const certificatesPayload = targets.map(uid => ({
-                user_id: uid,
-                event_id: formData.event_id || undefined,
-                type: formData.type,
-                title: formData.title,
-                template_id: formData.template_id,
-                // Always save full metadata to ensure display works
-                metadata: {
-                    ...optimizedConfig,
-                    manualEventName: formData.manualEventName,
-                    issuedDate: formData.issuedDate || new Date().toLocaleDateString('vi-VN')
-                },
-                issued_date: formData.issuedDate || new Date().toISOString()
-            }));
+            const certificatesPayload = targets.map(uid => {
+                const user = users.find(u => u.id === uid);
+                const participant = !user ? eventParticipants.find(p => (p as any).user_id === uid || p.id === uid) : null;
+                const recipientName = user?.full_name || (participant as any)?.full_name || (participant as any)?.student_name || '';
+
+                return {
+                    user_id: uid,
+                    event_id: formData.event_id || undefined,
+                    type: formData.type,
+                    title: formData.title,
+                    template_id: formData.template_id,
+                    metadata: {
+                        recipient_name: recipientName,
+                        manualEventName: formData.manualEventName,
+                        issuedDate: formData.issuedDate || new Date().toLocaleDateString('vi-VN'),
+                        // Store display config (images already compressed)
+                        bgImage: optimizedConfig.bgImage,
+                        logoImage: optimizedConfig.logoImage,
+                        signatureImage: optimizedConfig.signatureImage,
+                        sealImage: optimizedConfig.sealImage,
+                        logos: optimizedConfig.logos,
+                        labels: optimizedConfig.labels,
+                        textColor: optimizedConfig.textColor,
+                        fontStyle: optimizedConfig.fontStyle,
+                        titleFont: optimizedConfig.titleFont,
+                        recipientFont: optimizedConfig.recipientFont,
+                        orientation: optimizedConfig.orientation,
+                        customTexts: optimizedConfig.customTexts,
+                        elementStyles: optimizedConfig.elementStyles,
+                        visibility: optimizedConfig.visibility,
+                        positions: optimizedConfig.positions,
+                        bgOpacity: optimizedConfig.bgOpacity,
+                    },
+                    issued_date: formData.issuedDate || new Date().toISOString()
+                };
+            });
 
             // Chunking logic to prevent payload limits/timeouts
             const CHUNK_SIZE = 5;
@@ -570,6 +596,9 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                 if (createdCerts.length > 0) {
                     toastSuccess(`Đã tạo ${createdCerts.length}/${targets.length} chứng nhận thành công!`);
                     setCertificates(prev => [...prev, ...createdCerts]);
+
+                    // Notification is handled by DB trigger (notify_certificate_issued)
+                    // No need to create manually here
 
                     // Reset form
                     setFormData(prev => ({ ...prev, user_id: '' }));
@@ -638,14 +667,30 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
             const eventName = events.find(e => e.id === eventId)?.name || 'Event';
             const zipName = `Certificates_${eventName.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().getTime()}.zip`;
 
-            // Prepare items for export service
+            // Prepare items: resolve full config for each cert
+            const configsRes = await dataService.getCertificateConfigs();
+            const allConfigs = configsRes.success ? configsRes.data || [] : [];
+
             const items = eventCerts.map(cert => {
+                const meta = (cert as any).metadata || {};
+                let resolvedConfig = meta;
+
+                // Resolve config from config_id
+                if (meta.config_id) {
+                    const preset = allConfigs.find((p: any) => p.id === meta.config_id);
+                    if (preset?.config) {
+                        resolvedConfig = { ...preset.config, ...meta };
+                    }
+                }
+
                 const user = users.find(u => u.id === cert.user_id);
+                const participant = !user ? eventParticipants.find(p => (p as any).user_id === cert.user_id || p.id === cert.user_id) : null;
+
                 return {
                     cert,
                     user,
-                    config: (cert as any).metadata || customConfig,
-                    overrideName: user?.full_name
+                    config: resolvedConfig || customConfig,
+                    overrideName: user?.full_name || (participant as any)?.full_name || (participant as any)?.student_name
                 };
             });
 
@@ -672,7 +717,6 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
         setIsExporting(true);
         try {
             // Load full certificate with metadata from database
-            // (certificates in history list don't have metadata loaded for performance)
             let fullCert = cert;
             if (!cert.metadata || Object.keys(cert.metadata).length === 0) {
                 const res = await dataService.getCertificateById(cert.id);
@@ -681,12 +725,31 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                 }
             }
 
+            // Resolve full config (merge config_id with shared preset)
+            const meta = (fullCert.metadata || {}) as any;
+            let resolvedConfig = meta;
+            if (meta.config_id) {
+                try {
+                    const configRes = await dataService.getCertificateConfigs();
+                    if (configRes.success && configRes.data) {
+                        const preset = configRes.data.find((p: any) => p.id === meta.config_id);
+                        if (preset?.config) {
+                            resolvedConfig = { ...preset.config, ...meta };
+                        }
+                    }
+                } catch (e) { console.warn('Config resolve failed:', e); }
+            }
+
+            // Find user or event participant for name
             const user = users.find(u => u.id === fullCert.user_id);
+            const participant = !user ? eventParticipants.find(p => (p as any).user_id === fullCert.user_id || p.id === fullCert.user_id) : null;
+            const overrideName = user?.full_name || (participant as any)?.full_name || (participant as any)?.student_name;
+
             const items = [{
                 cert: fullCert,
                 user,
-                config: (fullCert.metadata as any) || customConfig,
-                overrideName: user?.full_name
+                config: resolvedConfig || customConfig,
+                overrideName: overrideName
             }];
             const fileName = `Certificate_${fullCert.title.replace(/\s+/g, '_')}_${new Date().getTime()}.pdf`;
             const count = await generateSingleExportPDF(items, fileName);
@@ -767,12 +830,10 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                             {/* Template Selector - Moved to top as priority */}
                                             <div>
                                                 <label className="block text-sm font-bold text-slate-700 mb-2 font-serif">Chọn giao diện</label>
-                                                <div className="grid grid-cols-4 gap-2">
+                                                <div className="grid grid-cols-3 gap-2">
                                                     {TEMPLATE_OPTIONS.map(opt => {
                                                         const Icon = {
                                                             classic: Landmark,
-                                                            modern: Sparkles,
-                                                            tech: Cpu,
                                                             luxury: Crown,
                                                             custom: Upload
                                                         }[opt.id] || Sparkles;
@@ -823,8 +884,8 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                 </div>
                                             )}
 
-                                            {/* Custom Template Config */}
-                                            {formData.template_id === 'custom' && (
+                                            {/* Template Config — available for ALL templates */}
+                                            {(
                                                 <div className="space-y-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                                                     <h4 className="font-bold text-slate-900 flex items-center justify-between text-sm">
                                                         <span className="flex items-center gap-2"><LayoutTemplate className="w-4 h-4" /> Tùy chỉnh</span>
@@ -913,10 +974,23 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                                     onChange={e => setCustomConfig(p => ({ ...p, fontStyle: e.target.value as any }))}
                                                                     className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs"
                                                                 >
-                                                                    <option value="serif">Trang trọng</option>
-                                                                    <option value="times">Times New Roman</option>
-                                                                    <option value="sans">Hiện đại</option>
-                                                                    <option value="handwriting">Viết tay</option>
+                                                                    <optgroup label="🎨 Cổ điển">
+                                                                        <option value="serif">Playfair Display</option>
+                                                                        <option value="times">Times New Roman</option>
+                                                                        <option value="cormorant">Cormorant Garamond</option>
+                                                                        <option value="librebaskerville">Libre Baskerville</option>
+                                                                    </optgroup>
+                                                                    <optgroup label="✨ Calligraphy / Nhiều nét">
+                                                                        <option value="greatvibes">Great Vibes</option>
+                                                                        <option value="alexbrush">Alex Brush</option>
+                                                                        <option value="pinyon">Pinyon Script</option>
+                                                                        <option value="handwriting">Dancing Script</option>
+                                                                    </optgroup>
+                                                                    <optgroup label="💻 Hiện đại">
+                                                                        <option value="cinzel">Cinzel (La Mã)</option>
+                                                                        <option value="sans">Arimo</option>
+                                                                        <option value="bevietnam">Be Vietnam Pro</option>
+                                                                    </optgroup>
                                                                 </select>
                                                             </div>
                                                             <div>
@@ -927,10 +1001,23 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                                     className="w-full px-2 py-1.5 bg-white border border-slate-200 rounded text-xs"
                                                                 >
                                                                     <option value="">(Theo Font chung)</option>
-                                                                    <option value="serif">Trang trọng</option>
-                                                                    <option value="times">Times New Roman</option>
-                                                                    <option value="sans">Hiện đại</option>
-                                                                    <option value="handwriting">Viết tay</option>
+                                                                    <optgroup label="🎨 Cổ điển">
+                                                                        <option value="serif">Playfair Display</option>
+                                                                        <option value="times">Times New Roman</option>
+                                                                        <option value="cormorant">Cormorant Garamond</option>
+                                                                        <option value="librebaskerville">Libre Baskerville</option>
+                                                                    </optgroup>
+                                                                    <optgroup label="✨ Calligraphy / Nhiều nét">
+                                                                        <option value="greatvibes">Great Vibes</option>
+                                                                        <option value="alexbrush">Alex Brush</option>
+                                                                        <option value="pinyon">Pinyon Script</option>
+                                                                        <option value="handwriting">Dancing Script</option>
+                                                                    </optgroup>
+                                                                    <optgroup label="💻 Hiện đại">
+                                                                        <option value="cinzel">Cinzel (La Mã)</option>
+                                                                        <option value="sans">Arimo</option>
+                                                                        <option value="bevietnam">Be Vietnam Pro</option>
+                                                                    </optgroup>
                                                                 </select>
                                                             </div>
                                                         </div>
@@ -963,8 +1050,9 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                                 { id: 'logo', label: 'Logo' },
                                                                 { id: 'title', label: 'Tiêu đề' },
                                                                 { id: 'recipient', label: 'Tên người nhận' },
+                                                                { id: 'presentedTo', label: 'Lời tặng' },
                                                                 { id: 'eventName', label: 'Tên sự kiện' },
-                                                                { id: 'eventStr', label: 'Lây nội dung' },
+                                                                { id: 'eventStr', label: 'Lời dẫn sự kiện' },
                                                                 { id: 'date', label: 'Ngày cấp' },
                                                                 { id: 'entryNo', label: 'Vào sổ số' },
                                                                 { id: 'signature', label: 'Tên người ký' },
@@ -988,7 +1076,7 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                                     <span className="text-[10px] font-bold text-slate-700">{item.label}</span>
 
                                                                     {/* Simple Individual Color/Size Trigger */}
-                                                                    {['title', 'recipient', 'eventName', 'signature', 'signatureImg', 'seal', 'date', 'entryNo'].includes(item.id) && (
+                                                                    {['title', 'recipient', 'presentedTo', 'eventStr', 'eventName', 'signature', 'signatureImg', 'seal', 'date', 'entryNo'].includes(item.id) && (
                                                                         <div className="ml-auto flex gap-1 items-center">
                                                                             <input
                                                                                 type="color"
@@ -1071,37 +1159,69 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
 
                                                     {/* Uploads */}
                                                     <div className="grid grid-cols-2 gap-2">
-                                                        <label className="block p-2 border-x border-t border-slate-200 rounded-t-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
-                                                            <input type="file" className="hidden" accept="image/*" onChange={e => handleFileUpload(e, 'bgImage')} />
-                                                            <span className="text-[10px] font-bold text-slate-500 block">Ảnh nền</span>
-                                                            {customConfig.bgImage ? <CheckCircle className="w-3 h-3 mx-auto text-emerald-500" /> : <Upload className="w-3 h-3 mx-auto text-slate-400" />}
-                                                        </label>
-                                                        <label className="block p-2 border-x border-t border-slate-200 rounded-t-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
-                                                            <input type="file" className="hidden" accept="image/*" onChange={e => {
-                                                                const file = e.target.files?.[0];
-                                                                if (file) {
-                                                                    const reader = new FileReader();
-                                                                    reader.onloadend = () => {
-                                                                        if (reader.result) {
-                                                                            setCustomConfig(p => ({ ...p, logos: [...(p.logos || []), reader.result as string] }));
-                                                                        }
-                                                                    };
-                                                                    reader.readAsDataURL(file);
-                                                                }
-                                                            }} />
-                                                            <span className="text-[10px] font-bold text-slate-500 block">+ Logo</span>
-                                                            <span className="text-[9px] text-slate-400">{customConfig.logos?.length || 0} đã chọn</span>
-                                                        </label>
-                                                        <label className="block p-2 border border-slate-200 rounded-bl-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
-                                                            <input type="file" className="hidden" accept="image/*" onChange={e => handleFileUpload(e, 'signatureImage' as any)} />
-                                                            <span className="text-[10px] font-bold text-slate-500 block">Chữ ký</span>
-                                                            {(customConfig as any).signatureImage ? <CheckCircle className="w-3 h-3 mx-auto text-emerald-500" /> : <Edit3 className="w-3 h-3 mx-auto text-slate-400" />}
-                                                        </label>
-                                                        <label className="block p-2 border border-slate-200 rounded-br-lg cursor-pointer hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
-                                                            <input type="file" className="hidden" accept="image/*" onChange={e => handleFileUpload(e, 'sealImage' as any)} />
-                                                            <span className="text-[10px] font-bold text-slate-500 block">Con dấu</span>
-                                                            {(customConfig as any).sealImage ? <CheckCircle className="w-3 h-3 mx-auto text-emerald-500" /> : <Landmark className="w-3 h-3 mx-auto text-slate-400" />}
-                                                        </label>
+                                                        <div className="relative block p-2 border-x border-t border-slate-200 rounded-t-lg hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
+                                                            <label className="cursor-pointer block">
+                                                                <input type="file" className="hidden" accept="image/*" onChange={e => handleFileUpload(e, 'bgImage')} />
+                                                                <span className="text-[10px] font-bold text-slate-500 block">Ảnh nền</span>
+                                                                {customConfig.bgImage ? <CheckCircle className="w-3 h-3 mx-auto text-emerald-500" /> : <Upload className="w-3 h-3 mx-auto text-slate-400" />}
+                                                            </label>
+                                                            {customConfig.bgImage && (
+                                                                <button type="button" onClick={() => setCustomConfig(p => ({ ...p, bgImage: undefined }))} className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] leading-none flex items-center justify-center hover:bg-red-600 shadow-sm" title="Xóa">×</button>
+                                                            )}
+                                                        </div>
+                                                        <div className="relative block p-2 border-x border-t border-slate-200 rounded-t-lg hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
+                                                            <label className="cursor-pointer block">
+                                                                <input type="file" className="hidden" accept="image/*" onChange={async e => {
+                                                                    const file = e.target.files?.[0];
+                                                                    if (file) {
+                                                                        setIsLoading(true);
+                                                                        const reader = new FileReader();
+                                                                        reader.onloadend = async () => {
+                                                                            if (reader.result) {
+                                                                                const base64 = reader.result as string;
+                                                                                // Upload to Storage
+                                                                                const uploadRes = await uploadCertificateImage(base64, 'logos');
+                                                                                if (uploadRes.success && uploadRes.url) {
+                                                                                    setCustomConfig(p => ({ ...p, logos: [...(p.logos || []), uploadRes.url!] }));
+                                                                                    toastSuccess('Đã tải logo lên Storage!');
+                                                                                } else {
+                                                                                    // Fallback to base64
+                                                                                    setCustomConfig(p => ({ ...p, logos: [...(p.logos || []), base64] }));
+                                                                                    toastSuccess('Đã thêm logo!');
+                                                                                }
+                                                                            }
+                                                                            setIsLoading(false);
+                                                                        };
+                                                                        reader.readAsDataURL(file);
+                                                                    }
+                                                                }} />
+                                                                <span className="text-[10px] font-bold text-slate-500 block">+ Logo</span>
+                                                                <span className="text-[9px] text-slate-400">{customConfig.logos?.length || 0} đã chọn</span>
+                                                            </label>
+                                                            {(customConfig.logos?.length || 0) > 0 && (
+                                                                <button type="button" onClick={() => setCustomConfig(p => ({ ...p, logos: [] }))} className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] leading-none flex items-center justify-center hover:bg-red-600 shadow-sm" title="Xóa tất cả">×</button>
+                                                            )}
+                                                        </div>
+                                                        <div className="relative block p-2 border border-slate-200 rounded-bl-lg hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
+                                                            <label className="cursor-pointer block">
+                                                                <input type="file" className="hidden" accept="image/*" onChange={e => handleFileUpload(e, 'signatureImage' as any)} />
+                                                                <span className="text-[10px] font-bold text-slate-500 block">Chữ ký</span>
+                                                                {(customConfig as any).signatureImage ? <CheckCircle className="w-3 h-3 mx-auto text-emerald-500" /> : <Edit3 className="w-3 h-3 mx-auto text-slate-400" />}
+                                                            </label>
+                                                            {(customConfig as any).signatureImage && (
+                                                                <button type="button" onClick={() => setCustomConfig(p => ({ ...p, signatureImage: undefined } as any))} className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] leading-none flex items-center justify-center hover:bg-red-600 shadow-sm" title="Xóa">×</button>
+                                                            )}
+                                                        </div>
+                                                        <div className="relative block p-2 border border-slate-200 rounded-br-lg hover:border-indigo-500 hover:bg-white text-center transition-all bg-white/50">
+                                                            <label className="cursor-pointer block">
+                                                                <input type="file" className="hidden" accept="image/*" onChange={e => handleFileUpload(e, 'sealImage' as any)} />
+                                                                <span className="text-[10px] font-bold text-slate-500 block">Con dấu</span>
+                                                                {(customConfig as any).sealImage ? <CheckCircle className="w-3 h-3 mx-auto text-emerald-500" /> : <Landmark className="w-3 h-3 mx-auto text-slate-400" />}
+                                                            </label>
+                                                            {(customConfig as any).sealImage && (
+                                                                <button type="button" onClick={() => setCustomConfig(p => ({ ...p, sealImage: undefined } as any))} className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-red-500 text-white rounded-full text-[9px] leading-none flex items-center justify-center hover:bg-red-600 shadow-sm" title="Xóa">×</button>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
                                             )}
@@ -1211,7 +1331,7 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                     onChange={e => {
                                                         const eid = e.target.value;
                                                         const eventName = events.find(ev => ev.id === eid)?.name || '';
-                                                        setFormData({ ...formData, event_id: eid, manualEventName: eventName });
+                                                        setFormData({ ...formData, event_id: eid, manualEventName: eventName, title: eventName || formData.title });
                                                         setRecipientSource('event'); // Auto switch
                                                     }}
                                                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm mb-3"
@@ -1223,9 +1343,26 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                 </select>
 
                                                 <div className="flex gap-2 mb-2">
-                                                    <button type="button" onClick={() => setRecipientSource('users')} className={`flex-1 py-1.5 text-xs font-bold rounded border ${recipientSource === 'users' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white'}`}>Toàn bộ User</button>
-                                                    <button type="button" onClick={() => setRecipientSource('event')} className={`flex-1 py-1.5 text-xs font-bold rounded border ${recipientSource === 'event' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white'}`}>Theo Sự kiện</button>
+                                                    <button type="button" onClick={() => { setRecipientSource('users'); setTopStudents([]); }} className={`flex-1 py-1.5 text-xs font-bold rounded border flex items-center justify-center gap-1.5 ${recipientSource === 'users' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white'}`}><UsersRound className="w-3.5 h-3.5" />Toàn bộ User</button>
+                                                    <button type="button" onClick={() => { setRecipientSource('event'); setTopStudents([]); }} className={`flex-1 py-1.5 text-xs font-bold rounded border flex items-center justify-center gap-1.5 ${recipientSource === 'event' ? 'bg-indigo-50 border-indigo-500 text-indigo-700' : 'bg-white'}`}><Calendar className="w-3.5 h-3.5" />Theo Sự kiện</button>
                                                 </div>
+
+                                                {/* Role Filter - only for 'users' mode */}
+                                                {recipientSource === 'users' && (
+                                                    <div className="flex gap-1 mb-2">
+                                                        <button type="button" onClick={() => { setRoleFilter('student'); setRecipientPage(1); setTopStudents([]); }} className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg border flex items-center justify-center gap-1 ${roleFilter === 'student' ? 'bg-emerald-50 border-emerald-400 text-emerald-700' : 'bg-white border-slate-200 text-slate-500'}`}><GraduationCap className="w-3 h-3" /> Học sinh</button>
+                                                        <button type="button" onClick={() => { setRoleFilter('teacher'); setRecipientPage(1); setTopStudents([]); }} className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg border flex items-center justify-center gap-1 ${roleFilter === 'teacher' ? 'bg-blue-50 border-blue-400 text-blue-700' : 'bg-white border-slate-200 text-slate-500'}`}><BookOpen className="w-3 h-3" /> Giáo viên</button>
+                                                        <button type="button" onClick={() => { setRoleFilter('all'); setRecipientPage(1); setTopStudents([]); }} className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg border flex items-center justify-center gap-1 ${roleFilter === 'all' ? 'bg-purple-50 border-purple-400 text-purple-700' : 'bg-white border-slate-200 text-slate-500'}`}><UsersRound className="w-3 h-3" /> Tất cả</button>
+                                                    </div>
+                                                )}
+
+                                                {/* Attendance Filter - only for 'event' mode */}
+                                                {recipientSource === 'event' && formData.event_id && (
+                                                    <div className="flex gap-1 mb-2">
+                                                        <button type="button" onClick={() => { setEventAttendFilter('attended'); setRecipientPage(1); }} className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg border flex items-center justify-center gap-1 ${eventAttendFilter === 'attended' ? 'bg-emerald-50 border-emerald-400 text-emerald-700' : 'bg-white border-slate-200 text-slate-500'}`}><UserCheck className="w-3 h-3" /> Tham gia ({eventParticipants.length})</button>
+                                                        <button type="button" onClick={() => { setEventAttendFilter('absent'); setRecipientPage(1); }} className={`flex-1 py-1.5 text-[10px] font-bold rounded-lg border flex items-center justify-center gap-1 ${eventAttendFilter === 'absent' ? 'bg-rose-50 border-rose-400 text-rose-700' : 'bg-white border-slate-200 text-slate-500'}`}><UserX className="w-3 h-3" /> Không tham gia</button>
+                                                    </div>
+                                                )}
 
                                                 <div className="relative mb-3">
                                                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -1245,7 +1382,32 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                     {/* Toolbar */}
                                                     <div className="p-2 border-b border-slate-100 bg-slate-50 flex justify-between items-center text-[10px] font-bold">
                                                         <div className="flex gap-2">
-                                                            <button type="button" onClick={() => setSelectedUserIds((recipientSource === 'users' ? users : eventParticipants).map((u: any) => u.id || u.user_id))} className="text-indigo-600 hover:bg-slate-200 px-2 py-1 rounded">Chọn tất cả</button>
+                                                            <button type="button" onClick={() => {
+                                                                const isEventMode = recipientSource === 'event';
+                                                                let sourceData: any[];
+                                                                if (topStudents.length > 0) {
+                                                                    sourceData = topStudents;
+                                                                } else if (isEventMode) {
+                                                                    if (eventAttendFilter === 'attended') {
+                                                                        sourceData = eventParticipants;
+                                                                    } else {
+                                                                        const pIds = new Set(eventParticipants.map((p: any) => p.user_id || p.id));
+                                                                        sourceData = users.filter(u => !pIds.has(u.id) && u.role !== 'admin');
+                                                                    }
+                                                                } else {
+                                                                    sourceData = users;
+                                                                }
+                                                                if (!isEventMode && topStudents.length === 0 && roleFilter !== 'all') {
+                                                                    sourceData = sourceData.filter((u: any) => u.role === roleFilter);
+                                                                } else if (!isEventMode && topStudents.length === 0) {
+                                                                    sourceData = sourceData.filter((u: any) => u.role !== 'admin');
+                                                                }
+                                                                const filtered = sourceData.filter((u: any) =>
+                                                                    u.full_name?.toLowerCase().includes(recipientSearch.toLowerCase()) ||
+                                                                    u.student_code?.toLowerCase().includes(recipientSearch.toLowerCase())
+                                                                );
+                                                                setSelectedUserIds(filtered.map((u: any) => u.id || u.user_id));
+                                                            }} className="text-indigo-600 hover:bg-slate-200 px-2 py-1 rounded">Chọn tất cả</button>
                                                             <button type="button" onClick={() => setSelectedUserIds([])} className="text-slate-500 hover:bg-slate-200 px-2 py-1 rounded">Bỏ chọn</button>
                                                         </div>
                                                         <span className="text-slate-400">Đã chọn: {selectedUserIds.length}</span>
@@ -1253,7 +1415,33 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
 
                                                     <div className="overflow-y-auto p-1 space-y-0.5 flex-1">
                                                         {(() => {
-                                                            const sourceData = topStudents.length > 0 ? topStudents : (recipientSource === 'users' ? users : eventParticipants);
+                                                            const isEventMode = recipientSource === 'event';
+                                                            const eventEmpty = isEventMode && eventParticipants.length === 0;
+                                                            let sourceData: any[];
+
+                                                            if (topStudents.length > 0) {
+                                                                sourceData = topStudents;
+                                                            } else if (isEventMode) {
+                                                                if (eventAttendFilter === 'attended') {
+                                                                    // Show only event participants
+                                                                    sourceData = eventParticipants;
+                                                                } else {
+                                                                    // Show users NOT in event participants
+                                                                    const participantIds = new Set(eventParticipants.map((p: any) => p.user_id || p.id));
+                                                                    sourceData = users.filter(u => !participantIds.has(u.id) && u.role !== 'admin');
+                                                                }
+                                                            } else {
+                                                                sourceData = users;
+                                                            }
+
+                                                            // Apply role filter only for normal users mode (skip when topStudents is active)
+                                                            if (!isEventMode && topStudents.length === 0) {
+                                                                if (roleFilter !== 'all') {
+                                                                    sourceData = sourceData.filter((u: any) => u.role === roleFilter);
+                                                                } else {
+                                                                    sourceData = sourceData.filter((u: any) => u.role !== 'admin');
+                                                                }
+                                                            }
                                                             const filtered = sourceData.filter((u: any) =>
                                                                 u.full_name?.toLowerCase().includes(recipientSearch.toLowerCase()) ||
                                                                 u.student_code?.toLowerCase().includes(recipientSearch.toLowerCase())
@@ -1263,6 +1451,12 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
 
                                                             return (
                                                                 <>
+                                                                    {eventEmpty && formData.event_id && (
+                                                                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-[11px] text-amber-700 mb-2">
+                                                                            <p className="font-bold">⚠️ Sự kiện này chưa có người tham gia.</p>
+                                                                            <p className="mt-1 text-amber-600">Vui lòng chọn sự kiện khác hoặc chuyển sang "Toàn bộ User".</p>
+                                                                        </div>
+                                                                    )}
                                                                     {displayRecipients.map((u: any) => {
                                                                         const uid = u.id || u.user_id;
                                                                         return (
@@ -1363,7 +1557,7 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                         issuedDate: formData.issuedDate || new Date().toLocaleDateString('vi-VN'),
                                         type: formData.type,
                                         verifyCode: 'DEMO-123',
-                                        verifyQR: 'https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=DEMO'
+                                        verifyQR: demoQR
                                     }}
                                     customConfig={customConfig}
                                     isEditable={true}
@@ -1394,6 +1588,24 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                             setCustomConfig(prev => ({
                                                 ...prev,
                                                 visibility: { ...(prev.visibility || {}), [elementId]: val === 'true' }
+                                            }));
+                                        } else if (key.startsWith('remove_logo_')) {
+                                            const index = parseInt(key.replace('remove_logo_', ''));
+                                            setCustomConfig(prev => ({
+                                                ...prev,
+                                                logos: (prev.logos || []).filter((_, i) => i !== index)
+                                            }));
+                                        } else if (key.startsWith('customtext_')) {
+                                            const textId = key.replace('customtext_', '');
+                                            setCustomConfig(prev => ({
+                                                ...prev,
+                                                customTexts: (prev.customTexts || []).map(t => t.id === textId ? { ...t, content: val } : t)
+                                            }));
+                                        } else if (key.startsWith('delete_customtext_')) {
+                                            const textId = key.replace('delete_customtext_', '');
+                                            setCustomConfig(prev => ({
+                                                ...prev,
+                                                customTexts: (prev.customTexts || []).filter(t => t.id !== textId)
                                             }));
                                         } else {
                                             setCustomConfig(prev => ({ ...prev, labels: { ...prev.labels, [key]: val } }));
@@ -1446,10 +1658,10 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                             {displayCerts.map(cert => (
                                                 <div key={cert.id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:border-indigo-200 transition-all group">
                                                     <div className="min-w-0 flex-1">
-                                                        <p className="font-bold text-slate-900 truncate">{users.find(u => u.id === cert.user_id)?.full_name || 'Học sinh'}</p>
+                                                        <p className="font-bold text-slate-900 truncate">{users.find(u => u.id === cert.user_id)?.full_name || (cert.metadata as any)?.recipient_name || eventParticipants.find(p => (p as any).user_id === cert.user_id || p.id === cert.user_id)?.full_name || cert.user_id?.slice(0, 8) || 'N/A'}</p>
                                                         <p className="text-xs text-indigo-600 font-semibold truncate">{cert.title}</p>
-                                                        <p className="text-[10px] text-slate-400 mt-1">
-                                                            📅 {cert.issued_date ? new Date(cert.issued_date).toLocaleDateString('vi-VN') : 'N/A'}
+                                                        <p className="text-[10px] text-slate-400 mt-1 flex items-center gap-1">
+                                                            <Calendar className="w-3 h-3" /> {cert.issued_date ? new Date(cert.issued_date).toLocaleDateString('vi-VN') : 'N/A'}
                                                         </p>
                                                     </div>
                                                     <div className="flex gap-2">
@@ -1461,17 +1673,7 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                                                             <Download className="w-4 h-4" />
                                                         </button>
                                                         <button
-                                                            onClick={async () => {
-                                                                if (window.confirm('Bạn có chắc chắn muốn xóa chứng nhận này?')) {
-                                                                    const res = await dataService.deleteCertificate(cert.id);
-                                                                    if (res.success) {
-                                                                        setCertificates(prev => prev.filter(c => c.id !== cert.id));
-                                                                        toastSuccess('Đã xóa chứng nhận');
-                                                                    } else {
-                                                                        toastError(res.error || 'Lỗi xóa');
-                                                                    }
-                                                                }
-                                                            }}
+                                                            onClick={() => setCertToDelete({ id: cert.id, title: cert.title })}
                                                             className="p-2 bg-white rounded-lg shadow-sm text-red-600 hover:bg-red-50 transition-colors border border-slate-100"
                                                             title="Xóa"
                                                         >
@@ -1537,6 +1739,44 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                     </div>
                 </div>
             )}
+
+            {/* Delete Certificate Confirmation Modal */}
+            {certToDelete && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/40 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl shadow-2xl border border-slate-100 max-w-sm w-full p-6 animate-in zoom-in-95 duration-200">
+                        <div className="bg-red-50 w-12 h-12 rounded-2xl flex items-center justify-center mb-4">
+                            <Archive className="w-6 h-6 text-red-600" />
+                        </div>
+                        <h3 className="text-lg font-black text-slate-900 mb-2">Xác nhận xóa chứng nhận?</h3>
+                        <p className="text-sm text-slate-500 mb-6 leading-relaxed">
+                            Bạn có chắc chắn muốn xóa chứng nhận <span className="font-bold text-slate-700">"{certToDelete.title}"</span>? Thao tác này không thể hoàn tác.
+                        </p>
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setCertToDelete(null)}
+                                className="flex-1 py-3 bg-slate-100 text-slate-600 rounded-2xl font-bold text-sm hover:bg-slate-200 transition-all"
+                            >
+                                Quay lại
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    const res = await dataService.deleteCertificate(certToDelete.id);
+                                    if (res.success) {
+                                        setCertificates(prev => prev.filter(c => c.id !== certToDelete.id));
+                                        toastSuccess('Đã xóa chứng nhận');
+                                    } else {
+                                        toastError(res.error || 'Lỗi xóa');
+                                    }
+                                    setCertToDelete(null);
+                                }}
+                                className="flex-1 py-3 bg-red-600 text-white rounded-2xl font-bold text-sm hover:bg-red-700 shadow-lg shadow-red-200 transition-all"
+                            >
+                                Xóa ngay
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
             {/* Mass Creation Progress Overlay */}
             {
                 saveProgress && (
@@ -1576,7 +1816,7 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                     </div>
                 )
             }
-        </div >
+        </div>
     );
 };
 

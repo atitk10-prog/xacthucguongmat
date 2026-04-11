@@ -1,18 +1,25 @@
 /**
  * EduCheck - PDF Service
- * Supports batch card printing with colors preserved
+ * Supports batch card printing with school branding
  */
 
 interface CardData {
   fullName: string;
   role: string;
+  roleLabel?: string; // Custom display label (e.g. 'Đại biểu') — overrides default role label
+  cardColor?: string; // Custom card background color (hex)
   code: string;
   className?: string;
   roomName?: string;
   avatarUrl?: string;
   qrCode: string;
   eventName?: string;
-  birthDate?: string; // Added field
+  birthDate?: string;
+  // NEW: School settings
+  schoolLogo?: string;
+  schoolName?: string;
+  hotline?: string;
+  expiryDate?: string;
 }
 
 interface CertificateData {
@@ -25,45 +32,76 @@ interface CertificateData {
   verifyQR: string;
 }
 
+// Convert URL to base64 to avoid CORS issues in export
+async function urlToBase64(url: string): Promise<string> {
+  try {
+    const response = await fetch(url, { mode: 'cors' });
+    const blob = await response.blob();
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return url; // Fallback to original URL
+  }
+}
+
 export function generateCardHTML(data: CardData): string {
   const roleColors: Record<string, string> = { 'student': '#4f46e5', 'teacher': '#059669', 'guest': '#d97706', 'admin': '#dc2626' };
-  const roleColor = roleColors[data.role] || '#4f46e5';
+  const roleColor = data.cardColor || roleColors[data.role] || '#4f46e5';
 
-  // Resize image to 4x6 ratio (e.g. 60px x 90px)
-  // object-fit: cover to fill the frame but maintain aspect ratio (centered)
+  const roleLabels: Record<string, string> = { 'student': 'Học sinh', 'teacher': 'Giáo viên', 'admin': 'Quản trị', 'guest': 'Khách' };
+  const roleLabel = data.roleLabel || roleLabels[data.role] || data.role;
+
+  const schoolName = data.schoolName || 'EduCheck';
+  const hotline = data.hotline ? `ĐT: ${data.hotline}` : '';
+  const expiryDate = data.expiryDate ? `HSD: ${data.expiryDate}` : '';
+
+  // Logo section - transparent background, no white frame
+  const logoHTML = data.schoolLogo
+    ? `<img src="${data.schoolLogo}" style="width:32px;height:32px;border-radius:6px;object-fit:contain;" />`
+    : `<div style="width:32px;height:32px;border-radius:6px;background:rgba(255,255,255,0.25);display:flex;align-items:center;justify-content:center;font-weight:900;font-size:12px;border:1px solid rgba(255,255,255,0.3);">EC</div>`;
 
   return `
-    <div class="card" style="width:340px;height:215px;background:linear-gradient(135deg,${roleColor} 0%,${roleColor}dd 100%);border-radius:16px;padding:15px;color:white;font-family:'Plus Jakarta Sans',sans-serif;position:relative;overflow:hidden;box-sizing:border-box;">
-      <div style="position:absolute;top:-50px;right:-50px;width:200px;height:200px;background:rgba(255,255,255,0.1);border-radius:50%;"></div>
+    <div class="card" style="width:340px;height:215px;background:linear-gradient(135deg,${roleColor} 0%,${roleColor}dd 100%);border-radius:16px;padding:15px;color:white;font-family:'Plus Jakarta Sans','Be Vietnam Pro',sans-serif;position:relative;overflow:hidden;box-sizing:border-box;">
+      <div style="position:absolute;top:-50px;right:-50px;width:200px;height:200px;background:rgba(255,255,255,0.08);border-radius:50%;"></div>
+      <div style="position:absolute;bottom:-30px;left:-30px;width:120px;height:120px;background:rgba(255,255,255,0.05);border-radius:50%;"></div>
       
       <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:5px;">
-        <div style="z-index: 1;">
-            <div style="font-size:10px;opacity:0.8;text-transform:uppercase;letter-spacing:2px;">EduCheck</div>
-            <div style="font-size:13px;font-weight:700;">${data.eventName || 'Thẻ Học Sinh'}</div>
+        <div style="z-index:1;display:flex;align-items:center;gap:8px;">
+            ${logoHTML}
+            <div>
+                <div style="font-size:13px;font-weight:800;line-height:1.2;">${schoolName}</div>
+                <div style="font-size:9px;opacity:0.75;text-transform:uppercase;letter-spacing:1.5px;font-weight:600;">${data.eventName || (data.role === 'teacher' ? 'Thẻ Giáo Viên' : 'Thẻ Học Sinh')}</div>
+            </div>
         </div>
-        <img src="${data.qrCode}" style="width:90px;height:90px;border-radius:6px;background:white;padding:4px;z-index: 1;" />
+        <img src="${data.qrCode}" style="width:80px;height:80px;border-radius:8px;background:white;padding:3px;z-index:1;" />
       </div>
       
       <div style="display:flex;gap:12px;align-items:flex-start;">
-        <!-- Photo 4x6 Ratio (60x90) -->
-        <div style="position:relative;width:60px;height:90px;margin-top:-20px;">
+        <div style="position:relative;width:55px;height:75px;margin-top:-12px;">
             ${data.avatarUrl
-      ? `<img src="${data.avatarUrl}" style="width:100%;height:100%;border-radius:8px;object-fit:cover;border:2px solid rgba(255,255,255,0.5);background:white;" />`
-      : `<div style="width:100%;height:100%;border-radius:8px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;font-size:24px;border:2px solid rgba(255,255,255,0.3);">👤</div>`
+    ? `<img src="${data.avatarUrl}" style="width:100%;height:100%;border-radius:8px;object-fit:cover;border:2px solid rgba(255,255,255,0.5);background:white;" />`
+    : `<div style="width:100%;height:100%;border-radius:8px;background:rgba(255,255,255,0.2);display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,0.3);"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></div>`
     }
         </div>
         
-        <div style="flex:1;z-index: 1;padding-top:2px;">
-            <div style="font-size:16px;font-weight:800;line-height:1.2;margin-bottom:4px;">${data.fullName}</div>
-            <div style="font-size:11px;opacity:0.95;margin-bottom:2px;">Mã số: <strong>${data.code}</strong></div>
-            ${data.className ? `<div style="font-size:11px;opacity:0.95;margin-bottom:2px;">Lớp/Đơn vị: <strong>${data.className}</strong></div>` : ''}
-            ${data.birthDate ? `<div style="font-size:11px;opacity:0.95;">Ngày sinh: <strong>${formatDate(data.birthDate)}</strong></div>` : ''}
+        <div style="flex:1;z-index:1;padding-top:2px;">
+            <div style="font-size:15px;font-weight:800;line-height:1.2;margin-bottom:3px;">${data.fullName}</div>
+            <div style="font-size:10px;opacity:0.95;margin-bottom:2px;">Mã số: <strong>${data.code}</strong></div>
+            ${data.className ? `<div style="font-size:10px;opacity:0.95;margin-bottom:2px;">Lớp/ĐV: <strong>${data.className}</strong></div>` : ''}
+            ${data.birthDate ? `<div style="font-size:10px;opacity:0.95;">NS: <strong>${formatDate(data.birthDate)}</strong></div>` : ''}
         </div>
       </div>
       
-      <div style="position:absolute;bottom:10px;left:15px;right:15px;display:flex;justify-content:space-between;align-items:center;font-size:9px;opacity:0.8;">
-        <span style="background:rgba(255,255,255,0.2);padding:3px 8px;border-radius:12px;text-transform:uppercase;letter-spacing:1px;font-weight:600;">${data.role}</span>
-        <span>Powered by EduCheck AI</span>
+      <div style="position:absolute;bottom:8px;left:15px;right:15px;display:flex;justify-content:space-between;align-items:center;font-size:8px;opacity:0.8;z-index:1;">
+        <span style="background:rgba(255,255,255,0.2);padding:2px 8px;border-radius:10px;text-transform:uppercase;letter-spacing:1px;font-weight:700;">${roleLabel}</span>
+        <span style="display:flex;gap:8px;">
+            ${hotline ? `<span>${hotline}</span>` : ''}
+            ${expiryDate ? `<span style="background:rgba(255,255,255,0.15);padding:2px 6px;border-radius:8px;">${expiryDate}</span>` : ''}
+        </span>
       </div>
     </div>`;
 }
@@ -81,9 +119,9 @@ function formatDate(dateStr: string): string {
 
 export function generateCertificateHTML(data: CertificateData): string {
   const typeConfig: Record<string, { color: string; icon: string; label: string }> = {
-    'participation': { color: '#3b82f6', icon: '🎯', label: 'GIẤY XÁC NHẬN THAM GIA' },
-    'completion': { color: '#10b981', icon: '✅', label: 'GIẤY CHỨNG NHẬN HOÀN THÀNH' },
-    'excellent': { color: '#f59e0b', icon: '🏆', label: 'GIẤY KHEN XUẤT SẮC' }
+    'participation': { color: '#3b82f6', icon: `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>`, label: 'GIẤY XÁC NHẬN THAM GIA' },
+    'completion': { color: '#10b981', icon: `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg>`, label: 'GIẤY CHỨNG NHẬN HOÀN THÀNH' },
+    'excellent': { color: '#f59e0b', icon: `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>`, label: 'GIẤY KHEN XUẤT SẮC' }
   };
   const config = typeConfig[data.type] || typeConfig.participation;
 
@@ -94,7 +132,7 @@ export function generateCertificateHTML(data: CertificateData): string {
       <div style="position:absolute;bottom:20px;left:20px;width:60px;height:60px;border-bottom:4px solid ${config.color};border-left:4px solid ${config.color};border-radius:0 0 0 10px;"></div>
       <div style="position:absolute;bottom:20px;right:20px;width:60px;height:60px;border-bottom:4px solid ${config.color};border-right:4px solid ${config.color};border-radius:0 0 10px 0;"></div>
       <div style="text-align:center;padding-top:20px;">
-        <div style="font-size:48px;margin-bottom:10px;">${config.icon}</div>
+        <div style="margin-bottom:10px;display:flex;justify-content:center;">${config.icon}</div>
         <div style="font-size:14px;color:${config.color};letter-spacing:4px;margin-bottom:20px;font-weight:600;">${config.label}</div>
         <div style="font-size:28px;font-weight:800;color:#1e293b;margin-bottom:30px;line-height:1.3;">${data.title}</div>
         <div style="font-size:14px;color:#64748b;margin-bottom:10px;">Được trao tặng cho</div>
@@ -121,14 +159,13 @@ export function printHTML(html: string): void {
   }
 }
 
-// Print multiple cards in batch - Grouped into pages of 8 for reliability
+// Print multiple cards in batch
 export function printBatchCards(htmlCards: string[]): void {
   const printWindow = window.open('', '_blank');
   if (printWindow) {
     const cardsPerPage = 8;
     let combinedHTML = '';
 
-    // Chunk cards into pages
     for (let i = 0; i < htmlCards.length; i += cardsPerPage) {
       const batch = htmlCards.slice(i, i + cardsPerPage);
       combinedHTML += `
@@ -145,22 +182,17 @@ export function printBatchCards(htmlCards: string[]): void {
     printWindow.document.write(generatePrintPage(combinedHTML, true));
     printWindow.document.close();
     printWindow.focus();
-
-    // Wait for images to load before printing
-    setTimeout(() => {
-      printWindow.print();
-    }, 1200);
+    setTimeout(() => printWindow.print(), 1200);
   }
 }
 
-// Change to grid layout for 8 cards per A4 page
 function generatePrintPage(content: string, isBatch: boolean = false): string {
   return `<!DOCTYPE html>
 <html>
 <head>
     <title>In Thẻ EduCheck</title>
     <meta charset="UTF-8">
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Be+Vietnam+Pro:wght@400;700&display=swap" rel="stylesheet">
     <style>
         * {
             -webkit-print-color-adjust: exact !important;
@@ -168,71 +200,55 @@ function generatePrintPage(content: string, isBatch: boolean = false): string {
             color-adjust: exact !important;
             box-sizing: border-box;
         }
-        
         body {
             margin: 0;
             padding: 10px;
-            font-family: 'Plus Jakarta Sans', sans-serif;
+            font-family: 'Plus Jakarta Sans', 'Be Vietnam Pro', sans-serif;
             background: #f5f5f5;
         }
-        
-        /* Grid layout for batch printing */
         .cards-container {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            gap: 10px;
-            max-width: 210mm; /* A4 width */
+            max-width: 210mm;
             margin: 0 auto;
         }
-        
-        .card-wrapper {
-            /* No specific width here, controlled by print media */
+        .print-page {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 5mm;
+            justify-items: center;
+            align-content: start;
+            padding: 5mm;
         }
-        
+        .card-wrapper {
+            margin-bottom: 2mm;
+        }
         @media print {
-            body {
-                margin: 0;
-                padding: 5mm; /* Minimum padding */
-                background: white;
-            }
-            
+            body { margin: 0; padding: 0; background: white; }
             .cards-container {
-                display: grid;
-                grid-template-columns: repeat(2, 1fr); /* 2 columns */
-                gap: 5mm; /* Gap between cards */
-                justify-items: center;
+                display: block;
             }
-            
-            .card-wrapper {
-                page-break-inside: avoid;
+            .print-page {
+                page-break-after: always;
+                min-height: 276mm;
+                padding: 5mm 10mm;
             }
-            
-            /* Ensure card size fits 8 per page */
-            /* A4 height is ~297mm. 4 rows needs < 74mm per row */
-            /* Card height 56mm + gap should fit */
-            
+            .print-page:last-child {
+                page-break-after: auto;
+            }
+            .card-wrapper { page-break-inside: avoid; }
             .card {
-                /* Reduce card size slightly for printing to ensure 8 fit */
                 width: 90mm !important; 
                 height: 56mm !important;
                 border-radius: 8px !important;
                 padding: 10px !important;
             }
-            
             .card > div {
-                 /* Scale content logic if needed, but fixed px units inside might be issue.
-                    Using viewport units or relative units is better, but CSS scale is easiest */
                  transform-origin: top left;
              }
-
             @page {
                 margin: 5mm; 
                 size: A4 portrait;
             }
         }
-        
-        /* Print preview info */
         .print-info {
             text-align: center;
             padding: 10px;
@@ -243,16 +259,13 @@ function generatePrintPage(content: string, isBatch: boolean = false): string {
             font-weight: bold;
             font-size: 14px;
         }
-        
         @media print {
-            .print-info {
-                display: none !important;
-            }
+            .print-info { display: none !important; }
         }
     </style>
 </head>
 <body>
-    ${isBatch ? '<div class="print-info">📄 Nhấn Ctrl+P. Chọn "In màu nền". Layout được tối ưu cho 8 thẻ/trang A4 (2x4).</div>' : ''}
+    ${isBatch ? '<div class="print-info" style="display:flex;align-items:center;justify-content:center;gap:8px;"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></svg> Nhấn Ctrl+P. Chọn "In màu nền". Layout 8 thẻ/trang A4 (2x4).</div>' : ''}
     <div class="cards-container">
         ${content}
     </div>
@@ -261,56 +274,106 @@ function generatePrintPage(content: string, isBatch: boolean = false): string {
 }
 
 
-// Export as PDF using jspdf + html2canvas
-export async function downloadBatchCardsAsPDF(htmlCards: string[], filename: string = 'The_EduCheck.pdf'): Promise<void> {
+// Export as PDF
+export async function downloadBatchCardsAsPDF(
+  htmlCards: string[],
+  filename: string = 'The_EduCheck.pdf',
+  onProgress?: (current: number, total: number) => void
+): Promise<void> {
   try {
     const { default: jsPDF } = await import('jspdf');
-    const { default: html2canvas } = await import('html2canvas');
+    
+    // Try html-to-image first, fallback to html2canvas
+    let captureModule: any;
+    try {
+      captureModule = await import('html-to-image');
+    } catch {
+      captureModule = null;
+    }
 
-    // 1. Create a hidden container for rendering
     const container = document.createElement('div');
-    container.style.position = 'absolute';
+    // Use off-screen positioning instead of visibility:hidden to ensure rendering
+    container.style.position = 'fixed';
     container.style.left = '-9999px';
     container.style.top = '0';
-    container.style.width = '210mm'; // A4 width
-    container.style.background = 'white';
+    container.style.width = '794px'; // 210mm in px at 96dpi
+    container.style.background = '#ffffff';
+    container.style.fontFamily = "'Plus Jakarta Sans','Be Vietnam Pro',sans-serif";
+    container.style.zIndex = '-1';
     document.body.appendChild(container);
+
+    // Preload Google Fonts
+    const fontLink = document.createElement('link');
+    fontLink.rel = 'stylesheet';
+    fontLink.href = 'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Be+Vietnam+Pro:wght@400;700&display=swap';
+    document.head.appendChild(fontLink);
+    await new Promise(resolve => setTimeout(resolve, 800));
 
     const pdf = new jsPDF('p', 'mm', 'a4');
     const cardsPerPage = 8;
+    const totalPages = Math.ceil(htmlCards.length / cardsPerPage);
 
     for (let i = 0; i < htmlCards.length; i += cardsPerPage) {
       const batch = htmlCards.slice(i, i + cardsPerPage);
+      const pageNum = Math.floor(i / cardsPerPage);
 
-      // Clear and prepare container for this page
       container.innerHTML = `
-                <div style="padding: 10mm; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10mm; justify-items: center; width: 210mm; box-sizing: border-box;">
-                    ${batch.map(card => `<div style="width: 90mm; height: 56mm; overflow: hidden; border-radius: 8px;">${card}</div>`).join('')}
-                </div>
-            `;
+        <div style="padding:10mm;display:grid;grid-template-columns:repeat(2,1fr);gap:8mm;justify-items:center;width:794px;min-height:1123px;box-sizing:border-box;background:#ffffff;">
+            ${batch.map(card => `<div style="width:90mm;height:56mm;overflow:hidden;border-radius:8px;">${card}</div>`).join('')}
+        </div>
+      `;
 
-      // Wait a bit for images to render
-      await new Promise(resolve => setTimeout(resolve, 500));
+      // Wait for images and fonts to load
+      const images = container.querySelectorAll('img');
+      await Promise.all(Array.from(images).map(img => {
+        if (img.complete) return Promise.resolve();
+        return new Promise(resolve => {
+          img.onload = resolve;
+          img.onerror = resolve;
+        });
+      }));
+      await new Promise(resolve => setTimeout(resolve, 600));
 
-      const canvas = await html2canvas(container, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff'
-      });
+      let imgData: string;
 
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      if (captureModule?.toPng) {
+        // Use toPng instead of toJpeg for better color accuracy
+        imgData = await captureModule.toPng(container.firstElementChild as HTMLElement, {
+          quality: 1,
+          pixelRatio: 2,
+          cacheBust: true,
+          skipFonts: false,
+          backgroundColor: '#ffffff',
+        });
+      } else {
+        // Fallback: html2canvas
+        const { default: html2canvas } = await import('html2canvas');
+        const canvas = await html2canvas(container.firstElementChild as HTMLElement, {
+          scale: 2,
+          useCORS: true,
+          logging: false,
+          backgroundColor: '#ffffff'
+        });
+        imgData = canvas.toDataURL('image/png', 1);
+      }
 
       if (i > 0) pdf.addPage();
 
       const pdfWidth = pdf.internal.pageSize.getWidth();
-      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+      const pdfPageHeight = pdf.internal.pageSize.getHeight();
+      // Use full A4 page
+      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfPageHeight);
 
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
+      // Report progress
+      if (onProgress) {
+        onProgress(pageNum + 1, totalPages);
+      }
     }
 
     pdf.save(filename);
     document.body.removeChild(container);
+    // Clean up font link
+    if (fontLink.parentNode) fontLink.parentNode.removeChild(fontLink);
   } catch (error) {
     console.error('PDF Generation failed:', error);
     throw error;
@@ -322,5 +385,6 @@ export const pdfService = {
   generateCertificateHTML,
   printHTML,
   printBatchCards,
-  downloadBatchCardsAsPDF
+  downloadBatchCardsAsPDF,
+  urlToBase64
 };

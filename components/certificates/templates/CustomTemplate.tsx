@@ -60,8 +60,8 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                 const boundedY = Math.max(0, Math.min(100, y));
                 onLabelChange(`pos_${draggingId}`, `${boundedX},${boundedY}`);
             } else if (resizingId) {
-                const deltaY = initialY - e.clientY;
-                const newScale = Math.max(0.2, initialScale + (deltaY / 100));
+                const deltaY = e.clientY - initialY;
+                const newScale = Math.max(0.2, initialScale + (deltaY / 150));
                 onLabelChange(`style_${resizingId}_scale`, newScale.toFixed(2));
             }
         };
@@ -98,7 +98,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
         const currentScale = style.scale || 1;
 
         if (!isEditable) return (
-            <div className="absolute" style={getPos(id, defPos.x, defPos.y)}>
+            <div className="absolute" style={{ ...getPos(id, defPos.x, defPos.y), width: 'max-content' }}>
                 <div className="relative transform -translate-x-1/2 -translate-y-1/2" style={{ transform: `translate(-50%, -50%) scale(${currentScale})` }}>
                     {children}
                 </div>
@@ -109,7 +109,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
             <div
                 {...props}
                 className={`absolute cursor-move select-none group/draggable transition-shadow ${draggingId === id ? 'z-50' : 'z-10'}`}
-                style={getPos(id, defPos.x, defPos.y)}
+                style={{ ...getPos(id, defPos.x, defPos.y), width: 'max-content' }}
                 onMouseDown={(e) => handleMouseDown(e, id)}
             >
                 <div className={`relative transform -translate-x-1/2 -translate-y-1/2 border-2 border-transparent hover:border-indigo-400 group-hover/draggable:border-indigo-400 rounded p-1 ${draggingId === id ? 'border-indigo-600 shadow-xl bg-white/10' : ''}`}
@@ -149,6 +149,13 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
             case 'handwriting': return "'Dancing Script', cursive";
             case 'sans': return "'Arimo', sans-serif";
             case 'times': return "'Times New Roman', serif";
+            case 'cinzel': return "'Cinzel', serif";
+            case 'cormorant': return "'Cormorant Garamond', serif";
+            case 'greatvibes': return "'Great Vibes', cursive";
+            case 'alexbrush': return "'Alex Brush', cursive";
+            case 'pinyon': return "'Pinyon Script', cursive";
+            case 'librebaskerville': return "'Libre Baskerville', serif";
+            case 'bevietnam': return "'Be Vietnam Pro', sans-serif";
             case 'serif': default: return "'Playfair Display', serif";
         }
     };
@@ -210,25 +217,19 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                 </DraggableBox>
             )}
 
-            {/* Logos */}
-            {isVisible('logo') && (customConfig?.logoImage || (customConfig?.logos && customConfig.logos.length > 0)) && (
+            {/* Logos — Each logo gets its own DraggableBox for independent positioning */}
+            {isVisible('logo') && customConfig?.logoImage && (!customConfig.logos || customConfig.logos.length === 0) && (
                 <DraggableBox id="logo" defPos={{ x: 50, y: 10 }}>
-                    <div className="relative group/logo-container flex gap-4 pointer-events-none">
-                        {customConfig.logoImage && (!customConfig.logos || customConfig.logos.length === 0) && (
-                            <img src={customConfig.logoImage} className="object-contain drop-shadow-sm h-20 w-auto" alt="Default Logo" />
-                        )}
-                        {customConfig.logos?.map((logo, index) => (
-                            <img key={index} src={logo} className="object-contain drop-shadow-sm" style={{ height: `${24 * 4 * (customConfig.logoScale || 1)}px` }} alt="Logo" />
-                        ))}
-
-                        {/* Quick Hide Button on Logo (Only in Edit Mode) */}
+                    <div className="relative group/logo-container">
+                        <img src={customConfig.logoImage} className="object-contain drop-shadow-sm h-20 w-auto pointer-events-none" alt="Default Logo" />
                         {isEditable && onLabelChange && (
                             <button
-                                onClick={(e) => {
+                                onMouseDown={(e) => {
                                     e.stopPropagation();
+                                    e.preventDefault();
                                     onLabelChange('visibility_logo', 'false');
                                 }}
-                                className="absolute -top-4 -right-4 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover/logo-container:opacity-100 transition-opacity pointer-events-auto shadow-md hover:bg-red-600 scale-75"
+                                className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover/logo-container:opacity-100 transition-opacity pointer-events-auto shadow-lg hover:bg-red-600 text-sm font-bold leading-none z-[60] cursor-pointer"
                                 title="Ẩn logo"
                             >
                                 ×
@@ -237,6 +238,27 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                     </div>
                 </DraggableBox>
             )}
+            {/* Uploaded Logos — independent from default logo visibility */}
+            {customConfig?.logos?.map((logo, index) => (
+                <DraggableBox key={`logo-${index}`} id={`logo-${index}`} defPos={{ x: 30 + index * 20, y: 10 }}>
+                    <div className="relative group/single-logo">
+                        <img src={logo} className="object-contain drop-shadow-sm pointer-events-none" style={{ height: `${24 * 4 * (customConfig.logoScale || 1)}px` }} alt={`Logo ${index + 1}`} />
+                        {isEditable && onLabelChange && (
+                            <button
+                                onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    onLabelChange(`remove_logo_${index}`, 'true');
+                                }}
+                                className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover/single-logo:opacity-100 transition-opacity pointer-events-auto shadow-md hover:bg-red-600 text-[10px] font-bold leading-none z-[60] cursor-pointer"
+                                title="Xóa logo này"
+                            >
+                                ×
+                            </button>
+                        )}
+                    </div>
+                </DraggableBox>
+            ))}
 
             {/* Title */}
             {isVisible('title') && (
@@ -252,7 +274,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
             {isVisible('recipient') && (
                 <>
                     <DraggableBox id="presentedTo" defPos={{ x: 50, y: 30 }}>
-                        <p className="text-2xl italic font-light opacity-90 whitespace-nowrap" style={{ color: getStyle('presentedTo').color || textColor }}>
+                        <p className="text-2xl italic font-light opacity-90 whitespace-nowrap" style={{ color: getStyle('presentedTo').color || textColor, fontFamily: mainFont }}>
                             <Editable val={labels.presentedTo} k="presentedTo" />
                         </p>
                     </DraggableBox>
@@ -269,7 +291,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                 <>
                     {isVisible('eventStr') && (
                         <DraggableBox id="eventStr" defPos={{ x: 50, y: 52 }}>
-                            <p className="text-xl opacity-80 whitespace-nowrap" style={{ color: getStyle('eventStr').color || textColor }}>
+                            <p className="text-xl opacity-80 whitespace-nowrap" style={{ color: getStyle('eventStr').color || textColor, fontFamily: mainFont }}>
                                 <Editable val={labels.eventPrefix} k="eventPrefix" />
                             </p>
                         </DraggableBox>
@@ -285,6 +307,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                 <DraggableBox id="entryNo" defPos={{ x: 20, y: 80 }}>
                     <p className="text-base font-medium whitespace-nowrap text-left opacity-80" style={{
                         color: getStyle('entryNo').color || textColor,
+                        fontFamily: mainFont
                     }}>
                         <Editable val={labels.entryNo.replace(/_/g, '.')} k="entryNo" />
                     </p>
@@ -294,6 +317,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
                 <DraggableBox id="date" defPos={{ x: 20, y: 85 }}>
                     <div className="text-base font-medium whitespace-nowrap text-left opacity-80" style={{
                         color: getStyle('date').color || textColor,
+                        fontFamily: mainFont
                     }}>
                         <Editable val={labels.datePrefix.replace(/_/g, '.')} k="datePrefix" />
                     </div>
@@ -323,7 +347,7 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
 
             {isVisible('signature') && (
                 <DraggableBox id="signature" defPos={{ x: 80, y: 88 }}>
-                    <p className="text-xl font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: getStyle('signature').color || textColor }}>
+                    <p className="text-xl font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: getStyle('signature').color || textColor, fontFamily: mainFont }}>
                         <Editable val={labels.signature} k="signature" />
                     </p>
                 </DraggableBox>
@@ -333,12 +357,69 @@ const CustomTemplate: React.FC<CertificateTemplateProps> = ({ data, customConfig
             {/* Custom Texts */}
             {(customConfig.customTexts || []).map(txt => (
                 <DraggableBox key={txt.id} id={txt.id} defPos={{ x: txt.x, y: txt.y }}>
-                    <div className="whitespace-nowrap" style={{
-                        fontSize: `${txt.fontSize || 18}px`,
-                        color: getStyle(txt.id).color || txt.color || textColor,
-                        fontFamily: getFontFamily(txt.fontStyle)
-                    }}>
-                        {txt.content}
+                    <div className="relative group/custom-text">
+                        {isEditable && onLabelChange ? (
+                            <div
+                                contentEditable
+                                suppressContentEditableWarning
+                                className="outline-none cursor-text bg-transparent hover:bg-black/5 focus:bg-white/50 rounded px-1 min-w-[40px] min-h-[1.2em]"
+                                style={{
+                                    fontSize: `${txt.fontSize || 18}px`,
+                                    color: getStyle(txt.id).color || txt.color || textColor,
+                                    fontFamily: getFontFamily(txt.fontStyle),
+                                    textAlign: 'center',
+                                    whiteSpace: 'pre-wrap',
+                                    wordBreak: 'break-word',
+                                    lineHeight: 1.4
+                                }}
+                                onBlur={(e) => {
+                                    // Use innerHTML and convert <br> to \n for storage
+                                    const html = e.currentTarget.innerHTML || '';
+                                    const text = html
+                                        .replace(/<br\s*\/?>/gi, '\n')
+                                        .replace(/<[^>]*>/g, '')
+                                        .replace(/&nbsp;/g, ' ')
+                                        .replace(/&amp;/g, '&')
+                                        .replace(/&lt;/g, '<')
+                                        .replace(/&gt;/g, '>');
+                                    onLabelChange(`customtext_${txt.id}`, text || txt.content);
+                                }}
+                                onMouseDown={(e) => e.stopPropagation()}
+                                onKeyDown={(e) => {
+                                    // Allow Enter for new lines
+                                    if (e.key === 'Enter') {
+                                        e.stopPropagation();
+                                        // Don't prevent default — let browser insert <br>
+                                    }
+                                }}
+                                dangerouslySetInnerHTML={{ __html: txt.content.replace(/\n/g, '<br>') }}
+                            />
+                        ) : (
+                            <div style={{
+                                fontSize: `${txt.fontSize || 18}px`,
+                                color: getStyle(txt.id).color || txt.color || textColor,
+                                fontFamily: getFontFamily(txt.fontStyle),
+                                textAlign: 'center',
+                                whiteSpace: 'pre-wrap',
+                                lineHeight: 1.4
+                            }}>
+                                {txt.content}
+                            </div>
+                        )}
+                        {/* Delete button for custom text */}
+                        {isEditable && onLabelChange && (
+                            <button
+                                onMouseDown={(e) => {
+                                    e.stopPropagation();
+                                    e.preventDefault();
+                                    onLabelChange(`delete_customtext_${txt.id}`, 'true');
+                                }}
+                                className="absolute -top-3 -right-3 w-6 h-6 bg-red-500 text-white rounded-full flex items-center justify-center opacity-0 group-hover/custom-text:opacity-100 transition-opacity pointer-events-auto shadow-lg hover:bg-red-600 text-xs font-bold leading-none z-[60] cursor-pointer"
+                                title="Xóa văn bản này"
+                            >
+                                ×
+                            </button>
+                        )}
                     </div>
                 </DraggableBox>
             ))}

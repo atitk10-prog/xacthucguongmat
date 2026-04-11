@@ -1,6 +1,6 @@
-import { Certificate } from '../../../types';
+export type CertificateTemplateId = 'classic' | 'luxury' | 'custom';
 
-export type CertificateTemplateId = 'classic' | 'tech' | 'luxury' | 'custom';
+export type FontStyleType = 'serif' | 'sans' | 'handwriting' | 'times' | 'cinzel' | 'cormorant' | 'greatvibes' | 'alexbrush' | 'pinyon' | 'librebaskerville' | 'bevietnam';
 
 export interface CertificateTemplateProps {
     data: {
@@ -20,9 +20,9 @@ export interface CertificateTemplateProps {
         logos?: string[];
         paperSize?: 'A4' | 'A5' | 'B4' | 'A3';
         orientation?: 'landscape' | 'portrait';
-        fontStyle?: 'serif' | 'sans' | 'handwriting' | 'times';
-        titleFont?: 'serif' | 'sans' | 'handwriting' | 'times';
-        recipientFont?: 'serif' | 'sans' | 'handwriting' | 'times';
+        fontStyle?: FontStyleType;
+        titleFont?: FontStyleType;
+        recipientFont?: FontStyleType;
         textColor?: string;
         showQR?: boolean;
         logoAlignment?: 'left' | 'center' | 'right';
@@ -39,13 +39,13 @@ export interface CertificateTemplateProps {
             y: number;
             fontSize?: number;
             color?: string;
-            fontStyle?: 'serif' | 'sans' | 'handwriting' | 'times';
+            fontStyle?: FontStyleType;
         }[];
         elementStyles?: {
             [key: string]: {
                 color?: string;
                 scale?: number;
-                fontStyle?: 'serif' | 'sans' | 'handwriting' | 'times';
+                fontStyle?: FontStyleType;
                 fontSize?: number;
             };
         };
@@ -58,6 +58,9 @@ export interface CertificateTemplateProps {
             eventName?: boolean;
             date?: boolean;
             signature?: boolean;
+            signatureImg?: boolean;
+            seal?: boolean;
+            entryNo?: boolean;
             qr?: boolean;
             logo?: boolean;
         };

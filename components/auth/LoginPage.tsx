@@ -67,9 +67,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                             )}
 
                             <div>
-                                <label className="block text-xs font-black text-indigo-200 uppercase tracking-wider mb-2">Email</label>
-                                <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="email@example.com"
-                                    className="w-full px-5 py-4 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" />
+                                <label className="block text-xs font-black text-indigo-200 uppercase tracking-wider mb-2">Email hoặc Mã học sinh</label>
+                                <input type="text" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="email@example.com hoặc HS001"
+                                    className="w-full px-5 py-4 bg-white/10 border border-white/20 rounded-2xl text-white placeholder-white/40 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-medium" autoComplete="username" />
                             </div>
 
                             <div>
@@ -101,7 +101,7 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                         </button>
                     </div>
 
-                    <p className="text-center text-indigo-300/60 text-xs mt-6">© 2024 EduCheck • Powered by Gemini AI</p>
+                    <p className="text-center text-indigo-300/60 text-xs mt-6">©{new Date().getFullYear()} EduCheck </p>
                 </div>
             </div>
 

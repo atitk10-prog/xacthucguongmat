@@ -233,6 +233,9 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             faceMatcher.clearAll(); // Clear previous faces
 
             try {
+                // ── OPTIMIZATION: Pre-load existing checkins for local duplicate check ──
+                await dataService.preloadEventCheckins(event.id);
+
                 // Load participants from Event_Participants sheet
                 const result = await dataService.getEventParticipants(event.id);
                 console.log('📋 getEventParticipants result:', result);
@@ -345,6 +348,8 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
             window.removeEventListener('online', handleOnline);
             window.removeEventListener('offline', handleOffline);
             clearInterval(syncInterval);
+            // ── OPTIMIZATION: Clear session cache when leaving checkin page ──
+            if (event?.id) dataService.clearCheckinSessionCache(event.id);
         };
     }, [event?.id, modelsReady]);
 
@@ -389,8 +394,6 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 console.error('Failed to load check-ins:', err);
             }
         };
-
-        loadCheckins();
 
         loadCheckins();
 
@@ -1790,6 +1793,72 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                         </span>
                     </div>
                 </div>
+
+                {/* LIVE DASHBOARD PANEL */}
+                {(() => {
+                    const totalParticipants = participants.length || 1;
+                    const checkedIn = checkedInUserIds.size;
+                    const onTimeCount = recentCheckins.filter(c => c.status === 'on_time').length;
+                    const lateCount = recentCheckins.filter(c => c.status === 'late').length;
+                    const remaining = Math.max(0, totalParticipants - checkedIn);
+                    const percent = Math.min(100, Math.round((checkedIn / totalParticipants) * 100));
+
+                    return (
+                        <div className="bg-slate-700/50 rounded-2xl p-4 mb-4 border border-slate-600/50">
+                            <div className="flex items-center justify-between mb-3">
+                                <h3 className="text-slate-300 text-xs font-bold uppercase tracking-wider flex items-center gap-1.5">
+                                    <span className="w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                                    LIVE DASHBOARD
+                                </h3>
+                                <span className="text-xs font-bold text-slate-400">
+                                    {checkedIn}/{totalParticipants}
+                                </span>
+                            </div>
+
+                            {/* Progress bar */}
+                            <div className="h-3 bg-slate-600 rounded-full overflow-hidden mb-3">
+                                <div
+                                    className="h-full rounded-full transition-all duration-700 ease-out"
+                                    style={{
+                                        width: `${percent}%`,
+                                        background: percent >= 80
+                                            ? 'linear-gradient(90deg, #10B981, #34D399)'
+                                            : percent >= 50
+                                                ? 'linear-gradient(90deg, #F59E0B, #FBBF24)'
+                                                : 'linear-gradient(90deg, #6366F1, #818CF8)'
+                                    }}
+                                />
+                            </div>
+
+                            {/* Stats grid */}
+                            <div className="grid grid-cols-3 gap-2 text-center">
+                                <div className="bg-emerald-500/10 rounded-xl py-2 px-1 border border-emerald-500/20">
+                                    <p className="text-2xl font-black text-emerald-400">{onTimeCount}</p>
+                                    <p className="text-[10px] font-bold text-emerald-300/70 uppercase">Đúng giờ</p>
+                                </div>
+                                <div className="bg-amber-500/10 rounded-xl py-2 px-1 border border-amber-500/20">
+                                    <p className="text-2xl font-black text-amber-400">{lateCount}</p>
+                                    <p className="text-[10px] font-bold text-amber-300/70 uppercase">Đi trễ</p>
+                                </div>
+                                <div className="bg-slate-500/10 rounded-xl py-2 px-1 border border-slate-500/20">
+                                    <p className="text-2xl font-black text-slate-300">{remaining}</p>
+                                    <p className="text-[10px] font-bold text-slate-400/70 uppercase">Còn lại</p>
+                                </div>
+                            </div>
+
+                            {/* Attendance rate */}
+                            <div className="mt-3 text-center">
+                                <span className={`text-3xl font-black ${
+                                    percent >= 80 ? 'text-emerald-400' :
+                                    percent >= 50 ? 'text-amber-400' : 'text-indigo-400'
+                                }`}>
+                                    {percent}%
+                                </span>
+                                <span className="text-xs text-slate-400 ml-2">Tỷ lệ tham gia</span>
+                            </div>
+                        </div>
+                    );
+                })()}
 
                 {/* Recent Check-ins */}
                 <div className="flex-1 overflow-hidden flex flex-col">

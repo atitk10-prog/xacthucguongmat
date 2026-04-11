@@ -101,6 +101,8 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
                 const curLat = pos.coords.latitude;
                 const curLng = pos.coords.longitude;
                 setLocation({ lat: curLat, lng: curLng });
+                // Store accuracy for anti-fake GPS check
+                (window as any).__lastGpsAccuracy = pos.coords.accuracy;
 
                 const dist = calculateDistance(curLat, curLng, event.latitude, event.longitude);
                 setDistance(dist);
@@ -159,8 +161,11 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
                         participant_id: participant?.id, // Link to event_participants
                         face_confidence: confidence,
                         face_verified: true,
-                        checkin_mode: 'student',
-                        device_info: navigator.userAgent
+                        checkin_mode: event.checkin_mode || 'student',
+                        device_info: navigator.userAgent,
+                        checkin_latitude: location?.lat,
+                        checkin_longitude: location?.lng,
+                        checkin_accuracy: location ? (window as any).__lastGpsAccuracy : undefined
                     });
 
                     if (result.success) {

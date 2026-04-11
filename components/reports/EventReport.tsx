@@ -1,10 +1,12 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { dataService } from '../../services/dataService';
 import { Event, EventCheckin } from '../../types';
 import { PieChart, Pie, Cell, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
 import * as XLSX from 'xlsx';
-import { Users, CheckCircle, Clock, XCircle, Calendar, MapPin, Download, ChevronLeft, Filter, Search, AlertTriangle, X } from 'lucide-react';
+import { Users, CheckCircle, Clock, XCircle, Calendar, MapPin, Download, ChevronLeft, Filter, Search, AlertTriangle, X, BarChart3, Map } from 'lucide-react';
 import { useToast } from '../ui';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 interface EventReportProps {
     eventId?: string;
@@ -30,13 +32,18 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
     const [selectedEventId, setSelectedEventId] = useState<string>(eventId || '');
     const [reportData, setReportData] = useState<EventReportData | null>(null);
     const [isLoading, setIsLoading] = useState(false);
-    const [activeTab, setActiveTab] = useState<'overview' | 'list'>('overview');
+    const [activeTab, setActiveTab] = useState<'overview' | 'list' | 'map'>('overview');
+    const mapContainerRef = useRef<HTMLDivElement>(null);
+    const mapInstanceRef = useRef<L.Map | null>(null);
     const [filterClass, setFilterClass] = useState<string>('all');
     const [filterStatus, setFilterStatus] = useState<string>('all');
     const [searchQuery, setSearchQuery] = useState('');
     const [isProcessing, setIsProcessing] = useState(false);
     const [showAbsenceConfirm, setShowAbsenceConfirm] = useState(false);
     const [selectedAbsentUserIds, setSelectedAbsentUserIds] = useState<string[]>([]);
+    const [eventStatusFilter, setEventStatusFilter] = useState<'all' | 'active' | 'completed'>('all');
+    const [checkinPage, setCheckinPage] = useState(0);
+    const CHECKIN_PAGE_SIZE = 20;
     const toast = useToast();
 
     useEffect(() => {
@@ -96,19 +103,24 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
         }
     };
 
-    // Get list of absent students for checkbox selection
+    // Get list of absent students — separate processed vs unprocessed
     const absentStudents = useMemo(() => {
         if (!reportData) return [];
-        // Filter checkins to only show 'absent' status
         return reportData.checkins.filter(c => c.status === 'absent');
     }, [reportData]);
 
-    // Initialize selected absent users when modal opens
+    const processedAbsentIds = useMemo(() => {
+        // Students whose points_earned !== 0 have already been processed
+        return new Set(absentStudents.filter(s => s.points_earned !== 0 && s.points_earned !== undefined).map(s => s.user_id).filter(Boolean));
+    }, [absentStudents]);
+
+    const unprocessedAbsent = useMemo(() => {
+        return absentStudents.filter(s => !processedAbsentIds.has(s.user_id || ''));
+    }, [absentStudents, processedAbsentIds]);
+
+    // Initialize selected absent users when modal opens — only unprocessed
     const openAbsenceModal = () => {
-        if (absentStudents.length > 0) {
-            // CRITICAL: Use user_id here for points deduction database logic
-            setSelectedAbsentUserIds(absentStudents.map(s => s.user_id).filter(Boolean) as string[]);
-        }
+        setSelectedAbsentUserIds(unprocessedAbsent.map(s => s.user_id).filter(Boolean) as string[]);
         setShowAbsenceConfirm(true);
     };
 
@@ -121,11 +133,11 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
     };
 
     const toggleAllAbsentUsers = () => {
-        const allIds = absentStudents.map(s => s.user_id).filter(Boolean) as string[];
-        if (selectedAbsentUserIds.length === allIds.length) {
+        const unprocessedIds = unprocessedAbsent.map(s => s.user_id).filter(Boolean) as string[];
+        if (selectedAbsentUserIds.length === unprocessedIds.length) {
             setSelectedAbsentUserIds([]);
         } else {
-            setSelectedAbsentUserIds(allIds);
+            setSelectedAbsentUserIds(unprocessedIds);
         }
     };
 
@@ -167,6 +179,7 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
             ['Tổng số đã check-in', reportData.stats.total_checkins],
             ['Đúng giờ', reportData.stats.on_time],
             ['Đi muộn', reportData.stats.late],
+            ['Có phép', reportData.stats.excused],
             ['Vắng mặt', reportData.stats.absent],
             ['Tỷ lệ tham gia', `${reportData.stats.attendance_rate}%`]
         ];
@@ -182,7 +195,6 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
         }));
         const wsCheckins = XLSX.utils.json_to_sheet(checkinRows);
 
-        // Adjust column widths
         const wscols = [
             { wch: 5 },  // STT
             { wch: 30 }, // Name
@@ -193,9 +205,22 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
         ];
         wsCheckins['!cols'] = wscols;
 
+        // Sheet 3: Thống kê theo lớp
+        const classStatsExport = classStatsData.map((c, i) => ({
+            'STT': i + 1,
+            'Lớp/Đơn vị': c.name,
+            'Đúng giờ': c['Đúng giờ'],
+            'Đi muộn': c['Đi muộn'],
+            'Vắng mặt': c['Vắng mặt'],
+            'Tỷ lệ (%)': c.rate + '%'
+        }));
+        const wsClassStats = XLSX.utils.json_to_sheet(classStatsExport);
+        wsClassStats['!cols'] = [{ wch: 5 }, { wch: 20 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }];
+
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, wsOverview, "Tổng quan");
-        XLSX.utils.book_append_sheet(wb, wsCheckins, "Danh sách chi tiết");
+        XLSX.utils.book_append_sheet(wb, wsOverview, 'Tổng quan');
+        XLSX.utils.book_append_sheet(wb, wsCheckins, 'Danh sách chi tiết');
+        XLSX.utils.book_append_sheet(wb, wsClassStats, 'Theo lớp');
 
         const fileName = `BaoCao_${reportData.event.name.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.xlsx`;
         XLSX.writeFile(wb, fileName);
@@ -249,6 +274,27 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
         });
     }, [reportData, filterClass, filterStatus, searchQuery]);
 
+    // Paginated checkins
+    const paginatedCheckins = useMemo(() => {
+        const start = checkinPage * CHECKIN_PAGE_SIZE;
+        return filteredCheckins.slice(start, start + CHECKIN_PAGE_SIZE);
+    }, [filteredCheckins, checkinPage]);
+    const totalCheckinPages = Math.ceil(filteredCheckins.length / CHECKIN_PAGE_SIZE);
+
+    // Filtered events by status
+    const filteredEvents = useMemo(() => {
+        const now = new Date();
+        return events.filter(e => {
+            if (eventStatusFilter === 'all') return true;
+            const endTime = new Date(e.end_time);
+            if (eventStatusFilter === 'completed') return endTime < now;
+            return endTime >= now; // active
+        });
+    }, [events, eventStatusFilter]);
+
+    // Reset pagination when filters change
+    useEffect(() => { setCheckinPage(0); }, [filterClass, filterStatus, searchQuery]);
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center h-96">
@@ -266,7 +312,7 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
                 <div>
                     <h2 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-                        <span className="bg-indigo-100 p-2 rounded-xl text-indigo-600">📊</span>
+                        <span className="bg-indigo-100 p-2 rounded-xl text-indigo-600"><BarChart3 className="w-6 h-6" /></span>
                         Báo cáo Sự kiện
                     </h2>
                     <p className="text-slate-500 font-medium mt-1 ml-14">Thống kê chi tiết & danh sách điểm danh</p>
@@ -286,44 +332,69 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                     </button>
 
                     {reportData && reportData.stats.absent > 0 && (
-                        <button
-                            onClick={openAbsenceModal}
-                            disabled={isProcessing}
-                            className={`flex-1 md:flex-none px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 ${isProcessing
-                                ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                                : 'bg-red-600 text-white hover:bg-red-700 shadow-red-200'
-                                }`}
-                        >
-                            {isProcessing ? (
-                                <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
-                            ) : (
-                                <XCircle className="w-5 h-5" />
-                            )}
-                            Chốt vắng mặt
-                        </button>
+                        unprocessedAbsent.length === 0 ? (
+                            <div className="flex-1 md:flex-none px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 bg-emerald-100 text-emerald-700 border border-emerald-200">
+                                <CheckCircle className="w-5 h-5" />
+                                Đã chốt vắng ({processedAbsentIds.size} HS)
+                            </div>
+                        ) : (
+                            <button
+                                onClick={openAbsenceModal}
+                                disabled={isProcessing}
+                                className={`flex-1 md:flex-none px-5 py-2.5 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all active:scale-95 ${isProcessing
+                                    ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
+                                    : 'bg-red-600 text-white hover:bg-red-700 shadow-red-200'
+                                    }`}
+                            >
+                                {isProcessing ? (
+                                    <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+                                ) : (
+                                    <XCircle className="w-5 h-5" />
+                                )}
+                                Chốt vắng mặt ({unprocessedAbsent.length} HS)
+                                {processedAbsentIds.size > 0 && (
+                                    <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded">đã chốt {processedAbsentIds.size}</span>
+                                )}
+                            </button>
+                        )
                     )}
                 </div>
             </div>
 
             {/* Event Selector */}
             <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-100">
-                <label className="block text-sm font-bold text-slate-700 mb-2 flex items-center gap-2">
+                <label className="block text-sm font-bold text-slate-700 mb-3 flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-indigo-500" />
                     Chọn sự kiện cần xem
                 </label>
-                <div className="relative inline-block w-full md:w-1/2">
-                    <select
-                        value={selectedEventId}
-                        onChange={e => setSelectedEventId(e.target.value)}
-                        className="w-full px-5 py-4 pr-10 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none font-medium text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors"
-                    >
-                        <option value="">-- Chọn sự kiện --</option>
-                        {events.map(event => (
-                            <option key={event.id} value={event.id}>{event.name} ({new Date(event.start_time).toLocaleDateString('vi-VN')})</option>
+                <div className="flex flex-col md:flex-row gap-3">
+                    {/* Status filter tabs */}
+                    <div className="flex bg-slate-100 rounded-xl p-1 w-fit">
+                        {(['all', 'active', 'completed'] as const).map(status => (
+                            <button
+                                key={status}
+                                onClick={() => setEventStatusFilter(status)}
+                                className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${eventStatusFilter === status ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                            >
+                                {status === 'all' ? 'Tất cả' : status === 'active' ? 'Đang diễn ra' : 'Đã kết thúc'}
+                            </button>
                         ))}
-                    </select>
-                    <div className="absolute top-1/2 right-4 -translate-y-1/2 pointer-events-none text-slate-400">
-                        <ChevronLeft className="w-5 h-5 -rotate-90" />
+                    </div>
+
+                    <div className="relative flex-1">
+                        <select
+                            value={selectedEventId}
+                            onChange={e => setSelectedEventId(e.target.value)}
+                            className="w-full px-5 py-3 pr-10 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 appearance-none font-medium text-slate-700 cursor-pointer hover:bg-slate-100 transition-colors"
+                        >
+                            <option value="">-- Chọn sự kiện ({filteredEvents.length}) --</option>
+                            {filteredEvents.map(event => (
+                                <option key={event.id} value={event.id}>{event.name} ({new Date(event.start_time).toLocaleDateString('vi-VN')})</option>
+                            ))}
+                        </select>
+                        <div className="absolute top-1/2 right-4 -translate-y-1/2 pointer-events-none text-slate-400">
+                            <ChevronLeft className="w-5 h-5 -rotate-90" />
+                        </div>
                     </div>
                 </div>
             </div>
@@ -343,9 +414,12 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                 <>
                     {/* Event Info Card */}
                     <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 rounded-2xl p-6 shadow-lg shadow-indigo-200 text-white">
-                        <h3 className="text-xl font-black mb-4 flex items-center gap-2">
-                            📌 {reportData.event.name}
-                        </h3>
+                        <div className="flex items-start justify-between mb-4">
+                            <h3 className="text-xl font-black flex items-center gap-2">
+                                <MapPin className="w-5 h-5 flex-shrink-0" /> {reportData.event.name}
+                            </h3>
+
+                        </div>
                         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                             <div className="bg-white/10 rounded-xl p-3 backdrop-blur-sm">
                                 <p className="text-white/70 text-xs font-bold uppercase tracking-wider mb-1">Thời gian bắt đầu</p>
@@ -384,12 +458,15 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
 
                     {/* Content Tabs */}
                     <div className="bg-white rounded-3xl shadow-sm border border-slate-100 min-h-[500px]">
-                        <div className="flex border-b border-slate-100 px-6 pt-4">
+                        <div className="flex border-b border-slate-100 px-6 pt-4 overflow-x-auto">
                             <TabButton active={activeTab === 'overview'} onClick={() => setActiveTab('overview')}>
                                 Tổng quan & Biểu đồ
                             </TabButton>
                             <TabButton active={activeTab === 'list'} onClick={() => setActiveTab('list')}>
                                 Danh sách chi tiết
+                            </TabButton>
+                            <TabButton active={activeTab === 'map'} onClick={() => setActiveTab('map')}>
+                                <Map className="w-4 h-4" /> Bản đồ GPS
                             </TabButton>
                         </div>
 
@@ -460,7 +537,7 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                                     {classStatsData.length > 0 && (
                                         <div className="bg-white rounded-2xl p-6 border border-slate-100 mt-6">
                                             <h3 className="font-bold text-slate-800 mb-6 flex items-center gap-2">
-                                                📊 Thống kê theo Lớp / Đơn vị
+                                                <BarChart3 className="w-4 h-4 inline" /> Thống kê theo Lớp / Đơn vị
                                                 <span className="bg-indigo-100 px-2 py-0.5 rounded text-xs text-indigo-600 font-bold">{classStatsData.length} lớp</span>
                                             </h3>
                                             <div className="h-80">
@@ -483,7 +560,7 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                                         </div>
                                     )}
                                 </>
-                            ) : (
+                            ) : activeTab === 'list' ? (
                                 <div className="space-y-4 animate-fade-in">
                                     {/* Filters Bar */}
                                     <div className="flex flex-col md:flex-row gap-4 justify-between items-center bg-slate-50 p-4 rounded-2xl border border-slate-100">
@@ -544,9 +621,9 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                                                         </td>
                                                     </tr>
                                                 ) : (
-                                                    filteredCheckins.map((checkin, index) => (
+                                                    paginatedCheckins.map((checkin, index) => (
                                                         <tr key={checkin.id} className="hover:bg-slate-50 transition-colors">
-                                                            <td className="px-6 py-4 text-slate-500 text-sm">{index + 1}</td>
+                                                            <td className="px-6 py-4 text-slate-500 text-sm">{checkinPage * CHECKIN_PAGE_SIZE + index + 1}</td>
                                                             <td className="px-6 py-4">
                                                                 <div className="flex items-center gap-3">
                                                                     {checkin.participants?.avatar_url ? (
@@ -581,9 +658,55 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                                             </tbody>
                                         </table>
                                     </div>
-                                    <p className="text-right text-xs text-slate-400 mt-2">Hiển thị {filteredCheckins.length} kết quả</p>
+
+                                    {/* Pagination */}
+                                    <div className="flex items-center justify-between mt-4">
+                                        <p className="text-xs text-slate-400">
+                                            Trang <span className="font-bold text-slate-600">{checkinPage + 1}</span> / {totalCheckinPages} • Tổng {filteredCheckins.length} kết quả
+                                        </p>
+                                        <div className="flex items-center gap-1.5">
+                                            <button
+                                                onClick={() => setCheckinPage(p => Math.max(0, p - 1))}
+                                                disabled={checkinPage === 0}
+                                                className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                            >
+                                                <ChevronLeft className="w-4 h-4" />
+                                            </button>
+                                            {Array.from({ length: Math.min(5, totalCheckinPages) }, (_, i) => {
+                                                const start = Math.max(0, Math.min(checkinPage - 2, totalCheckinPages - 5));
+                                                const pageNum = start + i;
+                                                if (pageNum >= totalCheckinPages) return null;
+                                                return (
+                                                    <button
+                                                        key={pageNum}
+                                                        onClick={() => setCheckinPage(pageNum)}
+                                                        className={`w-9 h-9 rounded-xl text-sm font-bold transition-all ${checkinPage === pageNum
+                                                            ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-200'
+                                                            : 'bg-white border border-slate-200 text-slate-600 hover:bg-indigo-50'
+                                                            }`}
+                                                    >
+                                                        {pageNum + 1}
+                                                    </button>
+                                                );
+                                            })}
+                                            <button
+                                                onClick={() => setCheckinPage(p => Math.min(totalCheckinPages - 1, p + 1))}
+                                                disabled={checkinPage >= totalCheckinPages - 1}
+                                                className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                            >
+                                                <ChevronLeft className="w-4 h-4 rotate-180" />
+                                            </button>
+                                        </div>
+                                    </div>
                                 </div>
-                            )}
+                            ) : activeTab === 'map' ? (
+                                <GPSMapTab
+                                    event={reportData.event}
+                                    checkins={reportData.checkins}
+                                    mapContainerRef={mapContainerRef}
+                                    mapInstanceRef={mapInstanceRef}
+                                />
+                            ) : null}
                         </div>
                     </div>
                 </>
@@ -605,38 +728,63 @@ const EventReport: React.FC<EventReportProps> = ({ eventId, onBack }) => {
                         {absentStudents.length > 0 && (
                             <div className="mb-4 flex-shrink-0">
                                 <div className="flex justify-between items-center mb-2">
-                                    <span className="text-sm font-bold text-slate-700">Danh sách học sinh vắng mặt:</span>
-                                    <button
-                                        onClick={toggleAllAbsentUsers}
-                                        className="text-xs font-bold text-indigo-600 hover:text-indigo-700 transition-colors"
-                                    >
-                                        {selectedAbsentUserIds.length === absentStudents.length ? 'Bỏ chọn tất cả' : 'Chọn tất cả'}
-                                    </button>
+                                    <span className="text-sm font-bold text-slate-700">
+                                        Danh sách vắng mặt:
+                                        {processedAbsentIds.size > 0 && (
+                                            <span className="ml-2 text-xs font-normal text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full">
+                                                ✓ {processedAbsentIds.size} đã chốt
+                                            </span>
+                                        )}
+                                    </span>
+                                    {unprocessedAbsent.length > 0 && (
+                                        <button
+                                            onClick={toggleAllAbsentUsers}
+                                            className="text-xs font-bold text-indigo-600 hover:text-indigo-700 transition-colors"
+                                        >
+                                            {selectedAbsentUserIds.length === unprocessedAbsent.length ? 'Bỏ chọn tất cả' : `Chọn tất cả (${unprocessedAbsent.length})`}
+                                        </button>
+                                    )}
                                 </div>
                                 <div className="max-h-48 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
-                                    {absentStudents.map((student) => (
-                                        <label
-                                            key={student.participant_id || student.id}
-                                            className="flex items-center gap-3 p-3 hover:bg-slate-50 cursor-pointer transition-colors"
-                                        >
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedAbsentUserIds.includes(student.user_id || '')}
-                                                onChange={() => toggleAbsentUser(student.user_id || '')}
-                                                className="w-5 h-5 rounded accent-red-600"
-                                            />
-                                            <div className="flex-1 min-w-0">
-                                                <p className="font-bold text-slate-900 truncate">{student.user_name || 'Không tên'}</p>
-                                                <p className="text-xs text-slate-500 truncate">{student.class_id || 'Chưa có lớp'}</p>
-                                            </div>
-                                        </label>
-                                    ))}
+                                    {absentStudents.map((student) => {
+                                        const isProcessed = processedAbsentIds.has(student.user_id || '');
+                                        return (
+                                            <label
+                                                key={student.participant_id || student.id}
+                                                className={`flex items-center gap-3 p-3 transition-colors ${isProcessed ? 'bg-emerald-50/50 cursor-default' : 'hover:bg-slate-50 cursor-pointer'}`}
+                                            >
+                                                {isProcessed ? (
+                                                    <div className="w-5 h-5 rounded bg-emerald-500 flex items-center justify-center flex-shrink-0">
+                                                        <CheckCircle className="w-3.5 h-3.5 text-white" />
+                                                    </div>
+                                                ) : (
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={selectedAbsentUserIds.includes(student.user_id || '')}
+                                                        onChange={() => toggleAbsentUser(student.user_id || '')}
+                                                        className="w-5 h-5 rounded accent-red-600"
+                                                    />
+                                                )}
+                                                <div className="flex-1 min-w-0">
+                                                    <p className={`font-bold truncate ${isProcessed ? 'text-slate-400' : 'text-slate-900'}`}>
+                                                        {student.user_name || 'Không tên'}
+                                                    </p>
+                                                    <p className="text-xs text-slate-500 truncate">{student.class_id || 'Chưa có lớp'}</p>
+                                                </div>
+                                                {isProcessed && (
+                                                    <span className="text-[10px] font-bold text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full flex-shrink-0">
+                                                        Đã chốt ({student.points_earned}đ)
+                                                    </span>
+                                                )}
+                                            </label>
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
 
                         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6 text-amber-800 text-sm flex-shrink-0">
-                            ⚠️ Hành động này <strong>không thể hoàn tác</strong>. Hãy đảm bảo đã kiểm tra danh sách điểm danh.
+                            <AlertTriangle className="w-4 h-4 inline flex-shrink-0" /> Hành động này <strong>không thể hoàn tác</strong>. Hãy đảm bảo đã kiểm tra danh sách điểm danh.
                         </div>
 
                         <div className="flex gap-3 flex-shrink-0">
@@ -720,6 +868,191 @@ const StatusBadge: React.FC<{ status: string }> = ({ status }) => {
     if (status === 'late') return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-amber-100 text-amber-700 border border-amber-200"><Clock className="w-3.5 h-3.5" /> Đi muộn</span>;
     if (status === 'excused') return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-indigo-100 text-indigo-700 border border-indigo-200"><Calendar className="w-3.5 h-3.5" /> Có phép</span>;
     return <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-bold bg-red-100 text-red-700 border border-red-200"><XCircle className="w-3.5 h-3.5" /> Vắng mặt</span>;
+};
+
+// --- GPS Map Tab Component ---
+const haversineDistanceCalc = (lat1: number, lon1: number, lat2: number, lon2: number): number => {
+    const R = 6371e3;
+    const φ1 = (lat1 * Math.PI) / 180;
+    const φ2 = (lat2 * Math.PI) / 180;
+    const Δφ = ((lat2 - lat1) * Math.PI) / 180;
+    const Δλ = ((lon2 - lon1) * Math.PI) / 180;
+    const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+
+const GPSMapTab: React.FC<{
+    event: Event;
+    checkins: Array<EventCheckin & { user_name?: string; class_id?: string }>;
+    mapContainerRef: React.RefObject<HTMLDivElement>;
+    mapInstanceRef: React.MutableRefObject<L.Map | null>;
+}> = ({ event, checkins, mapContainerRef, mapInstanceRef }) => {
+
+    const gpsCheckins = useMemo(() =>
+        checkins.filter(c => c.checkin_latitude && c.checkin_longitude),
+        [checkins]);
+
+    const suspiciousCount = useMemo(() => gpsCheckins.filter(c => c.gps_suspicious).length, [gpsCheckins]);
+    const outOfRadiusCount = useMemo(() => {
+        if (!event.latitude || !event.longitude) return 0;
+        const radius = event.radius_meters || 100;
+        return gpsCheckins.filter(c => {
+            const dist = haversineDistanceCalc(c.checkin_latitude!, c.checkin_longitude!, event.latitude!, event.longitude!);
+            return dist > radius;
+        }).length;
+    }, [gpsCheckins, event]);
+
+    useEffect(() => {
+        if (!mapContainerRef.current) return;
+
+        // Cleanup previous map
+        if (mapInstanceRef.current) {
+            mapInstanceRef.current.remove();
+            mapInstanceRef.current = null;
+        }
+
+        const centerLat = event.latitude || (gpsCheckins[0]?.checkin_latitude || 10.8231);
+        const centerLng = event.longitude || (gpsCheckins[0]?.checkin_longitude || 106.6297);
+
+        const map = L.map(mapContainerRef.current).setView([centerLat, centerLng], 16);
+        mapInstanceRef.current = map;
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Event location circle
+        if (event.latitude && event.longitude) {
+            const radius = event.radius_meters || 100;
+
+            L.circle([event.latitude, event.longitude], {
+                radius,
+                color: '#4F46E5',
+                fillColor: '#4F46E5',
+                fillOpacity: 0.08,
+                weight: 2,
+                dashArray: '8 4'
+            }).addTo(map);
+
+            // Event center marker
+            L.circleMarker([event.latitude, event.longitude], {
+                radius: 8,
+                color: '#4F46E5',
+                fillColor: '#4F46E5',
+                fillOpacity: 1,
+                weight: 2
+            }).addTo(map).bindPopup(`<b>📍 ${event.name}</b><br/>Bán kính: ${radius}m`);
+        }
+
+        // Check-in markers
+        gpsCheckins.forEach(c => {
+            const lat = c.checkin_latitude!;
+            const lng = c.checkin_longitude!;
+
+            let dist = 0;
+            let isOutside = false;
+            if (event.latitude && event.longitude) {
+                dist = haversineDistanceCalc(lat, lng, event.latitude, event.longitude);
+                isOutside = dist > (event.radius_meters || 100);
+            }
+
+            // Color: green = valid, red = suspicious, orange = outside radius
+            let color = '#10B981'; // green
+            let label = 'Hợp lệ';
+            if (c.gps_suspicious) {
+                color = '#EF4444'; // red
+                label = 'GPS đáng ngờ';
+            } else if (isOutside) {
+                color = '#F59E0B'; // orange
+                label = 'Ngoài khu vực';
+            }
+
+            const marker = L.circleMarker([lat, lng], {
+                radius: 7,
+                color,
+                fillColor: color,
+                fillOpacity: 0.85,
+                weight: 2
+            }).addTo(map);
+
+            const time = c.checkin_time ? new Date(c.checkin_time).toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }) : '—';
+            marker.bindPopup(`
+                <div style="min-width:180px">
+                    <b>${c.user_name || 'N/A'}</b><br/>
+                    <span style="color:${color};font-weight:bold">${label}</span><br/>
+                    ⏰ ${time}<br/>
+                    📏 Cách: <b>${Math.round(dist)}m</b><br/>
+                    🎯 Accuracy: <b>${c.checkin_accuracy ? Math.round(c.checkin_accuracy) + 'm' : 'N/A'}</b>
+                    ${c.class_id ? `<br/>🏫 ${c.class_id}` : ''}
+                </div>
+            `);
+        });
+
+        // Fit bounds if has markers
+        if (gpsCheckins.length > 0) {
+            const bounds = L.latLngBounds(gpsCheckins.map(c => [c.checkin_latitude!, c.checkin_longitude!]));
+            if (event.latitude && event.longitude) {
+                bounds.extend([event.latitude, event.longitude]);
+            }
+            map.fitBounds(bounds, { padding: [40, 40] });
+        }
+
+        return () => {
+            if (mapInstanceRef.current) {
+                mapInstanceRef.current.remove();
+                mapInstanceRef.current = null;
+            }
+        };
+    }, [gpsCheckins, event]);
+
+    if (gpsCheckins.length === 0) {
+        return (
+            <div className="text-center py-16">
+                <div className="w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                    <MapPin className="w-10 h-10 text-slate-300" />
+                </div>
+                <h3 className="text-xl font-bold text-slate-400 mb-2">Chưa có dữ liệu GPS</h3>
+                <p className="text-slate-400 text-sm">Dữ liệu GPS sẽ hiển thị khi học sinh tự điểm danh qua điện thoại.</p>
+            </div>
+        );
+    }
+
+    return (
+        <div className="space-y-4 animate-fade-in">
+            {/* Stats Summary */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-slate-50 rounded-xl p-4 border border-slate-100">
+                    <p className="text-xs font-bold text-slate-400 uppercase">Có GPS</p>
+                    <p className="text-2xl font-black text-slate-900">{gpsCheckins.length}</p>
+                </div>
+                <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-100">
+                    <p className="text-xs font-bold text-emerald-500 uppercase">Hợp lệ</p>
+                    <p className="text-2xl font-black text-emerald-700">{gpsCheckins.length - suspiciousCount - outOfRadiusCount}</p>
+                </div>
+                <div className={`rounded-xl p-4 border ${outOfRadiusCount > 0 ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-100'}`}>
+                    <p className={`text-xs font-bold uppercase ${outOfRadiusCount > 0 ? 'text-amber-500' : 'text-slate-400'}`}>Ngoài khu vực</p>
+                    <p className={`text-2xl font-black ${outOfRadiusCount > 0 ? 'text-amber-700' : 'text-slate-900'}`}>{outOfRadiusCount}</p>
+                </div>
+                <div className={`rounded-xl p-4 border ${suspiciousCount > 0 ? 'bg-red-50 border-red-100' : 'bg-slate-50 border-slate-100'}`}>
+                    <p className={`text-xs font-bold uppercase ${suspiciousCount > 0 ? 'text-red-500' : 'text-slate-400'}`}>Đáng ngờ</p>
+                    <p className={`text-2xl font-black ${suspiciousCount > 0 ? 'text-red-700' : 'text-slate-900'}`}>{suspiciousCount}</p>
+                </div>
+            </div>
+
+            {/* Map Container */}
+            <div className="rounded-2xl overflow-hidden border border-slate-200 shadow-sm" style={{ height: '500px' }}>
+                <div ref={mapContainerRef} style={{ height: '100%', width: '100%' }} />
+            </div>
+
+            {/* Legend */}
+            <div className="flex flex-wrap gap-4 text-xs font-bold text-slate-500 bg-slate-50 rounded-xl p-3 border border-slate-100">
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-indigo-600 inline-block" /> Vị trí sự kiện</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-emerald-500 inline-block" /> Hợp lệ</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-amber-500 inline-block" /> Ngoài bán kính</span>
+                <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded-full bg-red-500 inline-block" /> GPS đáng ngờ</span>
+            </div>
+        </div>
+    );
 };
 
 export default EventReport;

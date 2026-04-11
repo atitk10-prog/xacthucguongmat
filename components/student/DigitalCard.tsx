@@ -11,6 +11,12 @@ export default function DigitalCard() {
     const [isZoomed, setIsZoomed] = useState(false);
     const [isFlipped, setIsFlipped] = useState(false);
     const [roomName, setRoomName] = useState('');
+    const [schoolSettings, setSchoolSettings] = useState({
+        school_name: '',
+        school_logo: '',
+        hotline: '',
+        card_expiry: '',
+    });
 
     useEffect(() => {
         if (user?.student_code || user?.id) {
@@ -32,9 +38,30 @@ export default function DigitalCard() {
             }
         };
         fetchRoom();
+
+        // Fetch school settings from DB
+        const fetchSettings = async () => {
+            try {
+                const res = await dataService.getSchoolSettings();
+                if (res.success && res.data) {
+                    setSchoolSettings({
+                        school_name: res.data.school_name || '',
+                        school_logo: res.data.school_logo || '',
+                        hotline: res.data.hotline || '',
+                        card_expiry: res.data.card_expiry || '',
+                    });
+                }
+            } catch (e) {
+                console.warn('Could not load school settings:', e);
+            }
+        };
+        fetchSettings();
     }, [user]);
 
     if (!user) return <div className="p-4 text-center">Vui lòng đăng nhập lại.</div>;
+
+    const displayName = schoolSettings.school_name || 'EduCheck';
+    const cardTypeLabel = user.role === 'teacher' ? 'Thẻ Giáo Viên' : 'Thẻ Học Sinh';
 
     return (
         <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-8 perspective-1000">
@@ -47,19 +74,24 @@ export default function DigitalCard() {
             >
                 {/* FRONT SIDE */}
                 <div className="absolute inset-0 backface-hidden rounded-2xl shadow-2xl overflow-hidden">
-                    {/* Background & Overlay */}
                     <div className="absolute inset-0 bg-gradient-to-br from-indigo-700 via-blue-800 to-blue-900 text-white p-5 flex flex-col justify-between">
                         <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full blur-2xl -mr-10 -mt-10 pointer-events-none"></div>
 
                         {/* Front Header */}
                         <div className="flex justify-between items-start z-10">
                             <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur-md border border-white/30">
-                                    <div className="font-bold text-lg tracking-tighter">EC</div>
-                                </div>
+                                {schoolSettings.school_logo ? (
+                                    <div className="w-10 h-10 rounded-lg overflow-hidden bg-white/20 border border-white/30 p-0.5">
+                                        <img src={schoolSettings.school_logo} className="w-full h-full object-contain rounded" alt="Logo" />
+                                    </div>
+                                ) : (
+                                    <div className="w-10 h-10 bg-white/20 rounded-lg flex items-center justify-center backdrop-blur-md border border-white/30">
+                                        <div className="font-bold text-lg tracking-tighter">EC</div>
+                                    </div>
+                                )}
                                 <div>
-                                    <h3 className="text-[10px] opacity-80 font-medium tracking-wider uppercase">Thẻ Học Sinh</h3>
-                                    <h1 className="text-lg font-bold">EduCheck</h1>
+                                    <h3 className="text-[10px] opacity-80 font-medium tracking-wider uppercase">{cardTypeLabel}</h3>
+                                    <h1 className="text-lg font-bold">{displayName}</h1>
                                 </div>
                             </div>
                             <CreditCard className="text-white/50" size={24} />
@@ -79,7 +111,7 @@ export default function DigitalCard() {
                                 <p className="text-blue-200 text-sm font-medium">{user.student_code}</p>
                                 <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/20 backdrop-blur-sm border border-white/10 mt-1">
                                     <Layers size={12} className="text-blue-200" />
-                                    <span className="text-xs font-semibold">{user.organization || 'K10 - A1'}</span>
+                                    <span className="text-xs font-semibold">{user.organization || ''}</span>
                                 </div>
                             </div>
                         </div>
@@ -87,8 +119,12 @@ export default function DigitalCard() {
                         {/* Front Footer */}
                         <div className="flex justify-between items-end z-10">
                             <div className="text-[10px] text-blue-200/80">
-                                <span>Giá trị đến: </span>
-                                <span className="font-bold text-white">05/2026</span>
+                                {schoolSettings.card_expiry && (
+                                    <>
+                                        <span>Giá trị đến: </span>
+                                        <span className="font-bold text-white">{schoolSettings.card_expiry}</span>
+                                    </>
+                                )}
                             </div>
                             <div
                                 className="bg-white p-1 rounded-lg shadow-lg cursor-zoom-in active:scale-95 transition-transform"
@@ -135,7 +171,7 @@ export default function DigitalCard() {
                     <div className="text-center">
                         <p className="text-[10px] text-gray-400">
                             Tìm thấy thẻ vui lòng liên hệ văn phòng nhà trường.<br />
-                            Hotline: (024) 1234 5678
+                            {schoolSettings.hotline ? `Hotline: ${schoolSettings.hotline}` : ''}
                         </p>
                     </div>
                 </div>
@@ -157,7 +193,6 @@ export default function DigitalCard() {
                     Mã QR Lớn
                 </button>
             </div>
-
 
             {/* ZOOM MODAL */}
             {isZoomed && (
@@ -204,6 +239,3 @@ export default function DigitalCard() {
         </div>
     );
 }
-
-
-

@@ -102,6 +102,10 @@ export interface EventCheckin {
   photo_url?: string;
   device_info?: string;
   ip_address?: string;
+  checkin_latitude?: number;
+  checkin_longitude?: number;
+  checkin_accuracy?: number;
+  gps_suspicious?: boolean;
   participants?: EventParticipant; // For join queries
 }
 
@@ -270,3 +274,74 @@ export interface PointLog {
   created_at: string;
   user?: User; // Joined user data
 }
+
+// === AI Behavior Analysis Types ===
+
+export interface WeeklyTrend {
+  week: string;         // "01/04 - 07/04"
+  weekStart: string;    // ISO date
+  pointsAdded: number;
+  pointsDeducted: number;
+  lateCount: number;
+  absentCount: number;
+}
+
+export type AlertLevel = 'red' | 'yellow' | 'green' | 'star';
+export type BehaviorTrend = 'improving' | 'declining' | 'stable';
+
+export interface RepeatedViolation {
+  reason: string;
+  count: number;
+}
+
+export interface StudentBehavior {
+  userId: string;
+  name: string;
+  class: string;          // organization
+  totalPoints: number;
+
+  // Weekly trends (last N weeks)
+  weeklyTrend: WeeklyTrend[];
+
+  // Totals for the analysis period
+  totalLate: number;
+  totalAbsent: number;
+  totalDeducted: number;
+  totalAdded: number;
+
+  // Trend analysis
+  trend: BehaviorTrend;
+  trendDetail: string;
+
+  // Alert classification
+  alertLevel: AlertLevel;
+  alertReasons: string[];
+
+  // Repeated violations
+  repeatedViolations: RepeatedViolation[];
+}
+
+export interface ClassSummary {
+  className: string;
+  studentCount: number;
+  avgPoints: number;
+  redCount: number;
+  yellowCount: number;
+  greenCount: number;
+  starCount: number;
+}
+
+export interface StudentBehaviorReport {
+  summary: {
+    totalStudents: number;
+    alertRed: number;
+    alertYellow: number;
+    alertGreen: number;
+    alertStar: number;
+  };
+  students: StudentBehavior[];
+  classSummary: ClassSummary[];
+  generatedAt: string;
+  weeksAnalyzed: number;
+}
+

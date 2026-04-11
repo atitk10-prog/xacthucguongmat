@@ -66,7 +66,7 @@ const VerificationPortal: React.FC<VerificationPortalProps> = ({ certificateId }
                     <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-6">
                         <AlertCircle className="w-10 h-10 text-red-600" />
                     </div>
-                    <h1 className="text-2xl font-black text-slate-900 mb-2">Chứng nhận không lệ lệ</h1>
+                    <h1 className="text-2xl font-black text-slate-900 mb-2">Chứng nhận không hợp lệ</h1>
                     <p className="text-slate-500 mb-8">{error || 'Mã chứng nhận này không tồn tại trong hệ thống của chúng tôi.'}</p>
                     <button
                         onClick={() => window.location.reload()}

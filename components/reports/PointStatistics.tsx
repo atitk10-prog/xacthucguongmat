@@ -6,17 +6,32 @@ import {
     LineChart, Line, AreaChart, Area, PieChart, Pie, Cell,
     XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid, BarChart, Bar
 } from 'recharts';
-import { TrendingUp, TrendingDown, Award, AlertCircle, Calendar, Filter, Users, ArrowRight, Download, Loader2, X, Settings2 } from 'lucide-react';
+import { TrendingUp, TrendingDown, Award, AlertCircle, Calendar, Filter, Users, ArrowRight, Download, Loader2, X, Settings2, ChevronLeft, ChevronRight, BarChart3, Medal, ShieldAlert, ShieldCheck, PartyPopper, Search } from 'lucide-react';
 import { useToast } from '../ui/Toast';
 
 const PointStatistics: React.FC = () => {
-    const [range, setRange] = useState<'day' | 'week' | 'month'>('day');
+    const [range, setRange] = useState<'day' | 'week' | 'month' | 'quarter' | 'year' | 'custom'>('day');
+    const [customDateFrom, setCustomDateFrom] = useState('');
+    const [customDateTo, setCustomDateTo] = useState('');
     const [stats, setStats] = useState<any>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [showDetail, setShowDetail] = useState(false);
     const [detailedLogs, setDetailedLogs] = useState<any[]>([]);
     const [isDetailLoading, setIsDetailLoading] = useState(false);
+    const [detailPage, setDetailPage] = useState(0);
+    const [detailSearch, setDetailSearch] = useState('');
+    const [detailFilter, setDetailFilter] = useState<'all' | 'boarding' | 'event' | 'manual'>('all');
+    const DETAIL_PAGE_SIZE = 20;
     const { success, error: toastError } = useToast();
+
+    // Helper: compute % change
+    const pctChange = (current: number, prev: number): { text: string; positive: boolean } | null => {
+        if (prev === 0 && current === 0) return null;
+        if (prev === 0) return { text: 'Mới', positive: current > 0 };
+        const pct = Math.round(((current - prev) / prev) * 100);
+        if (pct === 0) return { text: '0%', positive: true };
+        return { text: `${pct > 0 ? '↑' : '↓'}${Math.abs(pct)}%`, positive: pct < 0 ? (current < prev) : (current > prev) };
+    };
 
     // Advanced Export Modal State
     const [showExportModal, setShowExportModal] = useState(false);
@@ -30,12 +45,20 @@ const PointStatistics: React.FC = () => {
 
     useEffect(() => {
         loadStats();
-    }, [range]);
+    }, [range, customDateFrom, customDateTo]);
 
     const loadStats = async () => {
         setIsLoading(true);
         try {
-            const result = await dataService.getPointStatistics({ range });
+            const opts: any = { range };
+            if (range === 'custom' && customDateFrom && customDateTo) {
+                opts.startDate = customDateFrom;
+                opts.endDate = customDateTo;
+            } else if (range === 'custom') {
+                setIsLoading(false);
+                return;
+            }
+            const result = await dataService.getPointStatistics(opts);
             if (result.success) {
                 setStats(result.data);
             }
@@ -46,19 +69,54 @@ const PointStatistics: React.FC = () => {
         }
     };
 
+
+
     const loadDetailedLogs = async () => {
         setShowDetail(true);
+        setDetailPage(0);
+        setDetailSearch('');
+        setDetailFilter('all');
         setIsDetailLoading(true);
-        const res = await dataService.getDetailedPointLogs({ range, limit: 100 });
+        const res = await dataService.getDetailedPointLogs({ range, limit: 500 });
         if (res.success) setDetailedLogs(res.data || []);
         setIsDetailLoading(false);
     };
+
+    // Filtered + paginated detail logs
+    const filteredDetailLogs = useMemo(() => {
+        let logs = detailedLogs;
+        // Filter by category
+        if (detailFilter !== 'all') {
+            logs = logs.filter(l => {
+                const t = l.type || '';
+                if (detailFilter === 'boarding') return t.startsWith('boarding_');
+                if (detailFilter === 'event') return t.startsWith('event') || t === 'checkin';
+                if (detailFilter === 'manual') return t.startsWith('manual') || (!t.startsWith('boarding_') && !t.startsWith('event'));
+                return true;
+            });
+        }
+        // Search by name
+        if (detailSearch.trim()) {
+            const q = detailSearch.toLowerCase().trim();
+            logs = logs.filter(l =>
+                (l.user?.full_name || '').toLowerCase().includes(q) ||
+                (l.reason || '').toLowerCase().includes(q) ||
+                (l.user?.organization || '').toLowerCase().includes(q)
+            );
+        }
+        return logs;
+    }, [detailedLogs, detailFilter, detailSearch]);
+
+    const paginatedDetailLogs = useMemo(() => {
+        const start = detailPage * DETAIL_PAGE_SIZE;
+        return filteredDetailLogs.slice(start, start + DETAIL_PAGE_SIZE);
+    }, [filteredDetailLogs, detailPage]);
+    const totalDetailPages = Math.ceil(filteredDetailLogs.length / DETAIL_PAGE_SIZE);
 
     // Advanced Export with filters
     const handleExportDetailed = async () => {
         setIsExporting(true);
         try {
-            // Calculate date range
             let startDate: Date;
             let endDate: Date = new Date();
 
@@ -76,7 +134,6 @@ const PointStatistics: React.FC = () => {
                 endDate = exportEndDate ? new Date(exportEndDate) : new Date();
             }
 
-            // Fetch point logs
             let query = supabase
                 .from('point_logs')
                 .select('id, user_id, points, reason, type, created_at, created_by, event_id')
@@ -84,7 +141,6 @@ const PointStatistics: React.FC = () => {
                 .lte('created_at', endDate.toISOString())
                 .order('created_at', { ascending: false });
 
-            // Filter by point type
             if (exportType === 'positive') {
                 query = query.gt('points', 0);
             } else if (exportType === 'negative') {
@@ -94,7 +150,6 @@ const PointStatistics: React.FC = () => {
             const { data: logs, error } = await query;
             if (error) throw error;
 
-            // Fetch user, event info for mapping
             const userIds = [...new Set((logs || []).map(l => l.user_id))];
             const creatorIds = [...new Set((logs || []).filter(l => l.created_by).map(l => l.created_by))];
             const allUserIds = [...new Set([...userIds, ...creatorIds])];
@@ -115,15 +170,11 @@ const PointStatistics: React.FC = () => {
                 eventMap[e.id] = e.name;
             });
 
-            // Filter by class if needed
             let filteredLogs = logs || [];
             if (exportTarget === 'class' && exportTargetClass) {
                 filteredLogs = filteredLogs.filter(l => userMap[l.user_id]?.org === exportTargetClass);
             }
 
-            // --- DATA PREPARATION FOR 5 SHEETS ---
-
-            // Helper to build standard row
             const buildStandardRow = (log: any) => ({
                 'Ngày giờ': new Date(log.created_at).toLocaleString('vi-VN'),
                 'Họ và tên': userMap[log.user_id]?.name || 'N/A',
@@ -135,16 +186,10 @@ const PointStatistics: React.FC = () => {
                 'Người thực hiện': (log.created_by && userMap[log.created_by]) ? userMap[log.created_by].name : 'Hệ thống (Tự động)'
             });
 
-            // 1. Sheet Tat Ca
             const dataAll = filteredLogs.map(buildStandardRow);
-
-            // 2. Sheet Khen Thuong
             const dataPositive = filteredLogs.filter(l => l.points > 0).map(buildStandardRow);
-
-            // 3. Sheet Vi Pham
             const dataNegative = filteredLogs.filter(l => l.points < 0).map(buildStandardRow);
 
-            // 4. Sheet Theo Lop
             const classStats: Record<string, any> = {};
             filteredLogs.forEach(l => {
                 const org = userMap[l.user_id]?.org || 'Chưa phân lớp';
@@ -156,7 +201,6 @@ const PointStatistics: React.FC = () => {
             });
             const dataByClass = Object.values(classStats).sort((a, b) => b['Hiệu số'] - a['Hiệu số']);
 
-            // 5. Sheet Theo Su Kien
             const eventStats: Record<string, any> = {};
             filteredLogs.forEach(l => {
                 const eventName = eventMap[l.event_id || ''] || (l.type.includes('boarding_') ? 'Nội trú' : 'Ghi nhận thủ công');
@@ -167,8 +211,6 @@ const PointStatistics: React.FC = () => {
             const dataByEvent = Object.values(eventStats).sort((a, b) => b['Tổng điểm phát ra'] - a['Tổng điểm phát ra']);
 
             const wb = utils.book_new();
-
-            // Add sheets in order
             const sheets = [
                 { name: 'TongHop', data: dataAll },
                 { name: 'KhenThuong', data: dataPositive },
@@ -179,7 +221,6 @@ const PointStatistics: React.FC = () => {
 
             sheets.forEach(s => {
                 const ws = utils.json_to_sheet(s.data);
-                // Set default column widths for standard sheets
                 if (s.data.length > 0 && s.data[0]['Họ và tên']) {
                     ws['!cols'] = [{ wch: 20 }, { wch: 25 }, { wch: 10 }, { wch: 40 }, { wch: 10 }, { wch: 12 }, { wch: 25 }, { wch: 20 }];
                 }
@@ -203,7 +244,9 @@ const PointStatistics: React.FC = () => {
         const labels: any = {
             boarding_late: { text: 'Trễ nội trú', icon: <Calendar className="w-3 h-3" />, color: 'text-orange-600 bg-orange-50' },
             boarding_absent: { text: 'Vắng nội trú', icon: <AlertCircle className="w-3 h-3" />, color: 'text-red-600 bg-red-50' },
+            boarding_on_time: { text: 'Đúng giờ NTrú', icon: <Award className="w-3 h-3" />, color: 'text-emerald-600 bg-emerald-50' },
             event_absence: { text: 'Vắng sự kiện', icon: <Filter className="w-3 h-3" />, color: 'text-amber-600 bg-amber-50' },
+            event: { text: 'Sự kiện', icon: <Users className="w-3 h-3" />, color: 'text-blue-600 bg-blue-50' },
             manual_add: { text: 'Cộng thủ công', icon: <Award className="w-3 h-3" />, color: 'text-emerald-600 bg-emerald-50' },
             manual_deduct: { text: 'Trừ thủ công', icon: <TrendingDown className="w-3 h-3" />, color: 'text-rose-600 bg-rose-50' },
             checkin: { text: 'Tham gia', icon: <Users className="w-3 h-3" />, color: 'text-blue-600 bg-blue-50' }
@@ -220,6 +263,40 @@ const PointStatistics: React.FC = () => {
         ].filter(d => d.value > 0);
     }, [stats]);
 
+    // AI Insights - enhanced
+    const aiInsight = useMemo(() => {
+        if (!stats) return '';
+        const { totalAdded, totalDeducted, byCategory, logsCount, topAdded, topDeducted } = stats;
+
+        const parts: string[] = [];
+
+        // Overall trend
+        if (totalDeducted > totalAdded) {
+            parts.push(`Điểm trừ (${totalDeducted}) vượt điểm cộng (${totalAdded}). Cần kiểm tra các vi phạm.`);
+        } else if (totalAdded > 0) {
+            const ratio = totalDeducted > 0 ? (totalAdded / totalDeducted).toFixed(1) : '∞';
+            parts.push(`Hệ thống tích cực: Tỷ lệ cộng/trừ = ${ratio}x.`);
+        }
+
+        // Dominant category
+        const cats = Object.entries(byCategory || {}) as [string, number][];
+        const dominant = cats.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0];
+        if (dominant) {
+            const labels: Record<string, string> = { boarding: 'Nội trú', event: 'Sự kiện', manual: 'Thủ công' };
+            parts.push(`Nguồn biến động lớn nhất: ${labels[dominant[0]] || dominant[0]} (${dominant[1] > 0 ? '+' : ''}${dominant[1]} điểm).`);
+        }
+
+        // Top violator highlight
+        if (topDeducted?.length > 0) {
+            parts.push(`HS bị trừ nhiều nhất: ${topDeducted[0].name} (-${topDeducted[0].points}đ).`);
+        }
+
+        // Volume
+        parts.push(`Tổng ${logsCount} lượt ghi nhận trong giai đoạn.`);
+
+        return parts.join(' ');
+    }, [stats]);
+
     if (isLoading) {
         return (
             <div className="flex items-center justify-center h-96">
@@ -234,27 +311,43 @@ const PointStatistics: React.FC = () => {
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
                 <div>
                     <h2 className="text-3xl font-black text-slate-900 flex items-center gap-3">
-                        <span className="bg-amber-100 p-2 rounded-xl text-amber-600">📈</span>
+                        <span className="bg-amber-100 p-2 rounded-xl text-amber-600"><BarChart3 className="w-6 h-6" /></span>
                         Thống kê Điểm số
                     </h2>
                     <p className="text-slate-500 font-medium mt-1 ml-14">Phân tích biến động và hành vi</p>
                 </div>
 
                 <div className="flex gap-2 items-center flex-wrap w-full md:w-auto">
-                    <div className="flex bg-slate-100 p-1 rounded-xl flex-1 md:flex-none">
-                        {(['day', 'week', 'month'] as const).map((r) => (
+                    <div className="flex bg-slate-100 p-1 rounded-xl flex-1 md:flex-none flex-wrap">
+                        {([
+                            { key: 'day', label: 'Hôm nay' },
+                            { key: 'week', label: '7 ngày' },
+                            { key: 'month', label: '30 ngày' },
+                            { key: 'quarter', label: '3 tháng' },
+                            { key: 'year', label: '1 năm' },
+                            { key: 'custom', label: 'Tùy chọn' },
+                        ] as const).map((r) => (
                             <button
-                                key={r}
-                                onClick={() => setRange(r)}
-                                className={`flex-1 md:flex-none px-4 py-2 rounded-lg font-bold text-sm transition-all ${range === r
+                                key={r.key}
+                                onClick={() => setRange(r.key)}
+                                className={`flex-1 md:flex-none px-3 py-2 rounded-lg font-bold text-sm transition-all ${range === r.key
                                     ? 'bg-white text-indigo-600 shadow-sm'
                                     : 'text-slate-500 hover:text-slate-700'
                                     }`}
                             >
-                                {r === 'day' ? 'Hôm nay' : r === 'week' ? '7 ngày' : '30 ngày'}
+                                {r.label}
                             </button>
                         ))}
                     </div>
+                    {range === 'custom' && (
+                        <div className="flex items-center gap-2">
+                            <input type="date" value={customDateFrom} onChange={e => setCustomDateFrom(e.target.value)}
+                                className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-200" />
+                            <span className="text-slate-400 text-xs">→</span>
+                            <input type="date" value={customDateTo} onChange={e => setCustomDateTo(e.target.value)}
+                                className="bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-200" />
+                        </div>
+                    )}
                     <button
                         onClick={() => setShowExportModal(true)}
                         className="px-4 py-2 bg-purple-600 text-white rounded-xl font-bold hover:bg-purple-700 flex items-center gap-2 shadow-lg shadow-purple-200 text-sm"
@@ -264,47 +357,94 @@ const PointStatistics: React.FC = () => {
                     </button>
                 </div>
             </div>
+            {/* AI Insights Bar */}
+            <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-5 rounded-2xl text-white flex flex-col md:flex-row gap-4 items-start md:items-center shadow-lg">
+                <div className="w-10 h-10 bg-white/10 rounded-xl flex items-center justify-center flex-shrink-0">
+                    <TrendingUp className="w-5 h-5 text-indigo-400" />
+                </div>
+                <p className="flex-1 text-slate-300 text-sm leading-relaxed">
+                    {aiInsight || 'Chưa có đủ dữ liệu để phân tích.'}
+                </p>
+                <button
+                    onClick={loadDetailedLogs}
+                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold text-sm transition-all flex items-center gap-2 flex-shrink-0"
+                >
+                    Chi tiết
+                    <ArrowRight className="w-4 h-4" />
+                </button>
+            </div>
+
 
             {/* Overview Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
-                        <TrendingUp className="w-16 h-16 text-emerald-500" />
-                    </div>
-                    <p className="text-slate-500 font-bold text-xs uppercase tracking-wider mb-1">Tổng điểm cộng</p>
-                    <p className="text-4xl font-black text-emerald-600">+{stats?.totalAdded || 0}</p>
-                    <div className="mt-4 flex items-center gap-2 text-xs font-bold text-slate-400">
-                        <Award className="w-4 h-4" />
-                        Tích lũy từ khen thưởng & sự kiện
-                    </div>
-                </div>
+            {(() => {
+                const addedChange = stats ? pctChange(stats.totalAdded, stats.prevAdded) : null;
+                const deductedChange = stats ? pctChange(stats.totalDeducted, stats.prevDeducted) : null;
+                const txnChange = stats ? pctChange(stats.logsCount, stats.prevLogsCount) : null;
+                const rangeLabel = range === 'day' ? 'hôm qua' : range === 'week' ? '7 ngày trước' : 'tháng trước';
 
-                <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
-                        <TrendingDown className="w-16 h-16 text-red-500" />
-                    </div>
-                    <p className="text-slate-500 font-bold text-xs uppercase tracking-wider mb-1">Tổng điểm trừ</p>
-                    <p className="text-4xl font-black text-red-500">-{stats?.totalDeducted || 0}</p>
-                    <div className="mt-4 flex items-center gap-2 text-xs font-bold text-slate-400">
-                        <AlertCircle className="w-4 h-4" />
-                        Do vi phạm nội quy & vắng mặt
-                    </div>
-                </div>
+                return (
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingUp className="w-16 h-16 text-emerald-500" />
+                            </div>
+                            <div className="flex items-center gap-2 mb-1">
+                                <p className="text-slate-500 font-bold text-xs uppercase tracking-wider">Tổng điểm cộng</p>
+                                {addedChange && (
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${addedChange.positive ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-600'}`}>
+                                        {addedChange.text}
+                                    </span>
+                                )}
+                            </div>
+                            <p className="text-4xl font-black text-emerald-600">+{stats?.totalAdded || 0}</p>
+                            <div className="mt-4 flex items-center gap-2 text-xs font-bold text-slate-400">
+                                <Award className="w-4 h-4" />
+                                so với {rangeLabel}: {stats?.prevAdded || 0}
+                            </div>
+                        </div>
 
-                <div className="bg-indigo-600 p-6 rounded-3xl shadow-lg shadow-indigo-200 relative overflow-hidden group">
-                    <div className="absolute top-0 right-0 p-4 opacity-20 text-white group-hover:scale-110 transition-transform">
-                        <Users className="w-16 h-16" />
+                        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:scale-110 transition-transform">
+                                <TrendingDown className="w-16 h-16 text-red-500" />
+                            </div>
+                            <div className="flex items-center gap-2 mb-1">
+                                <p className="text-slate-500 font-bold text-xs uppercase tracking-wider">Tổng điểm trừ</p>
+                                {deductedChange && (
+                                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${!deductedChange.positive ? 'bg-red-100 text-red-600' : 'bg-emerald-100 text-emerald-700'}`}>
+                                        {deductedChange.text}
+                                    </span>
+                                )}
+                            </div>
+                            <p className="text-4xl font-black text-red-500">-{stats?.totalDeducted || 0}</p>
+                            <div className="mt-4 flex items-center gap-2 text-xs font-bold text-slate-400">
+                                <AlertCircle className="w-4 h-4" />
+                                so với {rangeLabel}: {stats?.prevDeducted || 0}
+                            </div>
+                        </div>
+
+                        <div className="bg-indigo-600 p-6 rounded-3xl shadow-lg shadow-indigo-200 relative overflow-hidden group">
+                            <div className="absolute top-0 right-0 p-4 opacity-20 text-white group-hover:scale-110 transition-transform">
+                                <Users className="w-16 h-16" />
+                            </div>
+                            <div className="flex items-center gap-2 mb-1">
+                                <p className="text-indigo-100 font-bold text-xs uppercase tracking-wider">Cân bằng hệ thống</p>
+                                {txnChange && (
+                                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-white/20 text-white">
+                                        {txnChange.text} lượt
+                                    </span>
+                                )}
+                            </div>
+                            <p className="text-4xl font-black text-white">
+                                {(stats?.totalAdded || 0) - (stats?.totalDeducted || 0) > 0 ? '+' : ''}
+                                {(stats?.totalAdded || 0) - (stats?.totalDeducted || 0)}
+                            </p>
+                            <div className="mt-4 flex items-center gap-2 text-xs font-bold text-indigo-200">
+                                {stats?.logsCount || 0} lượt ghi nhận (trước: {stats?.prevLogsCount || 0})
+                            </div>
+                        </div>
                     </div>
-                    <p className="text-indigo-100 font-bold text-xs uppercase tracking-wider mb-1">Cân bằng hệ thống</p>
-                    <p className="text-4xl font-black text-white">
-                        {(stats?.totalAdded || 0) - (stats?.totalDeducted || 0) > 0 ? '+' : ''}
-                        {(stats?.totalAdded || 0) - (stats?.totalDeducted || 0)}
-                    </p>
-                    <div className="mt-4 flex items-center gap-2 text-xs font-bold text-indigo-200">
-                        Hiệu số biến động trong giai đoạn
-                    </div>
-                </div>
-            </div>
+                );
+            })()}
 
             {/* Charts Grid */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -350,9 +490,9 @@ const PointStatistics: React.FC = () => {
                         <ResponsiveContainer width="100%" height="100%">
                             <BarChart
                                 data={[
-                                    { name: 'Nội trú', points: stats?.byCategory?.boarding || 0 },
-                                    { name: 'Sự kiện', points: stats?.byCategory?.event || 0 },
-                                    { name: 'Thủ công', points: stats?.byCategory?.manual || 0 }
+                                    { name: 'Nội trú', 'Điểm': stats?.byCategory?.boarding || 0 },
+                                    { name: 'Sự kiện', 'Điểm': stats?.byCategory?.event || 0 },
+                                    { name: 'Thủ công', 'Điểm': stats?.byCategory?.manual || 0 }
                                 ]}
                                 margin={{ top: 20, right: 30, left: 10, bottom: 5 }}
                             >
@@ -363,14 +503,14 @@ const PointStatistics: React.FC = () => {
                                     cursor={{ fill: '#f8fafc' }}
                                     contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
                                 />
-                                <Bar dataKey="points" radius={[8, 8, 0, 0]}>
+                                <Bar dataKey="Điểm" radius={[8, 8, 0, 0]}>
                                     {
                                         [
-                                            { name: 'Nội trú', points: stats?.byCategory?.boarding || 0 },
-                                            { name: 'Sự kiện', points: stats?.byCategory?.event || 0 },
-                                            { name: 'Thủ công', points: stats?.byCategory?.manual || 0 }
+                                            { name: 'Nội trú', d: stats?.byCategory?.boarding || 0 },
+                                            { name: 'Sự kiện', d: stats?.byCategory?.event || 0 },
+                                            { name: 'Thủ công', d: stats?.byCategory?.manual || 0 }
                                         ].map((entry, index) => (
-                                            <Cell key={`cell-${index}`} fill={entry.points >= 0 ? '#10b981' : '#ef4444'} />
+                                            <Cell key={`cell-${index}`} fill={entry.d >= 0 ? '#10b981' : '#ef4444'} />
                                         ))
                                     }
                                 </Bar>
@@ -380,47 +520,164 @@ const PointStatistics: React.FC = () => {
                 </div>
             </div>
 
-            {/* AI Insights (Mockup based on data) */}
-            <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-8 rounded-3xl text-white relative overflow-hidden shadow-xl">
-                <div className="absolute -right-10 -bottom-10 opacity-20 scale-150 rotate-12">
-                    <TrendingUp className="w-64 h-64 text-indigo-400" />
+            {/* NEW: Daily Trend Chart */}
+            {stats?.dailyTrend && stats.dailyTrend.length > 1 && (
+                <div className="bg-white p-8 rounded-3xl shadow-sm border border-slate-100">
+                    <h3 className="text-lg font-black text-slate-800 mb-6 flex items-center gap-2">
+                        <TrendingUp className="w-5 h-5 text-blue-500" />
+                        Xu hướng theo ngày
+                        <span className="bg-blue-100 text-blue-600 px-2 py-0.5 rounded-full text-xs font-bold">{stats.dailyTrend.length} ngày</span>
+                    </h3>
+                    <div className="h-72 w-full">
+                        <ResponsiveContainer width="100%" height="100%">
+                            <AreaChart data={stats.dailyTrend} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
+                                <defs>
+                                    <linearGradient id="colorAdded" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                                        <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                                    </linearGradient>
+                                    <linearGradient id="colorDeducted" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
+                                        <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                                    </linearGradient>
+                                </defs>
+                                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                                <Tooltip
+                                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                                />
+                                <Legend />
+                                <Area type="monotone" dataKey="added" name="Điểm cộng" stroke="#10b981" strokeWidth={2.5} fillOpacity={1} fill="url(#colorAdded)" />
+                                <Area type="monotone" dataKey="deducted" name="Điểm trừ" stroke="#ef4444" strokeWidth={2.5} fillOpacity={1} fill="url(#colorDeducted)" />
+                            </AreaChart>
+                        </ResponsiveContainer>
+                    </div>
                 </div>
-                <div className="relative z-10 flex flex-col md:flex-row gap-6 items-center">
-                    <div className="w-16 h-16 bg-white/10 rounded-2xl flex items-center justify-center backdrop-blur-md border border-white/10">
-                        <TrendingUp className="w-8 h-8 text-indigo-400" />
+            )}
+
+            {/* Top 5 Tables — Always show both for symmetry */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Top 5 Thành tích */}
+                <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div className="p-5 border-b border-slate-100 flex items-center gap-3">
+                        <div className="w-10 h-10 bg-emerald-100 rounded-xl flex items-center justify-center">
+                            <TrendingUp className="w-5 h-5 text-emerald-600" />
+                        </div>
+                        <div>
+                            <h3 className="font-black text-slate-800 text-sm">Top 5 Thành tích</h3>
+                            <p className="text-xs text-slate-400">Học sinh được cộng nhiều nhất</p>
+                        </div>
                     </div>
-                    <div>
-                        <h4 className="text-xl font-bold mb-2">Nhận định hệ thống (AI Insights)</h4>
-                        <p className="text-slate-400 leading-relaxed max-w-2xl">
-                            {stats?.totalDeducted > stats?.totalAdded
-                                ? "Tỷ lệ vi phạm (điểm trừ) đang cao hơn điểm cộng khuyến khích. Cần kiểm tra lại các buổi điểm danh nội trú vì đây là nguồn trừ điểm chính."
-                                : "Hệ thống đang hoạt động tích cực với lượng điểm cộng từ sự kiện vượt trội. Đây là dấu hiệu của sự tham gia nhiệt tình của học sinh."
-                            }
-                        </p>
+                    {stats?.topAdded?.length > 0 ? (
+                        <div className="divide-y divide-slate-50">
+                            {stats.topAdded.map((u: any, i: number) => (
+                                <div key={u.userId} className="flex items-center gap-4 px-5 py-3 hover:bg-emerald-50/50 transition-colors">
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm flex-shrink-0 ${i === 0 ? 'bg-amber-100 text-amber-700' : i === 1 ? 'bg-slate-200 text-slate-600' : i === 2 ? 'bg-orange-100 text-orange-600' : 'bg-slate-100 text-slate-500'}`}>
+                                        {i + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-bold text-slate-900 text-sm truncate">{u.name}</p>
+                                        <p className="text-[11px] text-slate-400">{u.org}</p>
+                                    </div>
+                                    <span className="font-black text-emerald-600 text-lg">+{u.points}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center py-10 text-center">
+                            <div className="w-14 h-14 bg-emerald-50 rounded-full flex items-center justify-center mb-3">
+                                <Award className="w-7 h-7 text-emerald-200" />
+                            </div>
+                            <p className="text-sm font-bold text-slate-300">Chưa có dữ liệu</p>
+                            <p className="text-xs text-slate-300 mt-1">Chưa ghi nhận thành tích trong giai đoạn này</p>
+                        </div>
+                    )}
+                </div>
+
+                {/* Top 5 Vi phạm */}
+                <div className="bg-white rounded-3xl shadow-sm border border-slate-100 overflow-hidden">
+                    <div className="p-5 border-b border-slate-100 flex items-center gap-3">
+                        <div className="w-10 h-10 bg-red-100 rounded-xl flex items-center justify-center">
+                            <TrendingDown className="w-5 h-5 text-red-600" />
+                        </div>
+                        <div>
+                            <h3 className="font-black text-slate-800 text-sm">Top 5 Vi phạm</h3>
+                            <p className="text-xs text-slate-400">Học sinh bị trừ nhiều nhất</p>
+                        </div>
                     </div>
-                    <button
-                        onClick={loadDetailedLogs}
-                        className="md:ml-auto px-6 py-3 bg-indigo-600 hover:bg-indigo-500 rounded-xl font-bold transition-all flex items-center gap-2 group"
-                    >
-                        Chi tiết báo cáo
-                        <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
-                    </button>
+                    {stats?.topDeducted?.length > 0 ? (
+                        <div className="divide-y divide-slate-50">
+                            {stats.topDeducted.map((u: any, i: number) => (
+                                <div key={u.userId} className="flex items-center gap-4 px-5 py-3 hover:bg-red-50/50 transition-colors">
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-black text-sm flex-shrink-0 ${i === 0 ? 'bg-red-100 text-red-700' : i === 1 ? 'bg-red-50 text-red-500' : 'bg-slate-100 text-slate-500'}`}>
+                                        {i + 1}
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                        <p className="font-bold text-slate-900 text-sm truncate">{u.name}</p>
+                                        <p className="text-[11px] text-slate-400">{u.org}</p>
+                                    </div>
+                                    <span className="font-black text-red-500 text-lg">-{u.points}</span>
+                                </div>
+                            ))}
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center py-10 text-center">
+                            <div className="w-14 h-14 bg-emerald-50 rounded-full flex items-center justify-center mb-3">
+                                <Award className="w-7 h-7 text-emerald-200" />
+                            </div>
+                            <p className="text-sm font-bold text-slate-300">Không có vi phạm</p>
+                            <p className="text-xs text-slate-300 mt-1">Tuyệt vời! Chưa có HS nào bị trừ điểm</p>
+                        </div>
+                    )}
                 </div>
             </div>
 
-            {/* Detail Modal */}
+            {/* Detail Modal — with Pagination */}
             {showDetail && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fade-in">
                     <div className="bg-white rounded-3xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden scale-in">
                         <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-slate-50/50">
                             <div>
                                 <h3 className="text-xl font-black text-slate-800">Chi tiết biến động điểm</h3>
-                                <p className="text-slate-500 text-sm font-medium">Báo cáo các giao dịch trong {range === 'day' ? 'hôm nay' : range === 'week' ? '7 ngày qua' : 'tháng này'}</p>
+                                <p className="text-slate-500 text-sm font-medium">Chi tiết biến động điểm {range === 'day' ? 'hôm nay' : range === 'week' ? '7 ngày qua' : 'tháng này'}</p>
                             </div>
                             <button onClick={() => setShowDetail(false)} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
-                                <Filter className="w-6 h-6 rotate-45 text-slate-400" />
+                                <X className="w-6 h-6 text-slate-400" />
                             </button>
                         </div>
+
+                        {/* Search + Filter toolbar */}
+                        {!isDetailLoading && detailedLogs.length > 0 && (
+                            <div className="px-6 py-3 border-b border-slate-100 flex flex-col md:flex-row gap-3 bg-white">
+                                <div className="relative flex-1">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                                    <input
+                                        type="text"
+                                        value={detailSearch}
+                                        onChange={e => { setDetailSearch(e.target.value); setDetailPage(0); }}
+                                        placeholder="Tìm theo tên, lớp, nội dung..."
+                                        className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-200 focus:border-indigo-400 transition-all"
+                                    />
+                                </div>
+                                <div className="flex bg-slate-100 p-1 rounded-xl flex-shrink-0">
+                                    {([
+                                        { key: 'all', label: 'Tất cả' },
+                                        { key: 'boarding', label: 'Nội trú' },
+                                        { key: 'event', label: 'Sự kiện' },
+                                        { key: 'manual', label: 'Thủ công' }
+                                    ] as const).map(f => (
+                                        <button
+                                            key={f.key}
+                                            onClick={() => { setDetailFilter(f.key); setDetailPage(0); }}
+                                            className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${detailFilter === f.key ? 'bg-white text-indigo-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                                        >
+                                            {f.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
 
                         <div className="flex-1 overflow-y-auto p-6">
                             {isDetailLoading ? (
@@ -438,7 +695,7 @@ const PointStatistics: React.FC = () => {
                                 </div>
                             ) : (
                                 <div className="space-y-3">
-                                    {detailedLogs.map((log) => {
+                                    {paginatedDetailLogs.map((log) => {
                                         const typeInfo = getTypeLabel(log.type);
                                         return (
                                             <div key={log.id} className="group p-4 bg-white border border-slate-100 rounded-2xl hover:border-indigo-200 hover:shadow-md transition-all flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -482,7 +739,33 @@ const PointStatistics: React.FC = () => {
                         </div>
 
                         <div className="p-6 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
-                            <p className="text-xs text-slate-400">Hiển thị tối đa 100 giao dịch gần nhất</p>
+                            {/* Pagination controls */}
+                            <div className="flex items-center gap-2">
+                                {totalDetailPages > 1 && (
+                                    <>
+                                        <button
+                                            onClick={() => setDetailPage(p => Math.max(0, p - 1))}
+                                            disabled={detailPage === 0}
+                                            className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                        >
+                                            <ChevronLeft className="w-4 h-4" />
+                                        </button>
+                                        <span className="text-xs text-slate-500 px-2">
+                                            Trang <span className="font-bold text-slate-700">{detailPage + 1}</span> / {totalDetailPages} • {filteredDetailLogs.length} lượt
+                                        </span>
+                                        <button
+                                            onClick={() => setDetailPage(p => Math.min(totalDetailPages - 1, p + 1))}
+                                            disabled={detailPage >= totalDetailPages - 1}
+                                            className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-indigo-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+                                        >
+                                            <ChevronRight className="w-4 h-4" />
+                                        </button>
+                                    </>
+                                )}
+                                {totalDetailPages <= 1 && (
+                                    <p className="text-xs text-slate-400">{filteredDetailLogs.length} lượt ghi nhận</p>
+                                )}
+                            </div>
                             <button onClick={() => setShowDetail(false)} className="px-6 py-2 bg-slate-800 text-white rounded-xl font-bold hover:bg-slate-700 transition-all">
                                 Đóng
                             </button>
