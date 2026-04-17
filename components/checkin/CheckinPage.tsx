@@ -170,11 +170,31 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
     const [checkedInUserIds, setCheckedInUserIds] = useState<Set<string>>(new Set());
     const [searchTerm, setSearchTerm] = useState('');
     const [isLowLight, setIsLowLight] = useState(false);
+
+    // GPS: Silently capture device location for GPS map in reports
+    const [deviceLocation, setDeviceLocation] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
     // Ref to track if success overlay is active (to silence redundant alerts)
     const successActiveRef = useRef(false);
     useEffect(() => {
         successActiveRef.current = showSuccessOverlay;
     }, [showSuccessOverlay]);
+
+    // Silently fetch device GPS on mount (non-blocking)
+    // Used to populate GPS map in EventReport even when GV is the one scanning QR
+    useEffect(() => {
+        if (!navigator.geolocation) return;
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setDeviceLocation({
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude,
+                    accuracy: pos.coords.accuracy
+                });
+            },
+            () => { /* GPS denied or unavailable - silently ignore */ },
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+        );
+    }, []);
 
     // Unified function to add check-in to list without duplicates
     const addUniqueCheckin = (checkin: any) => {
@@ -1032,7 +1052,11 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
                 user_id: participant?.user_id, // Link to system users
                 face_confidence: faceConfidence,
                 face_verified: faceVerified,
-                checkin_mode: event.checkin_mode || 'student'
+                checkin_mode: event.checkin_mode || 'student',
+                // GPS: use device location (GV's check-in station) so map in EventReport is populated
+                checkin_latitude: deviceLocation?.lat,
+                checkin_longitude: deviceLocation?.lng,
+                checkin_accuracy: deviceLocation?.accuracy
             });
 
             if (checkinResult.success && checkinResult.data) {

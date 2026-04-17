@@ -21,6 +21,9 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
     const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
     const [distance, setDistance] = useState<number | null>(null);
 
+    // Silent GPS: always collect for map in reports, regardless of event GPS config
+    const [deviceGPS, setDeviceGPS] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
+
     const videoRef = useRef<HTMLVideoElement>(null);
     const [stream, setStream] = useState<MediaStream | null>(null);
     const [modelsReady, setModelsReady] = useState(false);
@@ -52,6 +55,23 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
     // 2. Load Face Models
     useEffect(() => {
         faceService.loadModels().then(() => setModelsReady(true));
+    }, []);
+
+    // 3. Silently collect GPS on mount for map in EventReport
+    // This is separate from GPS validation - always runs regardless of event config
+    useEffect(() => {
+        if (!navigator.geolocation) return;
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                setDeviceGPS({
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude,
+                    accuracy: pos.coords.accuracy
+                });
+            },
+            () => { /* GPS denied - silently ignore, bản đồ sẽ không hiển thị điểm này */ },
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+        );
     }, []);
 
     // 3. Check Authentication
@@ -163,9 +183,12 @@ const SelfCheckinPage: React.FC<SelfCheckinPageProps> = ({ eventId, currentUser,
                         face_verified: true,
                         checkin_mode: event.checkin_mode || 'student',
                         device_info: navigator.userAgent,
-                        checkin_latitude: location?.lat,
-                        checkin_longitude: location?.lng,
-                        checkin_accuracy: location ? (window as any).__lastGpsAccuracy : undefined
+                        // GPS: dùng location từ xác thực (nếu có) hoặc deviceGPS ngầm
+                        checkin_latitude: location?.lat ?? deviceGPS?.lat,
+                        checkin_longitude: location?.lng ?? deviceGPS?.lng,
+                        checkin_accuracy: location
+                            ? (window as any).__lastGpsAccuracy
+                            : deviceGPS?.accuracy
                     });
 
                     if (result.success) {
