@@ -125,8 +125,12 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
         name: '', type: 'học_tập' as EventType, start_time: '', end_time: '', location: '',
         target_audience: 'all', late_threshold_mins: 15, points_on_time: 10, points_late: -5,
         points_absent: -10, checkin_method: 'qr' as CheckinMethod, face_threshold: 40, checkin_mode: 'student' as 'student' | 'event',
-        enable_popup: true
+        enable_popup: true,
+        latitude: null as number | null,
+        longitude: null as number | null,
+        radius_meters: 100
     });
+    const [gpsLoading, setGpsLoading] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -195,7 +199,10 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                 checkin_method: editingEvent.checkin_method || (editingEvent.require_face ? 'both' : 'qr'),
                 face_threshold: editingEvent.face_threshold,
                 checkin_mode: editingEvent.checkin_mode || 'student',
-                enable_popup: editingEvent.enable_popup !== undefined ? editingEvent.enable_popup : true
+                enable_popup: editingEvent.enable_popup !== undefined ? editingEvent.enable_popup : true,
+                latitude: (editingEvent as any).latitude || null,
+                longitude: (editingEvent as any).longitude || null,
+                radius_meters: (editingEvent as any).radius_meters || 100
             });
             if (editingEvent.participants) {
                 setSelectedExistingUsers(editingEvent.participants);
@@ -1058,6 +1065,98 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                         <div><p className="font-bold text-slate-900">Popup thành công</p><p className="text-sm text-slate-500">Hiển thị màn hình chúc mừng khi check-in</p></div>
                                         <input type="checkbox" checked={formData.enable_popup} onChange={(e) => setFormData({ ...formData, enable_popup: e.target.checked })} className="w-6 h-6 rounded accent-emerald-600" />
                                     </label>
+                                </div>
+
+                                {/* GPS Location Configuration */}
+                                <div className="mt-6 p-5 bg-blue-50/50 rounded-3xl border border-blue-100">
+                                    <h3 className="text-sm font-black text-slate-700 mb-3 flex items-center gap-2">
+                                        <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
+                                        Xác thực vị trí GPS
+                                    </h3>
+                                    <p className="text-xs text-slate-500 mb-4">Khi bật, học sinh phải ở trong bán kính cho phép mới được điểm danh. GPS được lấy từ trình duyệt của thiết bị (máy tính/điện thoại).</p>
+
+                                    <div className="flex flex-wrap gap-3 mb-4">
+                                        <button
+                                            type="button"
+                                            disabled={gpsLoading}
+                                            onClick={() => {
+                                                if (!navigator.geolocation) {
+                                                    setImportNotification({ type: 'error', message: 'Trình duyệt không hỗ trợ GPS' });
+                                                    setTimeout(() => setImportNotification(null), 3000);
+                                                    return;
+                                                }
+                                                setGpsLoading(true);
+                                                navigator.geolocation.getCurrentPosition(
+                                                    (pos) => {
+                                                        setFormData(prev => ({
+                                                            ...prev,
+                                                            latitude: Math.round(pos.coords.latitude * 1000000) / 1000000,
+                                                            longitude: Math.round(pos.coords.longitude * 1000000) / 1000000
+                                                        }));
+                                                        setGpsLoading(false);
+                                                        setImportNotification({ type: 'success', message: `Đã lấy tọa độ: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}` });
+                                                        setTimeout(() => setImportNotification(null), 4000);
+                                                    },
+                                                    (err) => {
+                                                        setGpsLoading(false);
+                                                        setImportNotification({ type: 'error', message: err.code === 1 ? 'Bạn đã từ chối quyền truy cập vị trí. Vui lòng cho phép trong cài đặt trình duyệt.' : 'Không thể lấy vị trí GPS. Hãy thử lại.' });
+                                                        setTimeout(() => setImportNotification(null), 5000);
+                                                    },
+                                                    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                                                );
+                                            }}
+                                            className={`px-4 py-3 rounded-2xl font-bold text-sm flex items-center gap-2 transition-all ${gpsLoading ? 'bg-blue-200 text-blue-400 cursor-wait' : 'bg-blue-600 text-white hover:bg-blue-700 shadow-lg shadow-blue-200'}`}
+                                        >
+                                            {gpsLoading ? (
+                                                <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Đang lấy vị trí...</>
+                                            ) : (
+                                                <><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg> Lấy vị trí hiện tại</>
+                                            )}
+                                        </button>
+
+                                        {formData.latitude && (
+                                            <button
+                                                type="button"
+                                                onClick={() => setFormData(prev => ({ ...prev, latitude: null, longitude: null }))}
+                                                className="px-4 py-3 rounded-2xl font-bold text-sm bg-red-100 text-red-600 hover:bg-red-200 transition-all flex items-center gap-2"
+                                            >
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                                Xóa vị trí
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {formData.latitude && formData.longitude ? (
+                                        <div className="space-y-3">
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div>
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Vĩ độ (Latitude)</label>
+                                                    <input type="number" step="0.000001" value={formData.latitude} onChange={(e) => setFormData({ ...formData, latitude: parseFloat(e.target.value) || null })} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm" />
+                                                </div>
+                                                <div>
+                                                    <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Kinh độ (Longitude)</label>
+                                                    <input type="number" step="0.000001" value={formData.longitude} onChange={(e) => setFormData({ ...formData, longitude: parseFloat(e.target.value) || null })} className="w-full px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm" />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label className="block text-[10px] font-black text-slate-400 uppercase mb-1">Bán kính cho phép (mét)</label>
+                                                <div className="flex items-center gap-3">
+                                                    <input type="range" min="20" max="500" step="10" value={formData.radius_meters} onChange={(e) => setFormData({ ...formData, radius_meters: parseInt(e.target.value) })} className="flex-1 accent-blue-600" />
+                                                    <span className="font-black text-blue-600 text-lg min-w-[60px] text-right">{formData.radius_meters}m</span>
+                                                </div>
+                                                <p className="text-[10px] text-slate-400 mt-1">HS phải ở trong vòng {formData.radius_meters}m tính từ tọa độ sự kiện mới được điểm danh.</p>
+                                            </div>
+                                            <div className="p-3 bg-emerald-50 rounded-xl flex items-center gap-2">
+                                                <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                                <span className="text-xs text-emerald-700 font-medium">Đã thiết lập GPS: {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)} — Bán kính: {formData.radius_meters}m</span>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="p-3 bg-amber-50 rounded-xl flex items-center gap-2">
+                                            <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
+                                            <span className="text-xs text-amber-700 font-medium">Chưa thiết lập GPS — HS có thể điểm danh từ bất cứ đâu.</span>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         </>
