@@ -277,29 +277,45 @@ const EventList: React.FC<EventListProps> = ({ onSelectEvent, onCreateEvent, onE
     const saveParticipants = async () => {
         if (!selectedEventForParticipants) return;
         try {
-            // Find selected users from allUsers
-            const selectedUserObjects = allUsers.filter(u => selectedParticipants.includes(u.id));
+            // Bước 1: Tải danh sách người tham gia hiện có để so sánh
+            const existingRes = await dataService.getEventParticipants(selectedEventForParticipants.id);
+            const existingUserIds = new Set(
+                (existingRes.success && existingRes.data
+                    ? existingRes.data.map(p => p.user_id).filter(Boolean)
+                    : []) as string[]
+            );
 
-            // Map to EventParticipant format (for saving)
+            // Bước 2: Chỉ lấy người dùng được chọn mà CHƯA có trong danh sách
+            const selectedUserObjects = allUsers.filter(u =>
+                selectedParticipants.includes(u.id) && !existingUserIds.has(u.id)
+            );
+
+            if (selectedUserObjects.length === 0) {
+                setNotification({ type: 'success', message: 'Tất cả người được chọn đã có trong danh sách rồi.' });
+                setShowParticipantModal(false);
+                return;
+            }
+
+            // Bước 3: Map sang EventParticipant format — KHÔNG có id → sẽ được INSERT mới
             const participantsToSave = selectedUserObjects.map(user => ({
                 full_name: user.full_name,
                 avatar_url: user.avatar_url,
                 organization: user.class_id || user.organization || user.role,
                 birth_date: user.birth_date || '',
+                student_code: user.student_code || user.qr_code || '',
                 user_id: user.id,
                 face_descriptor: user.face_descriptor
             }));
 
-            if (participantsToSave.length === 0) {
-                setNotification({ type: 'success', message: 'Không có người tham gia nào được chọn.' });
-                setShowParticipantModal(false);
-                return;
-            }
-
             const result = await dataService.saveEventParticipants(selectedEventForParticipants.id, participantsToSave);
 
             if (result.success) {
-                setNotification({ type: 'success', message: `Đã thêm ${result.data?.length} người tham gia!` });
+                const addedCount = result.data?.length || 0;
+                const skippedCount = selectedParticipants.length - selectedUserObjects.length;
+                const msg = skippedCount > 0
+                    ? `Đã thêm ${addedCount} người mới. Bỏ qua ${skippedCount} người đã có trong danh sách.`
+                    : `Đã thêm ${addedCount} người tham gia thành công!`;
+                setNotification({ type: 'success', message: msg });
                 loadEvents();
                 setShowParticipantModal(false);
             } else {
