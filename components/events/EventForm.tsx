@@ -131,6 +131,9 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
         radius_meters: 100
     });
     const [gpsLoading, setGpsLoading] = useState(false);
+    const [addressSearch, setAddressSearch] = useState('');
+    const [addressResults, setAddressResults] = useState<{name: string; lat: number; lng: number}[]>([]);
+    const [searchingAddress, setSearchingAddress] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
 
@@ -1073,8 +1076,98 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                         <svg className="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
                                         Xác thực vị trí GPS
                                     </h3>
-                                    <p className="text-xs text-slate-500 mb-4">Khi bật, học sinh phải ở trong bán kính cho phép mới được điểm danh. GPS được lấy từ trình duyệt của thiết bị (máy tính/điện thoại).</p>
+                                    <p className="text-xs text-slate-500 mb-4">Khi bật, học sinh phải ở trong bán kính cho phép mới được điểm danh.</p>
 
+                                    {/* Cách 1: Tìm kiếm địa chỉ (phù hợp PC không có GPS) */}
+                                    <div className="mb-4">
+                                        <label className="block text-[10px] font-black text-slate-400 uppercase mb-2">🔍 Tìm kiếm địa chỉ / Tên trường</label>
+                                        <div className="flex gap-2">
+                                            <input
+                                                type="text"
+                                                placeholder="VD: Trường THPT Nguyễn Trãi, Hà Nội"
+                                                value={addressSearch}
+                                                onChange={(e) => setAddressSearch(e.target.value)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === 'Enter') {
+                                                        e.preventDefault();
+                                                        if (!addressSearch.trim()) return;
+                                                        setSearchingAddress(true);
+                                                        setAddressResults([]);
+                                                        fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addressSearch)}&limit=5&countrycodes=vn`)
+                                                            .then(r => r.json())
+                                                            .then((data: any[]) => {
+                                                                setAddressResults(data.map((d: any) => ({ name: d.display_name, lat: parseFloat(d.lat), lng: parseFloat(d.lon) })));
+                                                                if (data.length === 0) {
+                                                                    setImportNotification({ type: 'error', message: 'Không tìm thấy địa chỉ. Thử từ khóa khác.' });
+                                                                    setTimeout(() => setImportNotification(null), 3000);
+                                                                }
+                                                            })
+                                                            .catch(() => {
+                                                                setImportNotification({ type: 'error', message: 'Lỗi kết nối khi tìm kiếm' });
+                                                                setTimeout(() => setImportNotification(null), 3000);
+                                                            })
+                                                            .finally(() => setSearchingAddress(false));
+                                                    }
+                                                }}
+                                                className="flex-1 px-4 py-3 bg-white border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            />
+                                            <button
+                                                type="button"
+                                                disabled={searchingAddress || !addressSearch.trim()}
+                                                onClick={() => {
+                                                    if (!addressSearch.trim()) return;
+                                                    setSearchingAddress(true);
+                                                    setAddressResults([]);
+                                                    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addressSearch)}&limit=5&countrycodes=vn`)
+                                                        .then(r => r.json())
+                                                        .then((data: any[]) => {
+                                                            setAddressResults(data.map((d: any) => ({ name: d.display_name, lat: parseFloat(d.lat), lng: parseFloat(d.lon) })));
+                                                            if (data.length === 0) {
+                                                                setImportNotification({ type: 'error', message: 'Không tìm thấy địa chỉ. Thử từ khóa khác.' });
+                                                                setTimeout(() => setImportNotification(null), 3000);
+                                                            }
+                                                        })
+                                                        .catch(() => {
+                                                            setImportNotification({ type: 'error', message: 'Lỗi kết nối khi tìm kiếm' });
+                                                            setTimeout(() => setImportNotification(null), 3000);
+                                                        })
+                                                        .finally(() => setSearchingAddress(false));
+                                                }}
+                                                className={`px-4 py-3 rounded-xl font-bold text-sm flex items-center gap-2 transition-all ${searchingAddress ? 'bg-slate-200 text-slate-400' : 'bg-indigo-600 text-white hover:bg-indigo-700'}`}
+                                            >
+                                                {searchingAddress ? <div className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div> : <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" /></svg>}
+                                                Tìm
+                                            </button>
+                                        </div>
+
+                                        {/* Kết quả tìm kiếm */}
+                                        {addressResults.length > 0 && (
+                                            <div className="mt-2 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-lg max-h-[200px] overflow-y-auto">
+                                                {addressResults.map((r, i) => (
+                                                    <button
+                                                        key={i}
+                                                        type="button"
+                                                        className="w-full px-4 py-3 text-left hover:bg-blue-50 transition-colors border-b border-slate-100 last:border-0 flex items-start gap-2"
+                                                        onClick={() => {
+                                                            setFormData(prev => ({ ...prev, latitude: Math.round(r.lat * 1000000) / 1000000, longitude: Math.round(r.lng * 1000000) / 1000000 }));
+                                                            setAddressResults([]);
+                                                            setAddressSearch('');
+                                                            setImportNotification({ type: 'success', message: `Đã chọn: ${r.name.substring(0, 60)}...` });
+                                                            setTimeout(() => setImportNotification(null), 4000);
+                                                        }}
+                                                    >
+                                                        <svg className="w-4 h-4 text-blue-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg>
+                                                        <div>
+                                                            <p className="text-sm font-medium text-slate-800 line-clamp-2">{r.name}</p>
+                                                            <p className="text-[10px] text-slate-400 font-mono">{r.lat.toFixed(6)}, {r.lng.toFixed(6)}</p>
+                                                        </div>
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+
+                                    {/* Cách 2: Lấy GPS thiết bị + Xóa */}
                                     <div className="flex flex-wrap gap-3 mb-4">
                                         <button
                                             type="button"
@@ -1094,12 +1187,12 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                                             longitude: Math.round(pos.coords.longitude * 1000000) / 1000000
                                                         }));
                                                         setGpsLoading(false);
-                                                        setImportNotification({ type: 'success', message: `Đã lấy tọa độ: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}` });
+                                                        setImportNotification({ type: 'success', message: `Đã lấy GPS thiết bị: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)}m)` });
                                                         setTimeout(() => setImportNotification(null), 4000);
                                                     },
                                                     (err) => {
                                                         setGpsLoading(false);
-                                                        setImportNotification({ type: 'error', message: err.code === 1 ? 'Bạn đã từ chối quyền truy cập vị trí. Vui lòng cho phép trong cài đặt trình duyệt.' : 'Không thể lấy vị trí GPS. Hãy thử lại.' });
+                                                        setImportNotification({ type: 'error', message: err.code === 1 ? 'Đã từ chối quyền vị trí → Hãy dùng ô "Tìm kiếm địa chỉ" phía trên.' : 'Không thể lấy GPS. Hãy dùng ô "Tìm kiếm địa chỉ" phía trên.' });
                                                         setTimeout(() => setImportNotification(null), 5000);
                                                     },
                                                     { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -1110,19 +1203,30 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                             {gpsLoading ? (
                                                 <><div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div> Đang lấy vị trí...</>
                                             ) : (
-                                                <><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg> Lấy vị trí hiện tại</>
+                                                <><svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" /></svg> Lấy GPS thiết bị</>
                                             )}
                                         </button>
 
                                         {formData.latitude && (
-                                            <button
-                                                type="button"
-                                                onClick={() => setFormData(prev => ({ ...prev, latitude: null, longitude: null }))}
-                                                className="px-4 py-3 rounded-2xl font-bold text-sm bg-red-100 text-red-600 hover:bg-red-200 transition-all flex items-center gap-2"
-                                            >
-                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
-                                                Xóa vị trí
-                                            </button>
+                                            <>
+                                                <a
+                                                    href={`https://www.google.com/maps?q=${formData.latitude},${formData.longitude}`}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="px-4 py-3 rounded-2xl font-bold text-sm bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-all flex items-center gap-2"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-6v8.25m.503 3.498l4.875-2.437c.381-.19.622-.58.622-1.006V4.82c0-.836-.88-1.38-1.628-1.006l-3.869 1.934c-.317.159-.69.159-1.006 0L9.503 3.252a1.125 1.125 0 00-1.006 0L3.622 5.689C3.24 5.88 3 6.27 3 6.695V19.18c0 .836.88 1.38 1.628 1.006l3.869-1.934c.317-.159.69-.159 1.006 0l4.994 2.497c.317.158.69.158 1.006 0z" /></svg>
+                                                    Xem trên Google Maps
+                                                </a>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setFormData(prev => ({ ...prev, latitude: null, longitude: null }))}
+                                                    className="px-4 py-3 rounded-2xl font-bold text-sm bg-red-100 text-red-600 hover:bg-red-200 transition-all flex items-center gap-2"
+                                                >
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+                                                    Xóa vị trí
+                                                </button>
+                                            </>
                                         )}
                                     </div>
 
@@ -1148,13 +1252,13 @@ const EventForm: React.FC<EventFormProps> = ({ editingEvent, onSave, onCancel })
                                             </div>
                                             <div className="p-3 bg-emerald-50 rounded-xl flex items-center gap-2">
                                                 <svg className="w-4 h-4 text-emerald-600 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                                                <span className="text-xs text-emerald-700 font-medium">Đã thiết lập GPS: {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)} — Bán kính: {formData.radius_meters}m</span>
+                                                <span className="text-xs text-emerald-700 font-medium">✅ Đã thiết lập GPS: {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)} — Bán kính: {formData.radius_meters}m</span>
                                             </div>
                                         </div>
                                     ) : (
                                         <div className="p-3 bg-amber-50 rounded-xl flex items-center gap-2">
                                             <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 11-18 0 9 9 0 0118 0zm-9 3.75h.008v.008H12v-.008z" /></svg>
-                                            <span className="text-xs text-amber-700 font-medium">Chưa thiết lập GPS — HS có thể điểm danh từ bất cứ đâu.</span>
+                                            <span className="text-xs text-amber-700 font-medium">Chưa thiết lập GPS — HS có thể điểm danh từ bất cứ đâu. Dùng ô tìm kiếm địa chỉ hoặc nút GPS phía trên.</span>
                                         </div>
                                     )}
                                 </div>
