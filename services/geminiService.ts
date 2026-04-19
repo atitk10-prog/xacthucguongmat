@@ -33,7 +33,13 @@ Ví dụ đúng:
 [+] Nguyễn Văn A (10A1) — được cộng +30đ, chăm chỉ → tuyên dương trước lớp
 [>] GVCN lớp 12A1 cần gặp riêng 3 HS mức đỏ trong tuần này
 
-KHÔNG viết đoạn văn dài. Ưu tiên bullet points với markers.`;
+Ví dụ SAI (KHÔNG làm):
+❌ Điểm phạt tăng, đây là tín hiệu xấu ([!])
+❌ HS Nguyễn A [!] bị trừ điểm
+✅ ĐÚNG: mỗi marker chỉ đặt ở ĐẦU DÒNG MỚI, KHÔNG bao giờ giữa câu
+
+KHÔNG viết đoạn văn dài. Mỗi ý 1 dòng, bắt đầu bằng marker.`;
+
 
 interface GeminiMessage {
     role: 'user' | 'model';

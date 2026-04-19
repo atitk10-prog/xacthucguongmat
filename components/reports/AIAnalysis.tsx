@@ -406,20 +406,29 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
 
                     // Parse inline markers and bold
                     const renderInline = (str: string) => {
+                        // Clean up markers that appear mid-sentence (AI sometimes does this)
+                        let cleaned = str
+                            .replace(/\(\[!\]\)/g, '')
+                            .replace(/\(\[-\]\)/g, '')
+                            .replace(/\(\[\+\]\)/g, '')
+                            .replace(/\(\[>\]\)/g, '')
+                            .replace(/\(\[\*\]\)/g, '')
+                            .replace(/\s{2,}/g, ' ')
+                            .trim();
                         const parts: React.ReactNode[] = [];
                         // Split by bold markers **text**
                         const boldRegex = /\*\*(.+?)\*\*/g;
                         let lastIndex = 0;
                         let match;
-                        while ((match = boldRegex.exec(str)) !== null) {
+                        while ((match = boldRegex.exec(cleaned)) !== null) {
                             if (match.index > lastIndex) {
-                                parts.push(str.slice(lastIndex, match.index));
+                                parts.push(cleaned.slice(lastIndex, match.index));
                             }
                             parts.push(<strong key={`b-${match.index}`} className={darkMode ? 'text-white font-black' : 'text-slate-900 font-black'}>{match[1]}</strong>);
                             lastIndex = match.index + match[0].length;
                         }
-                        if (lastIndex < str.length) parts.push(str.slice(lastIndex));
-                        return parts.length > 0 ? parts : [str];
+                        if (lastIndex < cleaned.length) parts.push(cleaned.slice(lastIndex));
+                        return parts.length > 0 ? parts : [cleaned];
                     };
 
                     // Alert markers with colored badges
