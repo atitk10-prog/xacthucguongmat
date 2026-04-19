@@ -116,6 +116,12 @@ const BoardingConfigTab: React.FC<{
     const [showSlotModal, setShowSlotModal] = useState(false);
     const [editingSlot, setEditingSlot] = useState<Partial<BoardingTimeSlot> | null>(null);
 
+    // GPS Location Picker State
+    const [addressSearch, setAddressSearch] = useState('');
+    const [addressResults, setAddressResults] = useState<{ name: string; lat: number; lng: number }[]>([]);
+    const [searchingAddress, setSearchingAddress] = useState(false);
+    const [gpsLoading, setGpsLoading] = useState(false);
+
     // Pagination
     const [currentPage, setCurrentPage] = useState(1);
     const ITEMS_PER_PAGE = 10;
@@ -500,13 +506,274 @@ const BoardingConfigTab: React.FC<{
                         </div>
                     </Card>
 
-                    <Card className="bg-indigo-50 border-indigo-100 p-4">
-                        <div className="flex gap-3">
-                            <Icons.Info className="w-5 h-5 text-indigo-600 flex-shrink-0" />
-                            <div className="text-sm text-indigo-800">
-                                <p className="font-semibold mb-1">Hướng dẫn:</p>
-                                <p>Check-in <strong>sau giờ kết thúc</strong> sẽ bị tính là <strong>trễ</strong>. Hệ thống sẽ tự động chọn khung giờ phù hợp khi check-in.</p>
+                    {/* GPS Check-in Config */}
+                    <Card className="p-6">
+                        <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
+                            <Icons.MapPin className="w-5 h-5 text-blue-600" />
+                            Cấu hình GPS Check-in
+                        </h3>
+
+                        <div className="space-y-4">
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="checkbox"
+                                    id="geoAllow"
+                                    checked={config.boarding_allow_geo === 'true'}
+                                    onChange={e => setConfig(prev => ({ ...prev, boarding_allow_geo: e.target.checked ? 'true' : 'false' }))}
+                                    className="w-4 h-4 rounded border-slate-300 text-blue-600"
+                                    disabled={!canEdit}
+                                />
+                                <label htmlFor="geoAllow" className="text-sm font-medium text-slate-700">
+                                    Cho phép HS điểm danh bằng GPS (điện thoại)
+                                </label>
                             </div>
+
+                            <div className="flex items-center gap-3">
+                                <input
+                                    type="checkbox"
+                                    id="geoFace"
+                                    checked={config.boarding_geo_face === 'true'}
+                                    onChange={e => setConfig(prev => ({ ...prev, boarding_geo_face: e.target.checked ? 'true' : 'false' }))}
+                                    className="w-4 h-4 rounded border-slate-300 text-blue-600"
+                                    disabled={!canEdit}
+                                />
+                                <label htmlFor="geoFace" className="text-sm font-medium text-slate-700">
+                                    Yêu cầu quét mặt khi GPS check-in (chống gian lận)
+                                </label>
+                            </div>
+
+                            {/* Tìm kiếm địa chỉ */}
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">📍 Vị trí KTX / Trường</label>
+                                <div className="flex gap-2 mb-2">
+                                    <input
+                                        type="text"
+                                        value={addressSearch}
+                                        onChange={e => setAddressSearch(e.target.value)}
+                                        onKeyDown={e => {
+                                            if (e.key === 'Enter' && addressSearch.trim()) {
+                                                e.preventDefault();
+                                                setSearchingAddress(true);
+                                                setAddressResults([]);
+                                                fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addressSearch)}&limit=5&countrycodes=vn`)
+                                                    .then(r => r.json())
+                                                    .then((data: any[]) => {
+                                                        setAddressResults(data.map((d: any) => ({ name: d.display_name, lat: parseFloat(d.lat), lng: parseFloat(d.lon) })));
+                                                    })
+                                                    .catch(() => toastError('Lỗi tìm kiếm'))
+                                                    .finally(() => setSearchingAddress(false));
+                                            }
+                                        }}
+                                        placeholder="Tìm địa chỉ trường / KTX..."
+                                        className="flex-1 p-2 border rounded-lg text-sm"
+                                        disabled={!canEdit}
+                                    />
+                                    <button
+                                        type="button"
+                                        disabled={searchingAddress || !addressSearch.trim() || !canEdit}
+                                        onClick={() => {
+                                            setSearchingAddress(true);
+                                            setAddressResults([]);
+                                            fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addressSearch)}&limit=5&countrycodes=vn`)
+                                                .then(r => r.json())
+                                                .then((data: any[]) => {
+                                                    setAddressResults(data.map((d: any) => ({ name: d.display_name, lat: parseFloat(d.lat), lng: parseFloat(d.lon) })));
+                                                    if (data.length === 0) toastError('Không tìm thấy địa chỉ');
+                                                })
+                                                .catch(() => toastError('Lỗi kết nối'))
+                                                .finally(() => setSearchingAddress(false));
+                                        }}
+                                        className="px-3 py-2 bg-indigo-600 text-white rounded-lg text-sm font-bold hover:bg-indigo-700 disabled:opacity-50 transition-colors"
+                                    >
+                                        {searchingAddress ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : '🔍 Tìm'}
+                                    </button>
+                                </div>
+
+                                {/* Kết quả tìm kiếm */}
+                                {addressResults.length > 0 && (
+                                    <div className="mb-3 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-lg max-h-[180px] overflow-y-auto">
+                                        {addressResults.map((r, i) => (
+                                            <button
+                                                key={i}
+                                                type="button"
+                                                className="w-full px-3 py-2.5 text-left hover:bg-blue-50 transition-colors border-b border-slate-100 last:border-0"
+                                                onClick={() => {
+                                                    setConfig(prev => ({
+                                                        ...prev,
+                                                        boarding_latitude: String(Math.round(r.lat * 1000000) / 1000000),
+                                                        boarding_longitude: String(Math.round(r.lng * 1000000) / 1000000)
+                                                    }));
+                                                    setAddressResults([]);
+                                                    setAddressSearch('');
+                                                    toastSuccess(`Đã chọn: ${r.name.substring(0, 50)}...`);
+                                                }}
+                                            >
+                                                <p className="text-sm font-medium text-slate-800 line-clamp-2">{r.name}</p>
+                                                <p className="text-[10px] text-slate-400 font-mono">{r.lat.toFixed(6)}, {r.lng.toFixed(6)}</p>
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+
+                                {/* Nút GPS thiết bị + Google Maps */}
+                                <div className="flex flex-wrap gap-2 mb-3">
+                                    <button
+                                        type="button"
+                                        disabled={gpsLoading || !canEdit}
+                                        onClick={() => {
+                                            if (!navigator.geolocation) {
+                                                toastError('Trình duyệt không hỗ trợ GPS');
+                                                return;
+                                            }
+                                            setGpsLoading(true);
+                                            navigator.geolocation.getCurrentPosition(
+                                                (pos) => {
+                                                    setConfig(prev => ({
+                                                        ...prev,
+                                                        boarding_latitude: String(Math.round(pos.coords.latitude * 1000000) / 1000000),
+                                                        boarding_longitude: String(Math.round(pos.coords.longitude * 1000000) / 1000000)
+                                                    }));
+                                                    setGpsLoading(false);
+                                                    toastSuccess(`GPS: ${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)} (±${Math.round(pos.coords.accuracy)}m)`);
+                                                },
+                                                (err) => {
+                                                    setGpsLoading(false);
+                                                    toastError(err.code === 1 ? 'Đã từ chối quyền vị trí. Dùng ô tìm kiếm ở trên.' : 'Không lấy được GPS');
+                                                },
+                                                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+                                            );
+                                        }}
+                                        className={`px-3 py-2 rounded-lg font-bold text-sm flex items-center gap-1.5 transition-all ${gpsLoading ? 'bg-blue-100 text-blue-400' : 'bg-blue-600 text-white hover:bg-blue-700'}`}
+                                    >
+                                        {gpsLoading ? (
+                                            <><div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Đang lấy...</>
+                                        ) : (
+                                            <>📍 Lấy GPS thiết bị</>
+                                        )}
+                                    </button>
+
+                                    {config.boarding_latitude && config.boarding_latitude !== '0' && (
+                                        <>
+                                            <a
+                                                href={`https://www.google.com/maps?q=${config.boarding_latitude},${config.boarding_longitude}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="px-3 py-2 rounded-lg font-bold text-sm bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors flex items-center gap-1.5"
+                                            >
+                                                🗺️ Xem Google Maps
+                                            </a>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setConfig(prev => ({ ...prev, boarding_latitude: '0', boarding_longitude: '0' }));
+                                                    toastSuccess('Đã xóa tọa độ');
+                                                }}
+                                                className="px-3 py-2 rounded-lg font-bold text-sm bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+                                                disabled={!canEdit}
+                                            >
+                                                ✕ Xóa
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                            </div>
+
+                            {/* Hiển thị tọa độ hiện tại */}
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Vĩ độ (Latitude)</label>
+                                    <input
+                                        type="number"
+                                        step="any"
+                                        className="w-full p-2 border rounded-lg text-sm font-mono bg-slate-50"
+                                        value={config.boarding_latitude || ''}
+                                        onChange={e => setConfig(prev => ({ ...prev, boarding_latitude: e.target.value }))}
+                                        placeholder="10.8231"
+                                        disabled={!canEdit}
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Kinh độ (Longitude)</label>
+                                    <input
+                                        type="number"
+                                        step="any"
+                                        className="w-full p-2 border rounded-lg text-sm font-mono bg-slate-50"
+                                        value={config.boarding_longitude || ''}
+                                        onChange={e => setConfig(prev => ({ ...prev, boarding_longitude: e.target.value }))}
+                                        placeholder="106.6297"
+                                        disabled={!canEdit}
+                                    />
+                                </div>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Bán kính cho phép (mét)</label>
+                                <input
+                                    type="number"
+                                    className="w-full p-2 border rounded-lg text-sm font-mono"
+                                    value={config.boarding_radius || '100'}
+                                    onChange={e => setConfig(prev => ({ ...prev, boarding_radius: e.target.value }))}
+                                    placeholder="100"
+                                    disabled={!canEdit}
+                                />
+                                <p className="text-[10px] text-slate-400 mt-1">HS phải ở trong bán kính này mới được GPS check-in</p>
+                            </div>
+                        </div>
+                    </Card>
+
+                    {/* Map Retention Config */}
+                    <Card className="p-6">
+                        <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2 mb-4">
+                            <Icons.Database className="w-5 h-5 text-orange-600" />
+                            Quản lý dung lượng bản đồ
+                        </h3>
+
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Giữ GPS data (ngày)</label>
+                                <input
+                                    type="number"
+                                    className="w-full p-2 border rounded-lg text-sm font-mono"
+                                    value={config.map_retention_days || '7'}
+                                    onChange={e => setConfig(prev => ({ ...prev, map_retention_days: e.target.value }))}
+                                    min="1"
+                                    max="90"
+                                    disabled={!canEdit}
+                                />
+                                <p className="text-[10px] text-slate-400 mt-1">Sau số ngày này, tọa độ GPS sẽ bị xóa tự động (giữ dữ liệu điểm danh)</p>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Thông báo trước (ngày)</label>
+                                <input
+                                    type="number"
+                                    className="w-full p-2 border rounded-lg text-sm font-mono"
+                                    value={config.map_cleanup_notify_days || '2'}
+                                    onChange={e => setConfig(prev => ({ ...prev, map_cleanup_notify_days: e.target.value }))}
+                                    min="0"
+                                    max="30"
+                                    disabled={!canEdit}
+                                />
+                                <p className="text-[10px] text-slate-400 mt-1">Admin sẽ được thông báo trước khi xóa GPS data</p>
+                            </div>
+
+                            {canEdit && (
+                                <button
+                                    onClick={async () => {
+                                        if (!confirm('Xóa GPS data cũ ngay bây giờ? (Dữ liệu điểm danh không bị ảnh hưởng)')) return;
+                                        const days = parseInt(config.map_retention_days || '7');
+                                        const res = await dataService.cleanupOldGpsData(days);
+                                        if (res.success) {
+                                            toastSuccess(`Đã dọn dẹp ${res.data?.count || 0} bản ghi GPS cũ`);
+                                        } else {
+                                            toastError(res.error || 'Lỗi dọn dẹp');
+                                        }
+                                    }}
+                                    className="w-full py-2 text-sm font-bold text-orange-600 bg-orange-50 hover:bg-orange-100 rounded-lg border border-orange-200 transition-colors"
+                                >
+                                    🗑️ Dọn dẹp GPS data cũ ngay
+                                </button>
+                            )}
                         </div>
                     </Card>
                 </div>
@@ -1047,7 +1314,7 @@ const BoardingManager: React.FC<{
 
             {/* Content Area */}
             <div className="min-h-[600px]">
-                {activeTab === 'dashboard' && <BoardingDashboard onNavigate={(tab) => setActiveTab(tab as any)} />}
+                {activeTab === 'dashboard' && <BoardingDashboard onNavigate={(tab) => setActiveTab(tab as any)} currentUser={currentUser} />}
                 {activeTab === 'config' && <BoardingConfigTab currentUser={currentUser} teacherPermissions={teacherPermissions} />}
                 {activeTab === 'rooms' && <RoomManagement currentUser={currentUser} teacherPermissions={teacherPermissions} />}
                 {activeTab === 'exit' && <ExitPermission currentUser={currentUser} teacherPermissions={teacherPermissions} />}

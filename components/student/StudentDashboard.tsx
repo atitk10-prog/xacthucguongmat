@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from 'react';
-import { QrCode, FileText, Award, BarChart2, Calendar, User as UserIcon, Bell, Megaphone, ArrowRight, CheckCircle, XCircle, Clock, AlertTriangle, MapPin, Play, Pause, TrendingUp, TrendingDown } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { QrCode, FileText, Award, BarChart2, Calendar, User as UserIcon, Bell, Megaphone, ArrowRight, CheckCircle, XCircle, Clock, AlertTriangle, MapPin, Play, Pause, TrendingUp, TrendingDown, Camera, Loader2 } from 'lucide-react';
 import { dataService } from '../../services/dataService';
+import { faceService, compareFaces, stringToDescriptor } from '../../services/faceService';
 import { useToast } from '../ui/Toast';
 import { User, Event, BoardingConfig } from '../../types';
 
@@ -19,7 +20,31 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
     const [unreadCount, setUnreadCount] = useState(0);
     const [pointStats, setPointStats] = useState<any>(null);
     const [timeSlots, setTimeSlots] = useState<any[]>([]);
+    const [geoCheckinLoading, setGeoCheckinLoading] = useState<string | null>(null);
+    const [geoConfig, setGeoConfig] = useState<{ allow: boolean; lat: number; lng: number; radius: number; faceRequired: boolean }>(
+        { allow: false, lat: 0, lng: 0, radius: 100, faceRequired: false }
+    );
     const toast = useToast();
+
+    // Face verify state for GPS check-in
+    const [showFaceModal, setShowFaceModal] = useState(false);
+    const [faceVerifyStatus, setFaceVerifyStatus] = useState<'idle' | 'loading_models' | 'camera_ready' | 'verifying' | 'success' | 'error'>('idle');
+    const [faceVerifyMessage, setFaceVerifyMessage] = useState('');
+    const faceVideoRef = useRef<HTMLVideoElement>(null);
+    const faceStreamRef = useRef<MediaStream | null>(null);
+    const pendingGeoCheckinRef = useRef<{ slotId: string; slotEndTime: string; latitude: number; longitude: number; accuracy: number; status: 'on_time' | 'late' } | null>(null);
+
+    // Device fingerprint helper — stronger than just userAgent
+    const getDeviceFingerprint = (): string => {
+        const parts = [
+            navigator.userAgent,
+            `${screen.width}x${screen.height}`,
+            navigator.language,
+            String(navigator.hardwareConcurrency || ''),
+            String((navigator as any).deviceMemory || '')
+        ];
+        return parts.join('|');
+    };
 
     // Fresh user data from database (for points, etc.)
     const [currentPoints, setCurrentPoints] = useState(user.total_points || 0);
@@ -66,6 +91,19 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
             const slotsRes = await dataService.getActiveTimeSlots();
             if (slotsRes.success && slotsRes.data) {
                 setTimeSlots(slotsRes.data);
+            }
+
+            // 1b. Load boarding GPS config
+            const geoConfigRes = await dataService.getBoardingConfig();
+            if (geoConfigRes.success && geoConfigRes.data) {
+                const cfg = geoConfigRes.data;
+                setGeoConfig({
+                    allow: cfg.boarding_allow_geo === 'true',
+                    lat: parseFloat(cfg.boarding_latitude || '0'),
+                    lng: parseFloat(cfg.boarding_longitude || '0'),
+                    radius: parseInt(cfg.boarding_radius || '100'),
+                    faceRequired: cfg.boarding_geo_face === 'true'
+                });
             }
 
             // 1. Fetch History & Today
@@ -175,7 +213,219 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
         </button>
     );
 
-    const TimeSlot = ({ label, timeIn, deadline, slotType, startTimeStr }: any) => {
+    // ── FACE VERIFY HELPERS ──
+    const stopFaceCamera = () => {
+        if (faceStreamRef.current) {
+            faceStreamRef.current.getTracks().forEach(t => t.stop());
+            faceStreamRef.current = null;
+        }
+    };
+
+    const closeFaceModal = () => {
+        stopFaceCamera();
+        setShowFaceModal(false);
+        setFaceVerifyStatus('idle');
+        setFaceVerifyMessage('');
+        pendingGeoCheckinRef.current = null;
+    };
+
+    const submitGeoCheckin = async (
+        slotId: string,
+        status: 'on_time' | 'late',
+        latitude: number,
+        longitude: number,
+        accuracy: number,
+        faceVerified: boolean,
+        faceConfidence?: number,
+        suspiciousNote?: string
+    ) => {
+        if (!user) return;
+        const deviceFp = getDeviceFingerprint();
+        const notes = suspiciousNote || undefined;
+
+        const res = await dataService.boardingCheckin(user.id, slotId, status, {
+            checkin_latitude: latitude,
+            checkin_longitude: longitude,
+            checkin_accuracy: accuracy,
+            gps_suspicious: accuracy > 100 || !!suspiciousNote,
+            checkin_mode: 'geo',
+            face_verified: faceVerified,
+            device_info: deviceFp,
+            notes
+        });
+
+        if (res.success) {
+            if (res.alreadyExists) {
+                toast.info('Bạn đã điểm danh rồi!');
+            } else {
+                toast.success(status === 'late' ? 'Điểm danh trễ! (-điểm)' : 'Điểm danh thành công! ✅');
+            }
+            loadData();
+        } else {
+            toast.error(res.error || 'Lỗi điểm danh');
+        }
+    };
+
+    // Face verify flow: open camera → detect face → compare with logged-in user's descriptor
+    const startFaceVerify = async () => {
+        if (!user?.face_descriptor) {
+            setFaceVerifyStatus('error');
+            setFaceVerifyMessage('Bạn chưa đăng ký Face ID. Liên hệ quản trị viên.');
+            return;
+        }
+
+        try {
+            // Load face models if not ready
+            setFaceVerifyStatus('loading_models');
+            setFaceVerifyMessage('Đang tải AI nhận diện...');
+            if (!faceService.isModelsLoaded()) {
+                await faceService.loadModels();
+            }
+
+            // Open camera
+            setFaceVerifyStatus('camera_ready');
+            setFaceVerifyMessage('Nhìn thẳng vào camera...');
+            const mediaStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: 'user', width: 640, height: 480 }
+            });
+            faceStreamRef.current = mediaStream;
+            if (faceVideoRef.current) {
+                faceVideoRef.current.srcObject = mediaStream;
+                await faceVideoRef.current.play();
+            }
+
+            // Wait for camera to warm up
+            await new Promise(r => setTimeout(r, 1500));
+
+            // Detect face
+            setFaceVerifyStatus('verifying');
+            setFaceVerifyMessage('Đang xác thực khuôn mặt...');
+
+            if (faceVideoRef.current) {
+                const descriptor = await faceService.getFaceDescriptor(faceVideoRef.current);
+                if (descriptor) {
+                    const savedDescriptor = stringToDescriptor(user.face_descriptor);
+                    const confidence = compareFaces(descriptor, savedDescriptor);
+                    const threshold = 45; // Match threshold
+
+                    if (confidence >= threshold) {
+                        // Face matched!
+                        setFaceVerifyStatus('success');
+                        setFaceVerifyMessage(`Xác thực thành công (${confidence}%)`);
+                        stopFaceCamera();
+
+                        // Submit the pending check-in
+                        const pending = pendingGeoCheckinRef.current;
+                        if (pending) {
+                            await submitGeoCheckin(
+                                pending.slotId, pending.status,
+                                pending.latitude, pending.longitude, pending.accuracy,
+                                true, confidence
+                            );
+                        }
+
+                        setTimeout(() => closeFaceModal(), 1500);
+                    } else {
+                        setFaceVerifyStatus('error');
+                        setFaceVerifyMessage(`Khuôn mặt không khớp (${confidence}%). Vui lòng thử lại.`);
+                        stopFaceCamera();
+                    }
+                } else {
+                    setFaceVerifyStatus('error');
+                    setFaceVerifyMessage('Không nhận diện được khuôn mặt. Nhìn thẳng vào camera.');
+                    stopFaceCamera();
+                }
+            }
+        } catch (err: any) {
+            setFaceVerifyStatus('error');
+            setFaceVerifyMessage(err.message || 'Không thể mở camera. Vui lòng cấp quyền.');
+            stopFaceCamera();
+        }
+    };
+
+    // GPS Check-in handler
+    const handleGeoCheckin = async (slotId: string, slotEndTime: string) => {
+        if (!user || geoCheckinLoading) return;
+
+        // Guard: GPS check-in requires network
+        if (!navigator.onLine) {
+            toast.error('Cần kết nối mạng để điểm danh GPS. Vui lòng bật WiFi/4G.');
+            return;
+        }
+
+        setGeoCheckinLoading(slotId);
+
+        try {
+            // 1. Get GPS position
+            const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, {
+                    enableHighAccuracy: true,
+                    timeout: 10000,
+                    maximumAge: 0
+                });
+            });
+
+            const { latitude, longitude, accuracy } = position.coords;
+
+            // 2. Check distance from configured center
+            const toRad = (deg: number) => deg * Math.PI / 180;
+            const R = 6371000; // Earth radius meters
+            const dLat = toRad(latitude - geoConfig.lat);
+            const dLng = toRad(longitude - geoConfig.lng);
+            const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(toRad(geoConfig.lat)) * Math.cos(toRad(latitude)) * Math.sin(dLng / 2) ** 2;
+            const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+            if (distance > geoConfig.radius) {
+                toast.error(`Bạn đang ở quá xa (${Math.round(distance)}m). Bán kính cho phép: ${geoConfig.radius}m`);
+                setGeoCheckinLoading(null);
+                return;
+            }
+
+            // 3. Calculate status
+            const now = new Date();
+            const [endH, endM] = slotEndTime.split(':').map(Number);
+            const endMin = endH * 60 + endM;
+            const nowMin = now.getHours() * 60 + now.getMinutes();
+            const status: 'on_time' | 'late' = nowMin <= endMin ? 'on_time' : 'late';
+
+            // ─── 4. ANTI-FRAUD: Face verify OR Device fingerprint ───
+            if (geoConfig.faceRequired) {
+                pendingGeoCheckinRef.current = { slotId, slotEndTime, latitude, longitude, accuracy, status };
+                setShowFaceModal(true);
+                setFaceVerifyStatus('idle');
+                setFaceVerifyMessage('');
+                setGeoCheckinLoading(null);
+                return;
+            } else {
+                const deviceFp = getDeviceFingerprint();
+                const dupCheck = await dataService.checkDuplicateDevice(slotId, user.id, deviceFp, 10);
+
+                let suspiciousNote: string | undefined;
+                if (dupCheck.isDuplicate) {
+                    toast.error(`⚠️ Thiết bị này đã dùng điểm danh cho ${dupCheck.otherUserName}. Hệ thống đã ghi nhận.`);
+                    suspiciousNote = `⚠️ Cùng thiết bị với ${dupCheck.otherUserName}`;
+                }
+
+                await submitGeoCheckin(
+                    slotId, status, latitude, longitude, accuracy,
+                    false, undefined, suspiciousNote
+                );
+            }
+        } catch (err: any) {
+            if (err.code === 1) {
+                toast.error('Vui lòng bật GPS trên thiết bị của bạn');
+            } else if (err.code === 3) {
+                toast.error('GPS timeout. Vui lòng thử lại');
+            } else {
+                toast.error(err.message || 'Lỗi GPS');
+            }
+        } finally {
+            setGeoCheckinLoading(null);
+        }
+    };
+
+    const TimeSlot = ({ label, timeIn, deadline, slotType, startTimeStr, slotId }: any) => {
         const isDone = !!timeIn;
         const now = new Date();
         const currentHour = now.getHours();
@@ -248,6 +498,21 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
                     <span className="text-xl font-black tracking-tight leading-none mb-1">{mainTimeDisplay}</span>
                     <span className="text-[10px] font-bold uppercase tracking-wide opacity-90">{statusText}</span>
                 </div>
+
+                {/* GPS Check-in Button */}
+                {status === 'open' && geoConfig.allow && !isDone && (
+                    <button
+                        onClick={(e) => { e.stopPropagation(); handleGeoCheckin(slotId, deadline); }}
+                        disabled={geoCheckinLoading === slotId}
+                        className="mt-2 w-full py-1.5 bg-blue-600 text-white text-[10px] font-bold rounded-lg hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center gap-1 relative z-10"
+                    >
+                        {geoCheckinLoading === slotId ? (
+                            <><div className="w-3 h-3 border-2 border-white/30 border-t-white rounded-full animate-spin" /> Đang xử lý...</>
+                        ) : (
+                            <><MapPin size={12} /> Điểm danh GPS</>
+                        )}
+                    </button>
+                )}
             </div>
         );
     };
@@ -279,6 +544,7 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
     };
 
     return (
+        <>
         <div className="space-y-5 pb-6 animate-in fade-in duration-500 relative min-h-screen bg-gradient-to-br from-slate-50 via-blue-50/30 to-indigo-50/20">
 
             {/* Colorful Header with Gradient */}
@@ -388,6 +654,7 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
                                 timeIn={timeIn}
                                 deadline={slot.end_time}
                                 startTimeStr={slot.start_time}
+                                slotId={slot.id}
                             />
                         );
                     })}
@@ -466,6 +733,92 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
                 </div>
             )}
         </div>
+
+            {/* Face Verify Modal for GPS Check-in */}
+            {showFaceModal && (
+                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
+                                <Camera size={20} className="text-blue-600" />
+                                Xác thực khuôn mặt
+                            </h3>
+                            <button
+                                onClick={closeFaceModal}
+                                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors"
+                            >✕</button>
+                        </div>
+
+                        {/* Camera Preview */}
+                        <div className="relative rounded-2xl overflow-hidden bg-black mb-4 aspect-[4/3]">
+                            <video
+                                ref={faceVideoRef}
+                                autoPlay
+                                playsInline
+                                muted
+                                className="w-full h-full object-cover scale-x-[-1]"
+                            />
+                            {/* Status Overlay */}
+                            {faceVerifyStatus === 'success' && (
+                                <div className="absolute inset-0 bg-green-500/30 flex items-center justify-center">
+                                    <CheckCircle className="w-20 h-20 text-white drop-shadow-lg" />
+                                </div>
+                            )}
+                            {faceVerifyStatus === 'error' && (
+                                <div className="absolute inset-0 bg-red-500/30 flex items-center justify-center">
+                                    <XCircle className="w-20 h-20 text-white drop-shadow-lg" />
+                                </div>
+                            )}
+                            {(faceVerifyStatus === 'loading_models' || faceVerifyStatus === 'verifying') && (
+                                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                    <Loader2 className="w-12 h-12 text-white animate-spin" />
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Status Message */}
+                        <div className={`text-center mb-4 text-sm font-bold ${
+                            faceVerifyStatus === 'success' ? 'text-green-600' :
+                            faceVerifyStatus === 'error' ? 'text-red-600' :
+                            'text-slate-600'
+                        }`}>
+                            {faceVerifyMessage || 'Bấm nút bên dưới để bắt đầu xác thực'}
+                        </div>
+
+                        {/* Action Buttons */}
+                        <div className="flex gap-2">
+                            {faceVerifyStatus === 'idle' && (
+                                <button
+                                    onClick={startFaceVerify}
+                                    className="flex-1 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2"
+                                >
+                                    <Camera size={18} /> Bắt đầu xác thực
+                                </button>
+                            )}
+                            {faceVerifyStatus === 'error' && (
+                                <button
+                                    onClick={startFaceVerify}
+                                    className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
+                                >
+                                    🔄 Thử lại
+                                </button>
+                            )}
+                            <button
+                                onClick={closeFaceModal}
+                                className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-500 font-bold rounded-xl transition-colors"
+                            >
+                                Hủy
+                            </button>
+                        </div>
+
+                        {/* Info */}
+                        <p className="text-[10px] text-slate-400 text-center mt-3">
+                            🔒 Khuôn mặt chỉ dùng để xác thực, không lưu trữ ảnh
+                        </p>
+                    </div>
+                </div>
+            )}
+        </>
     );
 }
 

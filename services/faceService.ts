@@ -119,8 +119,9 @@ export async function detectFaces(input: HTMLImageElement | HTMLVideoElement | H
         return detection ? [detection] : [];
     }
 
+    // Use TinyFaceDetector for multi-face too — MUCH faster than default SsdMobilenetv1
     const detections = await faceapi
-        .detectAllFaces(input)
+        .detectAllFaces(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 160 }))
         .withFaceLandmarks()
         .withFaceDescriptors();
 

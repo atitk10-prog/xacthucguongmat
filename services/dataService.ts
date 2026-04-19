@@ -113,7 +113,7 @@ async function syncOfflineData(): Promise<{ success: number; failed: number }> {
             } else if (record.type === 'point_log') {
                 res = await addPoints(record.data.userId, record.data.points, record.data.reason, record.data.type, record.data.eventId);
             } else if (record.type === 'attendance') {
-                res = await boardingCheckin(record.data.userId, record.data.slotId, record.data.status);
+                res = await boardingCheckin(record.data.userId, record.data.slotId, record.data.status, record.data.geoData);
             }
 
             if (res && (res.success || res.alreadyExists || (res.error && (res.error.includes('already exists') || res.error.includes('đã check-in'))))) {
@@ -1939,7 +1939,18 @@ function clearBoardingCheckinCache(): void {
 async function boardingCheckin(
     userId: string,
     slotId: string,
-    status: 'on_time' | 'late' = 'on_time'
+    status: 'on_time' | 'late' = 'on_time',
+    geoData?: {
+        checkin_latitude?: number;
+        checkin_longitude?: number;
+        checkin_accuracy?: number;
+        gps_suspicious?: boolean;
+        checkin_mode?: 'qr' | 'face' | 'geo' | 'manual';
+        face_verified?: boolean;
+        device_info?: string;
+        notes?: string;
+        checked_by?: string;
+    }
 ): Promise<ApiResponse<any>> {
     try {
         const today = getTodayDateStr();
@@ -1957,7 +1968,7 @@ async function boardingCheckin(
             console.log(`📡 [Offline] No network. Queuing check-in for ${userId} in slot ${slotId}`);
             addToOfflineQueue({
                 type: 'attendance',
-                data: { userId, slotId, status }
+                data: { userId, slotId, status, geoData }
             });
             // Return a "pseudo-success" for the UI to proceed
             return {
@@ -2006,15 +2017,30 @@ async function boardingCheckin(
         }
 
         // 2. Lưu vào bảng log duy nhất (boarding_attendance)
+        const upsertPayload: any = {
+            user_id: userId,
+            slot_id: slotId,
+            date: today,
+            checkin_time: now,
+            status: status
+        };
+
+        // Thêm GPS + mode data nếu có
+        if (geoData) {
+            if (geoData.checkin_latitude !== undefined) upsertPayload.checkin_latitude = geoData.checkin_latitude;
+            if (geoData.checkin_longitude !== undefined) upsertPayload.checkin_longitude = geoData.checkin_longitude;
+            if (geoData.checkin_accuracy !== undefined) upsertPayload.checkin_accuracy = geoData.checkin_accuracy;
+            if (geoData.gps_suspicious !== undefined) upsertPayload.gps_suspicious = geoData.gps_suspicious;
+            if (geoData.checkin_mode) upsertPayload.checkin_mode = geoData.checkin_mode;
+            if (geoData.face_verified !== undefined) upsertPayload.face_verified = geoData.face_verified;
+            if (geoData.device_info) upsertPayload.device_info = geoData.device_info;
+            if (geoData.notes) upsertPayload.notes = geoData.notes;
+            if (geoData.checked_by) upsertPayload.checked_by = geoData.checked_by;
+        }
+
         const { data: attendanceData, error: attendanceError } = await supabase
             .from('boarding_attendance')
-            .upsert({
-                user_id: userId,
-                slot_id: slotId,
-                date: today,
-                checkin_time: now,
-                status: status
-            }, {
+            .upsert(upsertPayload, {
                 onConflict: 'user_id, slot_id, date'
             })
             .select()
@@ -2076,6 +2102,47 @@ async function boardingCheckin(
     } catch (err: any) {
         console.error('boardingCheckin error:', err);
         return { success: false, error: err.message || 'Lỗi điểm danh' };
+    }
+}
+
+/**
+ * Kiểm tra trùng thiết bị: cùng device_info + cùng slot + cùng ngày + user khác
+ * Dùng khi Face verify OFF → chống HS mượn ĐT bạn check-in
+ * Khi Face verify ON → KHÔNG cần gọi (vì HS được phép mượn ĐT)
+ */
+async function checkDuplicateDevice(
+    slotId: string,
+    userId: string,
+    deviceFingerprint: string,
+    minutesWindow: number = 10
+): Promise<{ isDuplicate: boolean; otherUserName?: string; otherUserId?: string }> {
+    try {
+        const today = getTodayDateStr();
+        const windowStart = new Date(Date.now() - minutesWindow * 60 * 1000).toISOString();
+
+        const { data, error } = await supabase
+            .from('boarding_attendance')
+            .select('user_id, user:users!user_id(full_name)')
+            .eq('slot_id', slotId)
+            .eq('date', today)
+            .eq('device_info', deviceFingerprint)
+            .neq('user_id', userId)
+            .gte('checkin_time', windowStart)
+            .limit(1);
+
+        if (error || !data || data.length === 0) {
+            return { isDuplicate: false };
+        }
+
+        const otherUser = Array.isArray(data[0].user) ? data[0].user[0] : data[0].user;
+        return {
+            isDuplicate: true,
+            otherUserName: (otherUser as any)?.full_name || 'Học sinh khác',
+            otherUserId: data[0].user_id
+        };
+    } catch (err) {
+        console.error('checkDuplicateDevice error:', err);
+        return { isDuplicate: false }; // Fail-open: không block nếu lỗi
     }
 }
 
@@ -2226,6 +2293,103 @@ async function getRecentBoardingLogs(limit: number = 15, date?: string): Promise
 }
 
 // =====================================================
+// BOARDING MAP & MANUAL CHECKIN API
+// =====================================================
+
+/**
+ * GV điểm danh thủ công cho HS (tick trong danh sách)
+ */
+async function boardingManualCheckin(
+    userId: string,
+    slotId: string,
+    checkedBy: string,
+    notes: string = 'Điểm danh thủ công'
+): Promise<ApiResponse<any>> {
+    const status = calculateCheckinStatus(
+        { end_time: '23:59' } as BoardingTimeSlot,
+        new Date()
+    );
+
+    // Lấy slot thực để tính status đúng
+    const { data: slotData } = await supabase
+        .from('boarding_time_slots')
+        .select('*')
+        .eq('id', slotId)
+        .single();
+
+    const realStatus = slotData ? calculateCheckinStatus(slotData as BoardingTimeSlot, new Date()) : 'on_time';
+
+    return boardingCheckin(userId, slotId, realStatus, {
+        checkin_mode: 'manual',
+        notes: notes,
+        checked_by: checkedBy,
+        device_info: 'Manual by Teacher'
+    });
+}
+
+/**
+ * Lấy dữ liệu GPS cho bản đồ theo slot + ngày
+ */
+async function getBoardingMapData(options: {
+    slotId: string;
+    date: string;
+}): Promise<ApiResponse<any[]>> {
+    try {
+        const { data, error } = await supabase
+            .from('boarding_attendance')
+            .select(`
+                id,
+                user_id,
+                checkin_time,
+                status,
+                checkin_latitude,
+                checkin_longitude,
+                checkin_accuracy,
+                gps_suspicious,
+                checkin_mode,
+                face_verified,
+                notes,
+                user:users!user_id(full_name, student_code, organization, avatar_url, room_id)
+            `)
+            .eq('slot_id', options.slotId)
+            .eq('date', options.date)
+            .order('checkin_time', { ascending: true });
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: data || [] };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi tải dữ liệu bản đồ' };
+    }
+}
+
+/**
+ * Xóa GPS data cũ hơn retention days (chỉ xóa lat/lng, giữ nguyên dữ liệu điểm danh)
+ */
+async function cleanupOldGpsData(retentionDays: number = 7): Promise<ApiResponse<{ count: number }>> {
+    try {
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - retentionDays);
+        const cutoffStr = cutoffDate.toLocaleDateString('en-CA');
+
+        const { data, error } = await supabase
+            .from('boarding_attendance')
+            .update({
+                checkin_latitude: null,
+                checkin_longitude: null,
+                checkin_accuracy: null
+            })
+            .lt('date', cutoffStr)
+            .not('checkin_latitude', 'is', null)
+            .select('id');
+
+        if (error) return { success: false, error: error.message };
+        return { success: true, data: { count: data?.length || 0 } };
+    } catch (err: any) {
+        return { success: false, error: err.message || 'Lỗi dọn dẹp GPS data' };
+    }
+}
+
+//
 // BOARDING TIME SLOTS API - Khung giờ check-in linh hoạt
 // =====================================================
 
@@ -3804,6 +3968,10 @@ export const dataService = {
     getBoardingCheckins,
     getRecentBoardingActivity,
     getRecentBoardingLogs,
+    boardingManualCheckin,
+    getBoardingMapData,
+    cleanupOldGpsData,
+    checkDuplicateDevice,
     getBoardingConfig,
     updateBoardingConfig,
     getTeacherPermissions,

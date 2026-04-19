@@ -7,9 +7,12 @@ import { dataService } from '../dataService';
 export const boardingService = {
     // Boarding Check-in
     boardingCheckin: dataService.boardingCheckin,
+    boardingManualCheckin: dataService.boardingManualCheckin,
     getBoardingCheckins: dataService.getBoardingCheckins,
     getRecentBoardingActivity: dataService.getRecentBoardingActivity,
     getRecentBoardingLogs: dataService.getRecentBoardingLogs,
+    getBoardingMapData: dataService.getBoardingMapData,
+    cleanupOldGpsData: dataService.cleanupOldGpsData,
 
     // Config
     getBoardingConfig: dataService.getBoardingConfig,

@@ -527,7 +527,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         }
         try {
             const newStream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+                video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
             });
             setStream(newStream);
             if (videoRef.current) {
@@ -709,7 +709,7 @@ const CheckinPage: React.FC<CheckinPageProps> = ({ event, currentUser, onBack })
         // - Mobile: 400ms (~2.5 FPS) to prevent lag and battery drain
         // - Desktop: 150ms (~6.5 FPS) for smoother experience
         const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
-        const DETECTION_INTERVAL = isMobile ? 200 : 100; // Optimized: 10 FPS on desktop, 5 FPS on mobile
+        const DETECTION_INTERVAL = isMobile ? 150 : 100; // ~7 FPS mobile, 10 FPS desktop
 
         const detectLoop = async () => {
             if (!videoRef.current || videoRef.current.readyState !== 4) {

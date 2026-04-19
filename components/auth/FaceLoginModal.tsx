@@ -53,7 +53,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 // 1. Start Camera IMMEDIATELY for fast UX
                 setGuidance('Đang mở camera...');
                 const newStream = await navigator.mediaDevices.getUserMedia({
-                    video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+                    video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
                 });
                 setStream(newStream);
                 if (videoRef.current) {
@@ -124,8 +124,8 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         if (!isOpen || !modelsReady || !videoRef.current || loginSuccess) return;
 
         let animationId: number;
-        const STABILITY_THRESHOLD = 1000; // 1s to stabilize as requested
-        const PROCESSING_THROTTLE = 100; // 10 FPS
+        const STABILITY_THRESHOLD = 600; // 0.6s — nhanh, UX tốt
+        const PROCESSING_THROTTLE = 120; // ~8 FPS — mượt trên ĐT trung bình
         const CONFIDENCE_THRESHOLD = 42;
 
         const loop = async () => {
@@ -149,16 +149,11 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             lastProcessedTimeRef.current = now;
 
             try {
-                // USE TINY FACE DETECTOR for ultra-fast tracking (No lag)
-                const allDets = await faceapi.detectAllFaces(
+                // USE TINY FACE DETECTOR + detectSingleFace for max speed
+                const detections = await faceapi.detectSingleFace(
                     videoRef.current,
                     new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 })
                 );
-
-                // Pick the largest face
-                const detections = allDets.length > 0
-                    ? allDets.sort((a, b) => (b.box.width * b.box.height) - (a.box.width * a.box.height))[0]
-                    : null;
 
                 const hasFace = !!detections;
                 setFaceDetected(hasFace);
@@ -211,18 +206,6 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             animationId = requestAnimationFrame(loop);
         };
 
-        const checkPresence = async () => {
-            if (!videoRef.current) return;
-
-            // Minimal detection
-            const detections = await faceapi.detectSingleFace(videoRef.current, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }));
-
-            if (!detections) {
-                setGuidance('Mất dấu khuôn mặt');
-                stableStartTimeRef.current = null;
-                setStabilityProgress(0);
-            }
-        };
 
         const captureAndAuth = async () => {
             if (!videoRef.current || isProcessing) return;
@@ -258,7 +241,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                 const img = await faceService.base64ToImage(dataUrl);
                 const allDetections = await faceapi.detectAllFaces(
                     img,
-                    new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 })
+                    new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
                 )
                     .withFaceLandmarks()
                     .withFaceDescriptors();

@@ -125,7 +125,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         }
     };
 
-    const handleAutoCheckin = async (userId: string, name: string, confidence: number) => {
+    const handleAutoCheckin = async (userId: string, name: string, confidence: number, mode: 'face' | 'qr' | 'geo' = 'face') => {
         if (!selectedSlot || slotStatus === 'closed') {
             setGuidance('Chưa đến giờ điểm danh!');
             return;
@@ -135,7 +135,11 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
         if (status === 'late') soundService.play('warning'); else soundService.play('success');
 
         try {
-            const response = await dataService.boardingCheckin(userId, selectedSlot.id, status as 'on_time' | 'late');
+            const response = await dataService.boardingCheckin(userId, selectedSlot.id, status as 'on_time' | 'late', {
+                checkin_mode: mode,
+                face_verified: mode === 'face',
+                device_info: navigator.userAgent
+            });
             if (response.success) {
                 const student = studentsData.find(s => s.id === userId);
                 checkinCooldownsRef.current.set(userId, Date.now() + 60000);
@@ -197,7 +201,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
             setGuidance(remaining > 10000 ? `${student.full_name} đã check-in (${Math.ceil(remaining / 1000)}s)` : `Vui lòng đợi ${Math.ceil(remaining / 1000)}s...`);
             return;
         }
-        await handleAutoCheckin(student.id, student.full_name, 100);
+        await handleAutoCheckin(student.id, student.full_name, 100, 'qr');
     };
 
     const switchCheckinMode = async (mode: 'face' | 'qr', newFacing?: 'environment' | 'user') => {
@@ -258,7 +262,7 @@ const BoardingCheckin: React.FC<BoardingCheckinProps> = ({ onBack }) => {
 
         try {
             const s = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }
+                video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }
             });
             setStream(s);
             if (videoRef.current) {

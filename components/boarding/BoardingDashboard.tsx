@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
 import { supabase } from '../../services/supabaseClient';
 import { BoardingTimeSlot, User, BoardingCheckin } from '../../types';
+import { useToast } from '../ui';
 import {
     Users, CheckCircle, AlertTriangle, Clock, TrendingUp,
     UserCheck, XCircle, Calendar, ArrowUp, ArrowDown, Home, RefreshCw,
-    PieChart, Activity, LogIn, ExternalLink
+    PieChart, Activity, LogIn, ExternalLink, MapPin
 } from 'lucide-react';
+import BoardingMap from './BoardingMap';
 
 // Remove redundant // ... existing code ... placeholders if any
 
@@ -24,6 +26,8 @@ interface RecentCheckin {
     type: string;
     status: 'on_time' | 'late';
     organization?: string;
+    checkinMode?: string; // 'qr' | 'face' | 'geo' | 'manual'
+    checkedByName?: string; // GV name if manual
 }
 
 interface RoomStat {
@@ -38,9 +42,10 @@ interface RoomStat {
 
 interface BoardingDashboardProps {
     onNavigate?: (tab: string) => void;
+    currentUser?: User;
 }
 
-const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => {
+const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate, currentUser }) => {
     const [stats, setStats] = useState<DashboardStats>({
         totalStudents: 0,
         checkedInToday: 0,
@@ -72,6 +77,12 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
     const [selectedSlotId, setSelectedSlotId] = useState<string>('all');
     const [activeSlotId, setActiveSlotId] = useState<string | null>(null);
 
+    // Manual checkin state
+    const [manualCheckinLoading, setManualCheckinLoading] = useState<string | null>(null);
+    const [manualModal, setManualModal] = useState<{ student: User; slotId: string } | null>(null);
+    const [manualNote, setManualNote] = useState('GV điểm danh thủ công');
+    const { success: toastSuccess, error: toastError } = useToast();
+
     // Raw data storage for processing
     const [rawData, setRawData] = useState<{
         students: User[];
@@ -94,7 +105,7 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
             .channel('boarding_dashboard_realtime')
             .on(
                 'postgres_changes',
-                { event: '*', schema: 'public', table: 'boarding_checkins' },
+                { event: '*', schema: 'public', table: 'boarding_attendance' },
                 () => {
                     console.log('Realtime change detected');
                     loadDashboardData(true); // Silent refresh
@@ -501,9 +512,13 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                                     </div>
                                     <div className="text-right flex-shrink-0">
                                         <p className="font-mono text-[10px] sm:text-sm text-slate-900">{checkin.time}</p>
-                                        <p className={`text-[9px] sm:text-xs font-bold truncate ${checkin.status === 'late' ? 'text-amber-600' : 'text-emerald-600'
+                                        <p className={`text-[9px] sm:text-xs font-bold truncate ${
+                                            checkin.checkinMode === 'manual' ? 'text-orange-600' :
+                                            checkin.status === 'late' ? 'text-amber-600' : 'text-emerald-600'
                                             }`}>
-                                            {checkin.status === 'late' ? 'Trễ' : 'Đúng giờ'}
+                                            {checkin.checkinMode === 'manual' 
+                                                ? `🖊️ GV tick${checkin.checkedByName ? ` (${checkin.checkedByName})` : ''}`
+                                                : checkin.status === 'late' ? 'Trễ' : 'Đúng giờ'}
                                         </p>
                                     </div>
                                 </div>
@@ -541,6 +556,24 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                                                 <p className="font-medium text-slate-900 text-xs sm:text-sm truncate">{student.full_name}</p>
                                                 <p className="text-[10px] text-slate-500 truncate">{student.organization || student.student_code}</p>
                                             </div>
+                                            {/* Manual check-in button for teacher/admin */}
+                                            {currentUser && activeSlotId && (
+                                                <button
+                                                    onClick={() => {
+                                                        const slotToUse = activeSlotId || selectedSlotId;
+                                                        if (!slotToUse || slotToUse === 'all') return;
+                                                        setManualNote('GV điểm danh thủ công');
+                                                        setManualModal({ student, slotId: slotToUse });
+                                                    }}
+                                                    disabled={manualCheckinLoading === student.id}
+                                                    className="px-2 py-1 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 rounded-lg text-xs font-bold transition-colors disabled:opacity-50 flex-shrink-0"
+                                                    title="Điểm danh thủ công"
+                                                >
+                                                    {manualCheckinLoading === student.id ? (
+                                                        <div className="w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                                                    ) : '✓ Tick'}
+                                                </button>
+                                            )}
                                             <div className="text-[9px] font-bold text-red-400 flex-shrink-0 uppercase">Chưa điểm danh</div>
                                         </div>
                                     ))}
@@ -713,6 +746,22 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                 </div>
             )}
 
+            {/* Map Section */}
+            {timeSlots.filter(s => s.is_active).length > 0 && (
+                <div className="bg-white rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
+                    <div className="p-4 border-b border-slate-100 bg-gradient-to-r from-blue-50 to-cyan-50">
+                        <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                            <MapPin className="w-5 h-5 text-blue-600" />
+                            Bản đồ điểm danh
+                            <span className="ml-auto text-xs text-slate-500 font-normal">GPS</span>
+                        </h3>
+                    </div>
+                    <div className="p-4">
+                        <BoardingMap timeSlots={timeSlots} activeSlotId={selectedSlotId} />
+                    </div>
+                </div>
+            )}
+
             {/* Room Detail Modal */}
             {selectedRoom && (
                 <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
@@ -784,6 +833,95 @@ const BoardingDashboard: React.FC<BoardingDashboardProps> = ({ onNavigate }) => 
                                     <p>Phòng trống (Chưa có học sinh)</p>
                                 </div>
                             )}
+                        </div>
+                    </div>
+                </div>
+            )}
+            {/* Manual Check-in Modal */}
+            {manualModal && (
+                <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
+                    <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full overflow-hidden">
+                        <div className="p-5 border-b border-slate-100 bg-gradient-to-r from-emerald-50 to-teal-50">
+                            <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                                <UserCheck className="w-5 h-5 text-emerald-600" />
+                                Điểm danh thủ công
+                            </h3>
+                        </div>
+                        <div className="p-5 space-y-4">
+                            <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl">
+                                <div className="w-10 h-10 bg-emerald-100 rounded-full flex items-center justify-center text-emerald-700 font-bold">
+                                    {manualModal.student.full_name.charAt(0)}
+                                </div>
+                                <div>
+                                    <p className="font-bold text-slate-900">{manualModal.student.full_name}</p>
+                                    <p className="text-xs text-slate-500">{manualModal.student.organization || manualModal.student.student_code}</p>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-bold text-slate-500 mb-1 uppercase">Ghi chú</label>
+                                <input
+                                    type="text"
+                                    value={manualNote}
+                                    onChange={e => setManualNote(e.target.value)}
+                                    className="w-full p-3 border border-slate-200 rounded-xl text-sm focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+                                    placeholder="VD: HS mất thẻ, đã xác nhận có mặt..."
+                                    autoFocus
+                                />
+                            </div>
+                        </div>
+                        <div className="p-4 border-t border-slate-100 flex gap-3">
+                            <button
+                                onClick={() => setManualModal(null)}
+                                className="flex-1 py-2.5 text-sm font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
+                            >
+                                Hủy
+                            </button>
+                            <button
+                                onClick={async () => {
+                                    if (!currentUser || !manualModal) return;
+                                    setManualCheckinLoading(manualModal.student.id);
+                                    try {
+                                        const res = await dataService.boardingManualCheckin(
+                                            manualModal.student.id, manualModal.slotId, currentUser.id, manualNote || 'GV điểm danh thủ công'
+                                        );
+                                        if (res.success) {
+                                            // Update lists
+                                            setAllNotCheckedInStudents(prev => prev.filter(s => s.id !== manualModal.student.id));
+                                            setCheckedInSet(prev => new Set([...prev, manualModal.student.id]));
+                                            setStats(prev => ({
+                                                ...prev,
+                                                checkedInToday: prev.checkedInToday + 1,
+                                                notCheckedIn: prev.notCheckedIn - 1
+                                            }));
+                                            // Add to recent checkins
+                                            const now = new Date();
+                                            setRecentCheckins(prev => [{
+                                                name: manualModal.student.full_name,
+                                                time: now.toLocaleTimeString('vi-VN', { hour: '2-digit', minute: '2-digit' }),
+                                                type: timeSlots.find(s => s.id === manualModal.slotId)?.name || 'Khung giờ',
+                                                status: 'on_time' as const,
+                                                organization: manualModal.student.organization,
+                                                checkinMode: 'manual',
+                                                checkedByName: currentUser.full_name
+                                            }, ...prev].slice(0, 10));
+                                            toastSuccess(`✓ Đã điểm danh ${manualModal.student.full_name} (bởi ${currentUser.full_name})`);
+                                            setManualModal(null);
+                                        } else {
+                                            toastError(res.error || 'Lỗi điểm danh');
+                                        }
+                                    } catch (e: any) {
+                                        toastError(e.message || 'Lỗi hệ thống');
+                                    } finally {
+                                        setManualCheckinLoading(null);
+                                    }
+                                }}
+                                disabled={manualCheckinLoading === manualModal.student.id}
+                                className="flex-1 py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-xl transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                                {manualCheckinLoading === manualModal.student.id ? (
+                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                ) : '✓ Xác nhận điểm danh'}
+                            </button>
                         </div>
                     </div>
                 </div>
