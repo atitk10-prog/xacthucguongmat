@@ -234,14 +234,15 @@ export async function chatWithData(
 
     const messages: GeminiMessage[] = [];
 
-    // First message: provide data context
+    // First message: provide data context with time range info
+    const rangeLabel = stats?.range === 'day' ? 'hôm nay' : stats?.range === 'week' ? '7 ngày qua' : stats?.range === 'month' ? '30 ngày qua' : stats?.range === 'quarter' ? '3 tháng qua' : stats?.range === 'year' ? '1 năm qua' : 'kỳ đã chọn';
     messages.push({
         role: 'user',
-        parts: [{ text: `Dữ liệu thống kê điểm hiện tại:\n\n${context}\n\nGhi nhớ dữ liệu này. Khi trả lời:\n- Trả lời TỰ NHIÊN như đang nói chuyện, KHÔNG viết báo cáo\n- Ngắn gọn, đi thẳng vào câu trả lời\n- Dùng số liệu cụ thể từ dữ liệu\n- Dùng [!] [+] [-] [>] chỉ khi thực sự cần nhấn mạnh, không lạm dụng` }]
+        parts: [{ text: `Dữ liệu thống kê điểm (${rangeLabel}):\n\n${context}\n\nGhi nhớ dữ liệu này. Khi trả lời:\n- Trả lời TỰ NHIÊN như đang nói chuyện, KHÔNG viết báo cáo\n- Ngắn gọn, đi thẳng vào câu trả lời\n- Dùng số liệu cụ thể từ dữ liệu\n- Nếu người dùng hỏi về khoảng thời gian khác, nói rõ "Dữ liệu hiện tại là ${rangeLabel}. Để xem khoảng thời gian khác, vui lòng chọn ở tab Tổng quan rồi quay lại hỏi"\n- Dùng [!] [+] [-] [>] chỉ khi thực sự cần nhấn mạnh` }]
     });
     messages.push({
         role: 'model',
-        parts: [{ text: 'OK, tôi đã ghi nhận dữ liệu. Hỏi gì cứ hỏi nhé!' }]
+        parts: [{ text: `OK, tôi đã ghi nhận dữ liệu ${rangeLabel}. Hỏi gì cứ hỏi nhé!` }]
     });
 
     // Add chat history
@@ -450,11 +451,11 @@ export async function chatWithStudentData(
 
     messages.push({
         role: 'user',
-        parts: [{ text: `Dữ liệu phân tích hành vi HS:\n\n${context}\n\nGhi nhớ dữ liệu này để trả lời câu hỏi. Bạn là chuyên gia giáo dục, đưa đề xuất cụ thể cho GVCN.` }]
+        parts: [{ text: `Dữ liệu phân tích hành vi HS (${behaviorReport.weeksAnalyzed} tuần gần nhất):\n\n${context}\n\nGhi nhớ dữ liệu này. Khi trả lời:\n- Trả lời TỰ NHIÊN, ngắn gọn, đi thẳng vào vấn đề\n- Bạn là chuyên gia giáo dục, đưa đề xuất cụ thể cho GVCN\n- Nếu hỏi về khoảng thời gian khác, nói rõ "Dữ liệu hiện tại là ${behaviorReport.weeksAnalyzed} tuần. Để xem khoảng khác, chọn ở tab Cá nhân rồi quay lại hỏi"` }]
     });
     messages.push({
         role: 'model',
-        parts: [{ text: 'Đã ghi nhận. Tôi sẵn sàng phân tích và tư vấn về hành vi từng học sinh.' }]
+        parts: [{ text: `OK, tôi có dữ liệu ${behaviorReport.summary.totalStudents} HS trong ${behaviorReport.weeksAnalyzed} tuần. Hỏi gì cứ hỏi!` }]
     });
 
     chatHistory.forEach(msg => {

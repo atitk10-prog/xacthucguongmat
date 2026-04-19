@@ -1095,7 +1095,15 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
                             <div>
                                 <h3 className="font-black text-sm text-slate-800">Hỏi đáp AI</h3>
                                 <p className="text-[11px] text-slate-400">
-                                    {behaviorReport ? `Dữ liệu ${behaviorReport.summary.totalStudents} HS, ${behaviorReport.weeksAnalyzed} tuần` : 'Dữ liệu tổng hợp'}
+                                    {(() => {
+                                        const parts: string[] = [];
+                                        if (stats) {
+                                            const rangeLabels: Record<string, string> = { day: 'hôm nay', week: '7 ngày', month: '30 ngày', quarter: '3 tháng', year: '1 năm' };
+                                            parts.push(`Thống kê: ${rangeLabels[stats.range] || stats.range}`);
+                                        }
+                                        if (behaviorReport) parts.push(`Hành vi: ${behaviorReport.summary.totalStudents} HS, ${behaviorReport.weeksAnalyzed} tuần`);
+                                        return parts.join(' • ') || 'Chưa có dữ liệu';
+                                    })()}
                                 </p>
                             </div>
                         </div>
