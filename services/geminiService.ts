@@ -336,7 +336,34 @@ export async function analyzeStudentBehavior(report: any): Promise<string> {
         {
             role: 'user',
             parts: [{
-                text: `${context}\n\n---\nBạn là chuyên gia tư vấn giáo dục. Phân tích báo cáo trên và đưa ra:\n\n1. **CẢNH BÁO SỚM**: Những HS nào cần can thiệp gấp? Mô tả cụ thể vấn đề.\n2. **ĐỀ XUẤT CHO GVCN**: Hành động cụ thể cho từng HS (gặp riêng, gọi phụ huynh, gắn kèm bạn tốt...)\n3. **TUYÊN DƯƠNG**: HS nào cần được khen thưởng kịp thời? Đề xuất hình thức.\n4. **NHẬN ĐỊNH TỔNG QUAN**: Xu hướng chung của trường/lớp trong ${report.weeksAnalyzed} tuần.\n\nTrả lời ngắn gọn, thực tế, dễ hành động. Sử dụng bullet points và định dạng rõ ràng. Dùng ký hiệu [!] cho cảnh báo, [+] cho tích cực, [-] cho tiêu cực, [>] cho đề xuất.`
+                text: `${context}\n\n---\nBạn là chuyên gia tư vấn giáo dục. Phân tích báo cáo trên và trình bày THEO TỪNG MỨC CẢNH BÁO, liệt kê HS cụ thể trong mỗi mức:
+
+[!] **MỨC ĐỎ — CẦN CAN THIỆP GẤP**
+Liệt kê từng HS mức đỏ (tên + lớp), nêu rõ:
+- Vi phạm cụ thể gì (trốn điểm danh, đi muộn nhiều lần...)
+- Đề xuất hành động: gặp riêng, gọi phụ huynh, theo dõi đặc biệt...
+
+[-] **MỨC VÀNG — CẦN THEO DÕI**
+Liệt kê từng HS mức vàng (tên + lớp), nêu rõ:
+- Dấu hiệu tiêu cực gì
+- Đề xuất: nhắc nhở, gắn kèm bạn tốt...
+
+[+] **MỨC XANH — ỔN ĐỊNH**
+- Tóm tắt số lượng HS ổn định, nhận xét chung
+
+[*] **MỨC XUẤT SẮC — TUYÊN DƯƠNG**
+Liệt kê từng HS xuất sắc (tên + lớp), nêu rõ:
+- Thành tích cụ thể (điểm cộng cao, không vi phạm, cải thiện...)
+- Đề xuất khen thưởng: tuyên dương trước lớp, giấy khen, gửi thư phụ huynh...
+
+[>] **NHẬN ĐỊNH TỔNG QUAN**
+- Xu hướng chung trong ${report.weeksAnalyzed} tuần
+- Lớp nào cần chú ý nhất
+
+QUY TẮC:
+- Mỗi HS chỉ xuất hiện trong ĐÚNG 1 mức
+- Nêu TÊN CỤ THỂ, không nói chung chung
+- Dùng markers [!] [-] [+] [*] [>] đầu mỗi dòng quan trọng`
             }]
         }
     ];
