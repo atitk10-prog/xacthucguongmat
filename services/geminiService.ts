@@ -237,11 +237,11 @@ export async function chatWithData(
     // First message: provide data context
     messages.push({
         role: 'user',
-        parts: [{ text: `Dữ liệu thống kê điểm hiện tại:\n\n${context}\n\nHãy ghi nhớ dữ liệu này để trả lời các câu hỏi tiếp theo.` }]
+        parts: [{ text: `Dữ liệu thống kê điểm hiện tại:\n\n${context}\n\nGhi nhớ dữ liệu này. Khi trả lời:\n- Trả lời TỰ NHIÊN như đang nói chuyện, KHÔNG viết báo cáo\n- Ngắn gọn, đi thẳng vào câu trả lời\n- Dùng số liệu cụ thể từ dữ liệu\n- Dùng [!] [+] [-] [>] chỉ khi thực sự cần nhấn mạnh, không lạm dụng` }]
     });
     messages.push({
         role: 'model',
-        parts: [{ text: 'Đã ghi nhận dữ liệu. Tôi sẵn sàng phân tích và trả lời câu hỏi.' }]
+        parts: [{ text: 'OK, tôi đã ghi nhận dữ liệu. Hỏi gì cứ hỏi nhé!' }]
     });
 
     // Add chat history
@@ -380,20 +380,20 @@ export async function analyzeStudentBehavior(report: any): Promise<string> {
             parts: [{
                 text: `${context}\n\n---\nBạn là chuyên gia tư vấn giáo dục. Phân tích báo cáo trên, trả lời ngắn gọn.
 
-Với mỗi mức có HS, liệt kê từng HS (tên + lớp + điểm số) kèm đề xuất:
+CHỈ phân tích HS ĐỎ, VÀNG, XUẤT SẮC — KHÔNG liệt kê HS xanh từng người:
 
-[!] HS mức đỏ — nêu vi phạm + đề xuất (gặp phụ huynh, theo dõi đặc biệt...)
-[-] HS mức vàng — nêu dấu hiệu + đề xuất (nhắc nhở, gắn kèm bạn tốt...)
-[+] HS mức xanh — tóm tắt ngắn gọn
-[*] HS xuất sắc — nêu thành tích + đề xuất khen thưởng
-[>] Nhận định tổng quan + đề xuất cho BGH/GVCN
+[!] HS mức đỏ (tối đa 5 HS) — nêu vi phạm + đề xuất
+[-] HS mức vàng (tối đa 5 HS) — nêu dấu hiệu + đề xuất
+[+] Mức xanh — CHỈ ghi "X HS ổn định" (1 dòng duy nhất, KHÔNG liệt kê tên)
+[*] HS xuất sắc (tối đa 3 HS) — nêu thành tích + đề xuất khen thưởng
+[>] Nhận định + đề xuất cho BGH/GVCN
 
-QUY TẮC:
-- NẾU mức nào KHÔNG có HS → BỎ QUA hoàn toàn, KHÔNG viết "không có HS mức này"
-- Mỗi HS nêu tên + lớp + TỔNG ĐIỂM cụ thể
-- KHÔNG viết heading ### hay **tiêu đề đậm**, chỉ dùng markers [!] [-] [+] [*] [>]
-- KHÔNG viết đoạn văn dài, mỗi ý 1 dòng
-- Dùng markers đầu MỖI dòng quan trọng`
+QUY TẮC NGHIÊM NGẶT:
+- KHÔNG BỊA TÊN HS. Chỉ dùng tên có trong dữ liệu ở trên
+- Mức xanh: CHỈ 1 dòng tóm tắt, TUYỆT ĐỐI KHÔNG liệt kê từng HS xanh
+- Mức trống → bỏ qua hoàn toàn
+- KHÔNG viết heading ###, KHÔNG viết **bold**
+- Mỗi ý 1 dòng, bắt đầu bằng marker`
             }]
         }
     ];

@@ -77,9 +77,12 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
     const [useDateRange, setUseDateRange] = useState(false);
 
     // Pagination & Sorting
-    const ITEMS_PER_PAGE = 20;
+    const ITEMS_PER_PAGE = 10;
     const [currentPage, setCurrentPage] = useState(1);
     const [sortBy, setSortBy] = useState<'default' | 'points-high' | 'points-low'>('default');
+
+    // Reset page when filters change
+    useEffect(() => { setCurrentPage(1); }, [alertFilter, studentSearch, sortBy]);
 
     // Chat State
     const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai'; text: string }[]>([]);
@@ -371,8 +374,8 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
             list = list.filter((s: any) => s.name.toLowerCase().includes(q) || s.class.toLowerCase().includes(q));
         }
         // Sorting
-        if (sortBy === 'points-high') list = [...list].sort((a: any, b: any) => (b.totalAdded - b.totalDeducted) - (a.totalAdded - a.totalDeducted));
-        else if (sortBy === 'points-low') list = [...list].sort((a: any, b: any) => (a.totalAdded - a.totalDeducted) - (b.totalAdded - b.totalDeducted));
+        if (sortBy === 'points-high') list = [...list].sort((a: any, b: any) => (b.totalPoints ?? 0) - (a.totalPoints ?? 0));
+        else if (sortBy === 'points-low') list = [...list].sort((a: any, b: any) => (a.totalPoints ?? 0) - (b.totalPoints ?? 0));
         return list;
     }, [behaviorReport, alertFilter, studentSearch, sortBy]);
 
@@ -571,6 +574,77 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
                             })}
                         </div>
                     );
+                })}
+            </div>
+        );
+    };
+
+    // ═══ Simple AI renderer for Chat & Personal (no banners, just colored dots) ═══
+    const renderAISimple = (text: string, darkMode = false) => {
+        const cleanText = (str: string) => str
+            .replace(/\(\[!\]\)/g, '').replace(/\(\[-\]\)/g, '').replace(/\(\[\+\]\)/g, '')
+            .replace(/\(\[>\]\)/g, '').replace(/\(\[\*\]\)/g, '').replace(/\s{2,}/g, ' ').trim();
+
+        const renderInline = (str: string) => {
+            const cleaned = cleanText(str);
+            const parts: React.ReactNode[] = [];
+            const boldRegex = /\*\*(.+?)\*\*/g;
+            let lastIndex = 0;
+            let match;
+            while ((match = boldRegex.exec(cleaned)) !== null) {
+                if (match.index > lastIndex) parts.push(cleaned.slice(lastIndex, match.index));
+                parts.push(<strong key={`b-${match.index}`} className={darkMode ? 'text-white font-bold' : 'text-slate-900 font-bold'}>{match[1]}</strong>);
+                lastIndex = match.index + match[0].length;
+            }
+            if (lastIndex < cleaned.length) parts.push(cleaned.slice(lastIndex));
+            return parts.length > 0 ? parts : [cleaned];
+        };
+
+        const dotColors: Record<string, string> = {
+            '[!]': 'bg-red-500', '[CRITICAL]': 'bg-red-500',
+            '[-]': 'bg-amber-500', '[CAUTION]': 'bg-amber-500', '[?]': 'bg-amber-500',
+            '[+]': 'bg-emerald-500', '[OK]': 'bg-emerald-500',
+            '[>]': 'bg-indigo-500',
+            '[*]': 'bg-purple-500', '[EXCELLENT]': 'bg-purple-500',
+        };
+
+        const lines = text.split('\n');
+        return (
+            <div className="space-y-1">
+                {lines.map((line, i) => {
+                    const trimmed = line.trim();
+                    if (!trimmed) return <div key={i} className="h-1.5" />;
+
+                    // Headings
+                    if (trimmed.startsWith('##')) {
+                        return <p key={i} className={`font-bold text-sm mt-2 ${darkMode ? 'text-white' : 'text-slate-800'}`}>{trimmed.replace(/^#{1,4}\s*/, '')}</p>;
+                    }
+
+                    // Marker lines → colored dot
+                    for (const [marker, dotColor] of Object.entries(dotColors)) {
+                        if (trimmed.startsWith(marker)) {
+                            const content = trimmed.slice(marker.length).trim();
+                            return (
+                                <div key={i} className="flex items-start gap-2 pl-1">
+                                    <span className={`w-2 h-2 rounded-full mt-1.5 flex-shrink-0 ${dotColor}`} />
+                                    <span className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>{renderInline(content)}</span>
+                                </div>
+                            );
+                        }
+                    }
+
+                    // Bullet
+                    if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
+                        return (
+                            <div key={i} className="flex items-start gap-2 pl-3">
+                                <span className={`w-1 h-1 rounded-full mt-2 flex-shrink-0 ${darkMode ? 'bg-slate-500' : 'bg-slate-400'}`} />
+                                <span className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(trimmed.slice(2))}</span>
+                            </div>
+                        );
+                    }
+
+                    // Default
+                    return <p key={i} className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(trimmed)}</p>;
                 })}
             </div>
         );
@@ -807,7 +881,7 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
                                             <span className="text-indigo-300 text-sm">Đang phân tích cá nhân hóa...</span>
                                         </div>
                                     ) : (
-                                        <div className="max-h-72 overflow-y-auto pr-2">{renderAIText(behaviorAI, true)}</div>
+                                        <div className="max-h-96 overflow-y-auto pr-2">{renderAISimple(behaviorAI, true)}</div>
                                     )}
                                 </div>
                             )}
@@ -1052,7 +1126,7 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
                                     </div>
                                 )}
                                 <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-md' : 'bg-slate-100 text-slate-700 rounded-bl-md'}`}>
-                                    <div>{msg.role === 'ai' ? renderAIText(msg.text, false) : <p className="whitespace-pre-line leading-relaxed">{msg.text}</p>}</div>
+                                    <div>{msg.role === 'ai' ? renderAISimple(msg.text, false) : <p className="whitespace-pre-line leading-relaxed">{msg.text}</p>}</div>
                                 </div>
                                 {msg.role === 'user' && (
                                     <div className="w-7 h-7 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
