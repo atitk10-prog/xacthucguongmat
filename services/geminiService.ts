@@ -349,11 +349,22 @@ export async function analyzeStudentBehavior(report: any): Promise<string> {
         yellowStudents.slice(0, 10).forEach((s: any) => lines.push(...formatStudent(s), ''));
     }
 
-    // 🟢 GREEN — Ổn định (tóm tắt, không liệt kê hết)
+    // 🟢 GREEN — Ổn định (tóm tắt + highlight top deducted)
     const greenStudents = report.students.filter((s: any) => s.alertLevel === 'green');
     if (greenStudents.length > 0) {
         lines.push(`--- 🟢 MỨC XANH: ỔN ĐỊNH (${greenStudents.length} HS) ---`);
-        lines.push(`Tóm tắt: ${greenStudents.length} HS duy trì ổn định, không vi phạm đáng kể.`);
+        lines.push(`Tóm tắt: ${greenStudents.length} HS duy trì ổn định.`);
+        // Show top green students with deductions (so AI doesn't ignore issues)
+        const greenWithDeductions = greenStudents
+            .filter((s: any) => s.totalDeducted > 0)
+            .sort((a: any, b: any) => b.totalDeducted - a.totalDeducted)
+            .slice(0, 5);
+        if (greenWithDeductions.length > 0) {
+            lines.push(`⚠️ Tuy ổn định nhưng có điểm trừ:`);
+            greenWithDeductions.forEach((s: any) => {
+                lines.push(`  ${s.name} (${s.class}): tổng ${s.totalPoints}đ, trừ -${s.totalDeducted}`);
+            });
+        }
         lines.push('');
     }
 

@@ -454,10 +454,11 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
 
         // Group lines into sections
         const lines = text.split('\n');
-        type Section = { type: 'heading'; text: string; level: number } | { type: 'marker-group'; config: typeof sectionConfig[string]; lines: string[] } | { type: 'text'; lines: string[] };
+        type Section = { type: 'heading'; text: string; level: number } | { type: 'marker-group'; config: typeof sectionConfig[string]; lines: string[]; title: string } | { type: 'text'; lines: string[] };
         const sections: Section[] = [];
-        let currentMarkerGroup: { config: typeof sectionConfig[string]; lines: string[] } | null = null;
+        let currentMarkerGroup: { config: typeof sectionConfig[string]; lines: string[]; title: string } | null = null;
         let currentTextGroup: string[] = [];
+        let pendingHeading: string | null = null; // Track heading to merge into next banner
 
         const flushTextGroup = () => {
             if (currentTextGroup.length > 0) {
@@ -467,26 +468,32 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
         };
         const flushMarkerGroup = () => {
             if (currentMarkerGroup) {
-                sections.push({ type: 'marker-group', config: currentMarkerGroup.config, lines: [...currentMarkerGroup.lines] });
+                sections.push({ type: 'marker-group', config: currentMarkerGroup.config, lines: [...currentMarkerGroup.lines], title: currentMarkerGroup.title });
                 currentMarkerGroup = null;
+            }
+        };
+        const flushPendingHeading = () => {
+            if (pendingHeading) {
+                sections.push({ type: 'heading', text: pendingHeading, level: 3 });
+                pendingHeading = null;
             }
         };
 
         for (const line of lines) {
             const trimmed = line.trim();
             if (!trimmed) {
-                // Empty line → flush groups
                 flushMarkerGroup();
                 flushTextGroup();
+                // Don't flush heading on empty line - it may still merge with next group
                 continue;
             }
 
-            // Heading
+            // Heading → save as pending, may merge into next marker group
             if (trimmed.startsWith('##')) {
                 flushMarkerGroup();
                 flushTextGroup();
-                const level = trimmed.startsWith('###') ? 3 : 2;
-                sections.push({ type: 'heading', text: trimmed.replace(/^#{1,4}\s*/, ''), level });
+                flushPendingHeading(); // flush previous pending heading if any
+                pendingHeading = trimmed.replace(/^#{1,4}\s*/, '');
                 continue;
             }
 
@@ -495,21 +502,25 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
             if (markerInfo) {
                 flushTextGroup();
                 if (currentMarkerGroup && currentMarkerGroup.config.banner === markerInfo.config.banner) {
-                    // Same color group → append
                     currentMarkerGroup.lines.push(markerInfo.content);
                 } else {
                     flushMarkerGroup();
-                    currentMarkerGroup = { config: markerInfo.config, lines: [markerInfo.content] };
+                    // If there's a pending heading, use it as the banner title
+                    const title = pendingHeading || markerInfo.config.label;
+                    pendingHeading = null;
+                    currentMarkerGroup = { config: markerInfo.config, lines: [markerInfo.content], title };
                 }
                 continue;
             }
 
             // Regular text
+            flushPendingHeading();
             flushMarkerGroup();
             currentTextGroup.push(trimmed);
         }
         flushMarkerGroup();
         flushTextGroup();
+        flushPendingHeading();
 
         return (
             <div className="space-y-3">
@@ -530,7 +541,7 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
                                 {/* Colored banner header */}
                                 <div className={`${cfg.banner} px-4 py-2 flex items-center gap-2`}>
                                     <span className="w-2.5 h-2.5 rounded-full bg-white/80" />
-                                    <span className="text-white text-sm font-bold">{cfg.label}</span>
+                                    <span className="text-white text-sm font-bold">{section.title}</span>
                                 </div>
                                 {/* Content under banner */}
                                 <div className={`px-4 py-3 space-y-1.5 ${darkMode ? 'bg-white/5' : 'bg-white'}`}>
