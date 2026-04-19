@@ -389,99 +389,184 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
 
     // ═══ Rich AI Text Renderer ═══
     const renderAIText = (text: string, darkMode = false) => {
+        // Color legend component
+        const ColorLegend = () => (
+            <div className={`flex flex-wrap gap-3 mb-3 px-3 py-2 rounded-xl text-xs font-bold ${darkMode ? 'bg-white/5' : 'bg-slate-50 border border-slate-100'}`}>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-red-500" /> Cảnh báo / Khiển trách</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-amber-500" /> Cần theo dõi</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" /> Tích cực / Tuyên dương</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500" /> Đề xuất</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full bg-purple-500" /> Xuất sắc</span>
+            </div>
+        );
+
+        // Clean inline markers from text
+        const cleanText = (str: string) => str
+            .replace(/\(\[!\]\)/g, '').replace(/\(\[-\]\)/g, '').replace(/\(\[\+\]\)/g, '')
+            .replace(/\(\[>\]\)/g, '').replace(/\(\[\*\]\)/g, '').replace(/\s{2,}/g, ' ').trim();
+
+        // Render bold text
+        const renderInline = (str: string) => {
+            const cleaned = cleanText(str);
+            const parts: React.ReactNode[] = [];
+            const boldRegex = /\*\*(.+?)\*\*/g;
+            let lastIndex = 0;
+            let match;
+            while ((match = boldRegex.exec(cleaned)) !== null) {
+                if (match.index > lastIndex) parts.push(cleaned.slice(lastIndex, match.index));
+                parts.push(<strong key={`b-${match.index}`} className={darkMode ? 'text-white font-black' : 'text-slate-900 font-black'}>{match[1]}</strong>);
+                lastIndex = match.index + match[0].length;
+            }
+            if (lastIndex < cleaned.length) parts.push(cleaned.slice(lastIndex));
+            return parts.length > 0 ? parts : [cleaned];
+        };
+
+        // Marker → section config
+        const sectionConfig: Record<string, { banner: string; dot: string; label: string }> = {
+            '[!]': { banner: 'bg-red-500', dot: 'bg-red-400', label: 'Cảnh báo' },
+            '[CRITICAL]': { banner: 'bg-red-500', dot: 'bg-red-400', label: 'Cảnh báo' },
+            '[-]': { banner: 'bg-amber-500', dot: 'bg-amber-400', label: 'Theo dõi' },
+            '[CAUTION]': { banner: 'bg-amber-500', dot: 'bg-amber-400', label: 'Theo dõi' },
+            '[?]': { banner: 'bg-amber-500', dot: 'bg-amber-400', label: 'Theo dõi' },
+            '[+]': { banner: 'bg-emerald-500', dot: 'bg-emerald-400', label: 'Tích cực' },
+            '[OK]': { banner: 'bg-emerald-500', dot: 'bg-emerald-400', label: 'Tích cực' },
+            '[>]': { banner: 'bg-indigo-500', dot: 'bg-indigo-400', label: 'Đề xuất' },
+            '[*]': { banner: 'bg-purple-500', dot: 'bg-purple-400', label: 'Xuất sắc' },
+            '[EXCELLENT]': { banner: 'bg-purple-500', dot: 'bg-purple-400', label: 'Xuất sắc' },
+        };
+
+        // Detect marker at start of line
+        const getLineMarker = (line: string): { marker: string; content: string; config: typeof sectionConfig[string] } | null => {
+            for (const [marker, cfg] of Object.entries(sectionConfig)) {
+                if (line.startsWith(marker)) {
+                    return { marker, content: line.slice(marker.length).trim(), config: cfg };
+                }
+            }
+            return null;
+        };
+
+        // Group lines into sections
         const lines = text.split('\n');
+        type Section = { type: 'heading'; text: string; level: number } | { type: 'marker-group'; config: typeof sectionConfig[string]; lines: string[] } | { type: 'text'; lines: string[] };
+        const sections: Section[] = [];
+        let currentMarkerGroup: { config: typeof sectionConfig[string]; lines: string[] } | null = null;
+        let currentTextGroup: string[] = [];
+
+        const flushTextGroup = () => {
+            if (currentTextGroup.length > 0) {
+                sections.push({ type: 'text', lines: [...currentTextGroup] });
+                currentTextGroup = [];
+            }
+        };
+        const flushMarkerGroup = () => {
+            if (currentMarkerGroup) {
+                sections.push({ type: 'marker-group', config: currentMarkerGroup.config, lines: [...currentMarkerGroup.lines] });
+                currentMarkerGroup = null;
+            }
+        };
+
+        for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed) {
+                // Empty line → flush groups
+                flushMarkerGroup();
+                flushTextGroup();
+                continue;
+            }
+
+            // Heading
+            if (trimmed.startsWith('##')) {
+                flushMarkerGroup();
+                flushTextGroup();
+                const level = trimmed.startsWith('###') ? 3 : 2;
+                sections.push({ type: 'heading', text: trimmed.replace(/^#{1,4}\s*/, ''), level });
+                continue;
+            }
+
+            // Marker line
+            const markerInfo = getLineMarker(trimmed);
+            if (markerInfo) {
+                flushTextGroup();
+                if (currentMarkerGroup && currentMarkerGroup.config.banner === markerInfo.config.banner) {
+                    // Same color group → append
+                    currentMarkerGroup.lines.push(markerInfo.content);
+                } else {
+                    flushMarkerGroup();
+                    currentMarkerGroup = { config: markerInfo.config, lines: [markerInfo.content] };
+                }
+                continue;
+            }
+
+            // Regular text
+            flushMarkerGroup();
+            currentTextGroup.push(trimmed);
+        }
+        flushMarkerGroup();
+        flushTextGroup();
+
         return (
-            <div className="space-y-1">
-                {lines.map((line, i) => {
-                    const trimmed = line.trim();
-                    if (!trimmed) return <div key={i} className="h-2" />;
-
-                    // Heading lines: ### or **Title**
-                    if (trimmed.startsWith('###')) {
-                        return <h4 key={i} className={`font-black text-base mt-3 mb-1 ${darkMode ? 'text-white' : 'text-slate-800'}`}>{trimmed.replace(/^#{1,4}\s*/, '')}</h4>;
-                    }
-                    if (trimmed.startsWith('## ')) {
-                        return <h3 key={i} className={`font-black text-lg mt-4 mb-1.5 ${darkMode ? 'text-white' : 'text-slate-900'}`}>{trimmed.replace(/^#{1,3}\s*/, '')}</h3>;
+            <div className="space-y-3">
+                <ColorLegend />
+                {sections.map((section, i) => {
+                    if (section.type === 'heading') {
+                        return (
+                            <h4 key={i} className={`font-black ${section.level === 2 ? 'text-lg mt-4' : 'text-base mt-3'} ${darkMode ? 'text-white' : 'text-slate-800'}`}>
+                                {section.text}
+                            </h4>
+                        );
                     }
 
-                    // Parse inline markers and bold
-                    const renderInline = (str: string) => {
-                        // Clean up markers that appear mid-sentence (AI sometimes does this)
-                        let cleaned = str
-                            .replace(/\(\[!\]\)/g, '')
-                            .replace(/\(\[-\]\)/g, '')
-                            .replace(/\(\[\+\]\)/g, '')
-                            .replace(/\(\[>\]\)/g, '')
-                            .replace(/\(\[\*\]\)/g, '')
-                            .replace(/\s{2,}/g, ' ')
-                            .trim();
-                        const parts: React.ReactNode[] = [];
-                        // Split by bold markers **text**
-                        const boldRegex = /\*\*(.+?)\*\*/g;
-                        let lastIndex = 0;
-                        let match;
-                        while ((match = boldRegex.exec(cleaned)) !== null) {
-                            if (match.index > lastIndex) {
-                                parts.push(cleaned.slice(lastIndex, match.index));
-                            }
-                            parts.push(<strong key={`b-${match.index}`} className={darkMode ? 'text-white font-black' : 'text-slate-900 font-black'}>{match[1]}</strong>);
-                            lastIndex = match.index + match[0].length;
-                        }
-                        if (lastIndex < cleaned.length) parts.push(cleaned.slice(lastIndex));
-                        return parts.length > 0 ? parts : [cleaned];
-                    };
-
-                    // Alert markers with colored badges
-                    const markerConfig: Record<string, { bg: string; text: string; icon: string }> = {
-                        '[!]': { bg: darkMode ? 'bg-red-500/20 border-red-400/30' : 'bg-red-50 border-red-200', text: darkMode ? 'text-red-300' : 'text-red-700', icon: '🔴' },
-                        '[CRITICAL]': { bg: darkMode ? 'bg-red-500/20 border-red-400/30' : 'bg-red-50 border-red-200', text: darkMode ? 'text-red-300' : 'text-red-700', icon: '🔴' },
-                        '[-]': { bg: darkMode ? 'bg-amber-500/15 border-amber-400/30' : 'bg-amber-50 border-amber-200', text: darkMode ? 'text-amber-300' : 'text-amber-700', icon: '🟡' },
-                        '[CAUTION]': { bg: darkMode ? 'bg-amber-500/15 border-amber-400/30' : 'bg-amber-50 border-amber-200', text: darkMode ? 'text-amber-300' : 'text-amber-700', icon: '🟡' },
-                        '[?]': { bg: darkMode ? 'bg-amber-500/15 border-amber-400/30' : 'bg-amber-50 border-amber-200', text: darkMode ? 'text-amber-300' : 'text-amber-700', icon: '🟡' },
-                        '[+]': { bg: darkMode ? 'bg-emerald-500/15 border-emerald-400/30' : 'bg-emerald-50 border-emerald-200', text: darkMode ? 'text-emerald-300' : 'text-emerald-700', icon: '🟢' },
-                        '[OK]': { bg: darkMode ? 'bg-emerald-500/15 border-emerald-400/30' : 'bg-emerald-50 border-emerald-200', text: darkMode ? 'text-emerald-300' : 'text-emerald-700', icon: '🟢' },
-                        '[>]': { bg: darkMode ? 'bg-indigo-500/15 border-indigo-400/30' : 'bg-indigo-50 border-indigo-200', text: darkMode ? 'text-indigo-300' : 'text-indigo-700', icon: '🔵' },
-                        '[*]': { bg: darkMode ? 'bg-purple-500/15 border-purple-400/30' : 'bg-purple-50 border-purple-200', text: darkMode ? 'text-purple-300' : 'text-purple-700', icon: '🟣' },
-                        '[EXCELLENT]': { bg: darkMode ? 'bg-purple-500/15 border-purple-400/30' : 'bg-purple-50 border-purple-200', text: darkMode ? 'text-purple-300' : 'text-purple-700', icon: '🟣' },
-                    };
-
-                    // Check if line starts with a marker
-                    for (const [marker, cfg] of Object.entries(markerConfig)) {
-                        if (trimmed.startsWith(marker)) {
-                            const content = trimmed.slice(marker.length).trim();
-                            return (
-                                <div key={i} className={`flex items-start gap-2 px-3 py-1.5 rounded-lg border ${cfg.bg} my-0.5`}>
-                                    <span className="text-xs mt-0.5 flex-shrink-0">{cfg.icon}</span>
-                                    <span className={`text-sm leading-relaxed ${cfg.text}`}>{renderInline(content)}</span>
+                    if (section.type === 'marker-group') {
+                        const cfg = section.config;
+                        return (
+                            <div key={i} className={`rounded-xl overflow-hidden ${darkMode ? 'border border-white/10' : 'border border-slate-200'}`}>
+                                {/* Colored banner header */}
+                                <div className={`${cfg.banner} px-4 py-2 flex items-center gap-2`}>
+                                    <span className="w-2.5 h-2.5 rounded-full bg-white/80" />
+                                    <span className="text-white text-sm font-bold">{cfg.label}</span>
                                 </div>
-                            );
-                        }
-                    }
-
-                    // Bullet points with dash or •
-                    if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
-                        const content = trimmed.slice(2);
-                        return (
-                            <div key={i} className="flex items-start gap-2 pl-2">
-                                <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${darkMode ? 'bg-slate-500' : 'bg-slate-400'}`} />
-                                <span className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(content)}</span>
+                                {/* Content under banner */}
+                                <div className={`px-4 py-3 space-y-1.5 ${darkMode ? 'bg-white/5' : 'bg-white'}`}>
+                                    {section.lines.map((line, j) => (
+                                        <div key={j} className="flex items-start gap-2">
+                                            <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${cfg.dot}`} />
+                                            <span className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                                                {renderInline(line)}
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
                             </div>
                         );
                     }
 
-                    // Numbered items
-                    const numMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
-                    if (numMatch) {
-                        return (
-                            <div key={i} className="flex items-start gap-2 pl-1">
-                                <span className={`text-xs font-black mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${darkMode ? 'bg-white/10 text-indigo-300' : 'bg-indigo-100 text-indigo-600'}`}>{numMatch[1]}</span>
-                                <span className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(numMatch[2])}</span>
-                            </div>
-                        );
-                    }
-
-                    // Default line
-                    return <p key={i} className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(trimmed)}</p>;
+                    // Text group
+                    return (
+                        <div key={i} className="space-y-1">
+                            {section.lines.map((line, j) => {
+                                // Bullet
+                                if (line.startsWith('- ') || line.startsWith('• ')) {
+                                    return (
+                                        <div key={j} className="flex items-start gap-2 pl-2">
+                                            <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${darkMode ? 'bg-slate-500' : 'bg-slate-400'}`} />
+                                            <span className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(line.slice(2))}</span>
+                                        </div>
+                                    );
+                                }
+                                // Numbered
+                                const numMatch = line.match(/^(\d+)\.\s+(.*)/);
+                                if (numMatch) {
+                                    return (
+                                        <div key={j} className="flex items-start gap-2 pl-1">
+                                            <span className={`text-xs font-black mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${darkMode ? 'bg-white/10 text-indigo-300' : 'bg-indigo-100 text-indigo-600'}`}>{numMatch[1]}</span>
+                                            <span className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(numMatch[2])}</span>
+                                        </div>
+                                    );
+                                }
+                                return <p key={j} className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(line)}</p>;
+                            })}
+                        </div>
+                    );
                 })}
             </div>
         );
