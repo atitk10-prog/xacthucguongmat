@@ -4571,22 +4571,24 @@ async function getPointStatistics(options: {
         });
 
         const topUserIds = Object.keys(userAgg);
-        let userNames: Record<string, { name: string; org: string }> = {};
+        let userNames: Record<string, { name: string; org: string; role: string }> = {};
         if (topUserIds.length > 0) {
             const { data: users } = await supabase
                 .from('users')
-                .select('id, full_name, organization')
+                .select('id, full_name, organization, role')
                 .in('id', topUserIds.slice(0, 200));
-            users?.forEach(u => { userNames[u.id] = { name: u.full_name, org: u.organization || '' }; });
+            users?.forEach(u => { userNames[u.id] = { name: u.full_name, org: u.organization || '', role: u.role || '' }; });
         }
 
         const topAdded = Object.entries(userAgg)
+            .filter(([id]) => userNames[id]?.role === 'student')
             .map(([id, v]) => ({ userId: id, name: userNames[id]?.name || 'N/A', org: userNames[id]?.org || '', points: v.added }))
             .filter(u => u.points > 0)
             .sort((a, b) => b.points - a.points)
             .slice(0, 5);
 
         const topDeducted = Object.entries(userAgg)
+            .filter(([id]) => userNames[id]?.role === 'student')
             .map(([id, v]) => ({ userId: id, name: userNames[id]?.name || 'N/A', org: userNames[id]?.org || '', points: v.deducted }))
             .filter(u => u.points > 0)
             .sort((a, b) => b.points - a.points)

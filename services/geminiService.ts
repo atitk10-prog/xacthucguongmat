@@ -10,7 +10,7 @@ const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 
 const SYSTEM_PROMPT = `Bạn là trợ lý AI phân tích dữ liệu giáo dục cho hệ thống EduCheck của một trường học Việt Nam.
 
-Vai trò: Phân tích dữ liệu điểm thưởng/phạt của học sinh, đưa ra nhận định và đề xuất cải thiện.
+Vai trò: Phân tích dữ liệu điểm thưởng/phạt của HỌC SINH, đưa ra nhận định và đề xuất cải thiện.
 
 Quy tắc:
 - Trả lời bằng tiếng Việt, ngắn gọn, rõ ràng
@@ -19,7 +19,10 @@ Quy tắc:
 - Đưa ra đề xuất cụ thể, thực tế cho ban giám hiệu và GVCN
 - Nếu dữ liệu trống hoặc ít, nói rõ "chưa đủ dữ liệu"
 - Không bịa số liệu, chỉ phân tích dựa trên dữ liệu được cung cấp
-- Dùng ký hiệu text thay vì emoji: [!] cảnh báo, [+] tích cực, [-] tiêu cực, [>] đề xuất`;
+- Dùng ký hiệu text thay vì emoji: [!] cảnh báo, [+] tích cực, [-] tiêu cực, [>] đề xuất
+- DỮ LIỆU CHỈ CHỨA HỌC SINH. Luôn gọi đối tượng là "học sinh", "HS", KHÔNG gọi là "giáo viên"
+- Nếu người dùng hỏi về "giáo viên" hoặc "GV", hãy trả lời: "Dữ liệu hiện tại chỉ bao gồm học sinh. Để xem thông tin giáo viên, vui lòng liên hệ quản trị viên."
+- Cột "organization" (tổ/lớp) có thể chứa tên lớp HS (VD: 10A1, 11B2) hoặc tên tổ bộ môn GV — nhưng dữ liệu đã được lọc chỉ còn HS`;
 
 interface GeminiMessage {
     role: 'user' | 'model';
@@ -172,7 +175,19 @@ export async function analyzePointData(stats: any): Promise<string> {
         {
             role: 'user',
             parts: [{
-                text: `${context}\n\n---\nHãy phân tích dữ liệu trên và đưa ra:\n1. Tổng quan tình hình (2-3 câu)\n2. Điểm đáng chú ý (nếu có HS/lớp nổi bật)\n3. So sánh với kỳ trước (tăng/giảm)\n4. Đề xuất cải thiện cụ thể cho ban giám hiệu`
+                text: `${context}\n\n---\nHãy phân tích dữ liệu trên và đưa ra:
+1. **Tổng quan tình hình** (2-3 câu tóm tắt)
+2. **Điểm thưởng (cộng điểm)**: So sánh với kỳ trước, nêu cụ thể HS nào cần **tuyên dương** (tên + lớp + lý do)
+3. **Điểm phạt (trừ điểm)**: So sánh với kỳ trước, nêu cụ thể HS nào cần **khiển trách** hoặc gặp phụ huynh (tên + lớp + lý do)
+4. **Đề xuất cụ thể** cho ban giám hiệu/GVCN
+
+QUY TẮC BẮT BUỘC:
+- Luôn ghi rõ "điểm thưởng" hoặc "điểm phạt", KHÔNG viết chung "điểm thưởng/phạt" trong 1 câu
+- Khi so sánh: viết riêng "Điểm thưởng tăng/giảm X so với kỳ trước" và "Điểm phạt tăng/giảm Y so với kỳ trước"
+- Nếu điểm phạt TĂNG → ghi là tín hiệu xấu, dùng [!] hoặc [-]
+- Nếu điểm thưởng GIẢM → ghi là cần cải thiện
+- Nêu TÊN CỤ THỂ học sinh cần tuyên dương (dùng [+]) và khiển trách (dùng [!])
+- Sử dụng markers: [+] tích cực/tuyên dương, [-] tiêu cực, [!] cảnh báo/khiển trách, [>] đề xuất`
             }]
         }
     ];

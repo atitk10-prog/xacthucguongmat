@@ -267,27 +267,86 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
         } finally { setChatSending(false); }
     };
 
+    const micTranscriptRef = useRef('');
+
     const toggleListening = () => {
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (!SpeechRecognition) { toastError('Trình duyệt không hỗ trợ. Dùng Chrome/Edge.'); return; }
-        if (isListening && recognitionRef.current) { recognitionRef.current.stop(); setIsListening(false); return; }
+
+        // If already listening → stop
+        if (isListening && recognitionRef.current) {
+            recognitionRef.current.stop();
+            return;
+        }
+
         try {
             const recognition = new SpeechRecognition();
-            recognition.lang = 'vi-VN'; recognition.continuous = true; recognition.interimResults = true;
-            let finalTranscript = '';
-            recognition.onstart = () => setIsListening(true);
-            recognition.onresult = (event: any) => {
-                let interim = '';
-                for (let i = event.resultIndex; i < event.results.length; i++) {
-                    const t = event.results[i][0].transcript;
-                    if (event.results[i].isFinal) finalTranscript += t + ' '; else interim = t;
-                }
-                setChatInput(finalTranscript + interim);
+            recognition.lang = 'vi-VN';
+            recognition.continuous = false;      // Auto-stop after silence
+            recognition.interimResults = true;
+            recognition.maxAlternatives = 1;
+            micTranscriptRef.current = '';
+
+            recognition.onstart = () => {
+                setIsListening(true);
+                micTranscriptRef.current = '';
             };
-            recognition.onerror = (e: any) => { setIsListening(false); if (e.error !== 'no-speech') toastError(`Lỗi mic: ${e.error}`); };
-            recognition.onend = () => { setIsListening(false); if (finalTranscript.trim()) setChatInput(finalTranscript.trim()); };
-            recognitionRef.current = recognition; recognition.start();
-        } catch (err: any) { toastError('Lỗi mic: ' + err.message); setIsListening(false); }
+
+            recognition.onresult = (event: any) => {
+                let finalText = '';
+                let interimText = '';
+                for (let i = 0; i < event.results.length; i++) {
+                    const transcript = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) {
+                        finalText += transcript + ' ';
+                    } else {
+                        interimText += transcript;
+                    }
+                }
+                if (finalText.trim()) {
+                    micTranscriptRef.current = finalText.trim();
+                }
+                // Show real-time in input
+                setChatInput((finalText + interimText).trim());
+            };
+
+            recognition.onerror = (e: any) => {
+                setIsListening(false);
+                if (e.error === 'no-speech') {
+                    toastError('Không nghe thấy giọng nói. Hãy nói to hơn.');
+                } else if (e.error === 'not-allowed') {
+                    toastError('Vui lòng cấp quyền Microphone trong trình duyệt.');
+                } else if (e.error !== 'aborted') {
+                    toastError(`Lỗi mic: ${e.error}`);
+                }
+            };
+
+            recognition.onend = () => {
+                setIsListening(false);
+                // Auto-send if has text
+                const text = micTranscriptRef.current.trim() || chatInput.trim();
+                if (text) {
+                    setChatInput(text);
+                    // Small delay to let state update, then auto-send
+                    setTimeout(() => {
+                        handleChatSend(text);
+                    }, 200);
+                }
+            };
+
+            recognitionRef.current = recognition;
+            recognition.start();
+
+            // Safety timeout: stop after 15s
+            setTimeout(() => {
+                if (recognitionRef.current && isListening) {
+                    recognitionRef.current.stop();
+                }
+            }, 15000);
+        } catch (err: any) {
+            toastError('Lỗi mic: ' + err.message);
+            setIsListening(false);
+        }
     };
 
     // Filtered + searched students
@@ -316,6 +375,97 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
             { label: 'Lượt ghi nhận', value: stats.logsCount || 0, prev: stats.prevLogsCount || 0, color: 'indigo', icon: BarChart3 },
         ];
     }, [stats]);
+
+    // ═══ Rich AI Text Renderer ═══
+    const renderAIText = (text: string, darkMode = false) => {
+        const lines = text.split('\n');
+        return (
+            <div className="space-y-1">
+                {lines.map((line, i) => {
+                    const trimmed = line.trim();
+                    if (!trimmed) return <div key={i} className="h-2" />;
+
+                    // Heading lines: ### or **Title**
+                    if (trimmed.startsWith('###')) {
+                        return <h4 key={i} className={`font-black text-base mt-3 mb-1 ${darkMode ? 'text-white' : 'text-slate-800'}`}>{trimmed.replace(/^#{1,4}\s*/, '')}</h4>;
+                    }
+                    if (trimmed.startsWith('## ')) {
+                        return <h3 key={i} className={`font-black text-lg mt-4 mb-1.5 ${darkMode ? 'text-white' : 'text-slate-900'}`}>{trimmed.replace(/^#{1,3}\s*/, '')}</h3>;
+                    }
+
+                    // Parse inline markers and bold
+                    const renderInline = (str: string) => {
+                        const parts: React.ReactNode[] = [];
+                        // Split by bold markers **text**
+                        const boldRegex = /\*\*(.+?)\*\*/g;
+                        let lastIndex = 0;
+                        let match;
+                        while ((match = boldRegex.exec(str)) !== null) {
+                            if (match.index > lastIndex) {
+                                parts.push(str.slice(lastIndex, match.index));
+                            }
+                            parts.push(<strong key={`b-${match.index}`} className={darkMode ? 'text-white font-black' : 'text-slate-900 font-black'}>{match[1]}</strong>);
+                            lastIndex = match.index + match[0].length;
+                        }
+                        if (lastIndex < str.length) parts.push(str.slice(lastIndex));
+                        return parts.length > 0 ? parts : [str];
+                    };
+
+                    // Alert markers with colored badges
+                    const markerConfig: Record<string, { bg: string; text: string; icon: string }> = {
+                        '[!]': { bg: darkMode ? 'bg-red-500/20 border-red-400/30' : 'bg-red-50 border-red-200', text: darkMode ? 'text-red-300' : 'text-red-700', icon: '🔴' },
+                        '[CRITICAL]': { bg: darkMode ? 'bg-red-500/20 border-red-400/30' : 'bg-red-50 border-red-200', text: darkMode ? 'text-red-300' : 'text-red-700', icon: '🔴' },
+                        '[-]': { bg: darkMode ? 'bg-amber-500/15 border-amber-400/30' : 'bg-amber-50 border-amber-200', text: darkMode ? 'text-amber-300' : 'text-amber-700', icon: '🟡' },
+                        '[CAUTION]': { bg: darkMode ? 'bg-amber-500/15 border-amber-400/30' : 'bg-amber-50 border-amber-200', text: darkMode ? 'text-amber-300' : 'text-amber-700', icon: '🟡' },
+                        '[?]': { bg: darkMode ? 'bg-amber-500/15 border-amber-400/30' : 'bg-amber-50 border-amber-200', text: darkMode ? 'text-amber-300' : 'text-amber-700', icon: '🟡' },
+                        '[+]': { bg: darkMode ? 'bg-emerald-500/15 border-emerald-400/30' : 'bg-emerald-50 border-emerald-200', text: darkMode ? 'text-emerald-300' : 'text-emerald-700', icon: '🟢' },
+                        '[OK]': { bg: darkMode ? 'bg-emerald-500/15 border-emerald-400/30' : 'bg-emerald-50 border-emerald-200', text: darkMode ? 'text-emerald-300' : 'text-emerald-700', icon: '🟢' },
+                        '[>]': { bg: darkMode ? 'bg-indigo-500/15 border-indigo-400/30' : 'bg-indigo-50 border-indigo-200', text: darkMode ? 'text-indigo-300' : 'text-indigo-700', icon: '🔵' },
+                        '[*]': { bg: darkMode ? 'bg-purple-500/15 border-purple-400/30' : 'bg-purple-50 border-purple-200', text: darkMode ? 'text-purple-300' : 'text-purple-700', icon: '🟣' },
+                        '[EXCELLENT]': { bg: darkMode ? 'bg-purple-500/15 border-purple-400/30' : 'bg-purple-50 border-purple-200', text: darkMode ? 'text-purple-300' : 'text-purple-700', icon: '🟣' },
+                    };
+
+                    // Check if line starts with a marker
+                    for (const [marker, cfg] of Object.entries(markerConfig)) {
+                        if (trimmed.startsWith(marker)) {
+                            const content = trimmed.slice(marker.length).trim();
+                            return (
+                                <div key={i} className={`flex items-start gap-2 px-3 py-1.5 rounded-lg border ${cfg.bg} my-0.5`}>
+                                    <span className="text-xs mt-0.5 flex-shrink-0">{cfg.icon}</span>
+                                    <span className={`text-sm leading-relaxed ${cfg.text}`}>{renderInline(content)}</span>
+                                </div>
+                            );
+                        }
+                    }
+
+                    // Bullet points with dash or •
+                    if (trimmed.startsWith('- ') || trimmed.startsWith('• ')) {
+                        const content = trimmed.slice(2);
+                        return (
+                            <div key={i} className="flex items-start gap-2 pl-2">
+                                <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${darkMode ? 'bg-slate-500' : 'bg-slate-400'}`} />
+                                <span className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(content)}</span>
+                            </div>
+                        );
+                    }
+
+                    // Numbered items
+                    const numMatch = trimmed.match(/^(\d+)\.\s+(.*)/);
+                    if (numMatch) {
+                        return (
+                            <div key={i} className="flex items-start gap-2 pl-1">
+                                <span className={`text-xs font-black mt-0.5 flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${darkMode ? 'bg-white/10 text-indigo-300' : 'bg-indigo-100 text-indigo-600'}`}>{numMatch[1]}</span>
+                                <span className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(numMatch[2])}</span>
+                            </div>
+                        );
+                    }
+
+                    // Default line
+                    return <p key={i} className={`text-sm leading-relaxed ${darkMode ? 'text-slate-300' : 'text-slate-600'}`}>{renderInline(trimmed)}</p>;
+                })}
+            </div>
+        );
+    };
 
     if (!isAIConfigured()) {
         return (
@@ -431,7 +581,7 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
                                     <p className="text-indigo-300 text-sm font-bold">Đang phân tích...</p>
                                 </div>
                             ) : aiAnalysis ? (
-                                <div className="text-slate-300 text-sm leading-relaxed whitespace-pre-line">{aiAnalysis}</div>
+                                <div>{renderAIText(aiAnalysis, true)}</div>
                             ) : (
                                 <div className="flex flex-col items-center justify-center h-32 text-slate-500 gap-2">
                                     <BarChart3 className="w-8 h-8 text-slate-600" />
@@ -548,7 +698,7 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
                                             <span className="text-indigo-300 text-sm">Đang phân tích cá nhân hóa...</span>
                                         </div>
                                     ) : (
-                                        <div className="text-slate-300 text-sm leading-relaxed whitespace-pre-line max-h-72 overflow-y-auto pr-2">{behaviorAI}</div>
+                                        <div className="max-h-72 overflow-y-auto pr-2">{renderAIText(behaviorAI, true)}</div>
                                     )}
                                 </div>
                             )}
@@ -776,7 +926,7 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
                                     </div>
                                 )}
                                 <div className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-md' : 'bg-slate-100 text-slate-700 rounded-bl-md'}`}>
-                                    <p className="whitespace-pre-line leading-relaxed">{msg.text}</p>
+                                    <div>{msg.role === 'ai' ? renderAIText(msg.text, false) : <p className="whitespace-pre-line leading-relaxed">{msg.text}</p>}</div>
                                 </div>
                                 {msg.role === 'user' && (
                                     <div className="w-7 h-7 bg-emerald-100 rounded-lg flex items-center justify-center flex-shrink-0 mt-1">
