@@ -268,13 +268,16 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
     };
 
     const micTranscriptRef = useRef('');
+    const chatInputRef = useRef(chatInput);
+    chatInputRef.current = chatInput;
+    const isListeningRef = useRef(false);
 
     const toggleListening = () => {
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (!SpeechRecognition) { toastError('Trình duyệt không hỗ trợ. Dùng Chrome/Edge.'); return; }
 
         // If already listening → stop
-        if (isListening && recognitionRef.current) {
+        if (isListeningRef.current && recognitionRef.current) {
             recognitionRef.current.stop();
             return;
         }
@@ -282,13 +285,14 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
         try {
             const recognition = new SpeechRecognition();
             recognition.lang = 'vi-VN';
-            recognition.continuous = false;      // Auto-stop after silence
+            recognition.continuous = false;
             recognition.interimResults = true;
             recognition.maxAlternatives = 1;
             micTranscriptRef.current = '';
 
             recognition.onstart = () => {
                 setIsListening(true);
+                isListeningRef.current = true;
                 micTranscriptRef.current = '';
             };
 
@@ -303,15 +307,20 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
                         interimText += transcript;
                     }
                 }
+                const combined = (finalText + interimText).trim();
                 if (finalText.trim()) {
                     micTranscriptRef.current = finalText.trim();
+                } else if (interimText.trim()) {
+                    // Some browsers only give interim, store it too
+                    micTranscriptRef.current = interimText.trim();
                 }
                 // Show real-time in input
-                setChatInput((finalText + interimText).trim());
+                setChatInput(combined);
             };
 
             recognition.onerror = (e: any) => {
                 setIsListening(false);
+                isListeningRef.current = false;
                 if (e.error === 'no-speech') {
                     toastError('Không nghe thấy giọng nói. Hãy nói to hơn.');
                 } else if (e.error === 'not-allowed') {
@@ -323,14 +332,15 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
 
             recognition.onend = () => {
                 setIsListening(false);
-                // Auto-send if has text
-                const text = micTranscriptRef.current.trim() || chatInput.trim();
+                isListeningRef.current = false;
+                // Get text from ref (not stale state)
+                const text = micTranscriptRef.current.trim() || chatInputRef.current.trim();
                 if (text) {
                     setChatInput(text);
-                    // Small delay to let state update, then auto-send
+                    // Auto-send after small delay
                     setTimeout(() => {
                         handleChatSend(text);
-                    }, 200);
+                    }, 300);
                 }
             };
 
@@ -339,13 +349,14 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
 
             // Safety timeout: stop after 15s
             setTimeout(() => {
-                if (recognitionRef.current && isListening) {
-                    recognitionRef.current.stop();
+                if (isListeningRef.current && recognitionRef.current) {
+                    try { recognitionRef.current.stop(); } catch {}
                 }
             }, 15000);
         } catch (err: any) {
             toastError('Lỗi mic: ' + err.message);
             setIsListening(false);
+            isListeningRef.current = false;
         }
     };
 

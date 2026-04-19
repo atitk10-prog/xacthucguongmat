@@ -280,53 +280,68 @@ export function stopSpeaking(): void {
  * Behavior Analysis: Phân tích hành vi cá nhân hóa
  */
 export async function analyzeStudentBehavior(report: any): Promise<string> {
-    const LEVEL_TAG: Record<string, string> = { red: '[CRITICAL]', yellow: '[CAUTION]', green: '[OK]', star: '[EXCELLENT]' };
+    const LEVEL_EMOJI: Record<string, string> = { red: '🔴', yellow: '🟡', green: '🟢', star: '⭐' };
 
     const lines: string[] = [
         `=== BÁO CÁO HÀNH VI HỌC SINH (${report.weeksAnalyzed} tuần) ===`,
         `Tổng: ${report.summary.totalStudents} HS`,
-        `[CRITICAL] Cần can thiệp: ${report.summary.alertRed}`,
-        `[CAUTION]  Cần theo dõi: ${report.summary.alertYellow}`,
-        `[OK]       Ổn định: ${report.summary.alertGreen}`,
-        `[EXCELLENT] Xuất sắc: ${report.summary.alertStar}`,
+        `🔴 Cần can thiệp: ${report.summary.alertRed} HS`,
+        `🟡 Cần theo dõi: ${report.summary.alertYellow} HS`,
+        `🟢 Ổn định: ${report.summary.alertGreen} HS`,
+        `⭐ Xuất sắc: ${report.summary.alertStar} HS`,
         ``,
     ];
 
-    // Red + Yellow students (priority)
-    const priority = report.students.filter((s: any) => s.alertLevel === 'red' || s.alertLevel === 'yellow');
-    if (priority.length > 0) {
-        lines.push(`--- HS CẦN CHÚ Ý ---`);
-        priority.slice(0, 15).forEach((s: any) => {
-            const tag = LEVEL_TAG[s.alertLevel] || '[--]';
-            lines.push(`${tag} ${s.name} (${s.class}) — Xu hướng: ${s.trendDetail}`);
-            lines.push(`  Muộn: ${s.totalLate} lần | Vắng: ${s.totalAbsent} | Trừ: -${s.totalDeducted} | Cộng: +${s.totalAdded}`);
-            if (s.alertReasons.length > 0) lines.push(`  Lý do: ${s.alertReasons.join(', ')}`);
-            if (s.repeatedViolations.length > 0) {
-                s.repeatedViolations.slice(0, 2).forEach((v: any) => {
-                    lines.push(`  Vi phạm lặp: "${v.reason}" (${v.count} lần)`);
-                });
-            }
-            // Weekly data
-            const lastWeeks = s.weeklyTrend.slice(-3);
-            lines.push(`  Biến động: ${lastWeeks.map((w: any) => `${w.week}: trừ -${w.pointsDeducted}, muộn ${w.lateCount}`).join(' > ')}`);
-            lines.push(``);
-        });
+    // Helper to format student with scores
+    const formatStudent = (s: any) => {
+        const parts = [
+            `${LEVEL_EMOJI[s.alertLevel] || '•'} ${s.name} (${s.class})`,
+            `  📊 Tổng: ${s.totalPoints}đ | Cộng: +${s.totalAdded} | Trừ: -${s.totalDeducted} | Muộn: ${s.totalLate} | Vắng: ${s.totalAbsent}`,
+        ];
+        if (s.trendDetail) parts.push(`  📈 Xu hướng: ${s.trendDetail}`);
+        if (s.alertReasons?.length > 0) parts.push(`  ⚠️ Lý do: ${s.alertReasons.join(', ')}`);
+        if (s.repeatedViolations?.length > 0) {
+            s.repeatedViolations.slice(0, 2).forEach((v: any) => {
+                parts.push(`  🔁 Vi phạm lặp: "${v.reason}" (${v.count} lần)`);
+            });
+        }
+        return parts;
+    };
+
+    // 🔴 RED — Cần can thiệp
+    const redStudents = report.students.filter((s: any) => s.alertLevel === 'red');
+    if (redStudents.length > 0) {
+        lines.push(`--- 🔴 MỨC ĐỎ: CẦN CAN THIỆP (${redStudents.length} HS) ---`);
+        redStudents.slice(0, 10).forEach((s: any) => lines.push(...formatStudent(s), ''));
     }
 
-    // Star students
-    const stars = report.students.filter((s: any) => s.alertLevel === 'star');
-    if (stars.length > 0) {
-        lines.push(`--- HS XUẤT SẮC ---`);
-        stars.slice(0, 10).forEach((s: any) => {
-            lines.push(`[EXCELLENT] ${s.name} (${s.class}) — +${s.totalAdded} điểm, ${s.trendDetail}`);
-        });
+    // 🟡 YELLOW — Cần theo dõi
+    const yellowStudents = report.students.filter((s: any) => s.alertLevel === 'yellow');
+    if (yellowStudents.length > 0) {
+        lines.push(`--- 🟡 MỨC VÀNG: CẦN THEO DÕI (${yellowStudents.length} HS) ---`);
+        yellowStudents.slice(0, 10).forEach((s: any) => lines.push(...formatStudent(s), ''));
+    }
+
+    // 🟢 GREEN — Ổn định (tóm tắt, không liệt kê hết)
+    const greenStudents = report.students.filter((s: any) => s.alertLevel === 'green');
+    if (greenStudents.length > 0) {
+        lines.push(`--- 🟢 MỨC XANH: ỔN ĐỊNH (${greenStudents.length} HS) ---`);
+        lines.push(`Tóm tắt: ${greenStudents.length} HS duy trì ổn định, không vi phạm đáng kể.`);
+        lines.push('');
+    }
+
+    // ⭐ STAR — Xuất sắc
+    const starStudents = report.students.filter((s: any) => s.alertLevel === 'star');
+    if (starStudents.length > 0) {
+        lines.push(`--- ⭐ MỨC XUẤT SẮC: TUYÊN DƯƠNG (${starStudents.length} HS) ---`);
+        starStudents.slice(0, 10).forEach((s: any) => lines.push(...formatStudent(s), ''));
     }
 
     // Class summary
     if (report.classSummary?.length > 0) {
         lines.push(``, `--- TỔNG HỢP THEO LỚP ---`);
         report.classSummary.forEach((c: any) => {
-            lines.push(`${c.className}: ${c.studentCount} HS, TB ${c.avgPoints}đ | Nguy:${c.redCount} Chú ý:${c.yellowCount} Tốt:${c.greenCount} Giỏi:${c.starCount}`);
+            lines.push(`${c.className}: ${c.studentCount} HS, TB ${c.avgPoints}đ | 🔴${c.redCount} 🟡${c.yellowCount} 🟢${c.greenCount} ⭐${c.starCount}`);
         });
     }
 
