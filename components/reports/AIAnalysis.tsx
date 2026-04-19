@@ -76,9 +76,10 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
     const [behaviorDateTo, setBehaviorDateTo] = useState('');
     const [useDateRange, setUseDateRange] = useState(false);
 
-    // Pagination
+    // Pagination & Sorting
     const ITEMS_PER_PAGE = 20;
     const [currentPage, setCurrentPage] = useState(1);
+    const [sortBy, setSortBy] = useState<'default' | 'points-high' | 'points-low'>('default');
 
     // Chat State
     const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai'; text: string }[]>([]);
@@ -369,8 +370,11 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
             const q = studentSearch.toLowerCase();
             list = list.filter((s: any) => s.name.toLowerCase().includes(q) || s.class.toLowerCase().includes(q));
         }
+        // Sorting
+        if (sortBy === 'points-high') list = [...list].sort((a: any, b: any) => (b.totalAdded - b.totalDeducted) - (a.totalAdded - a.totalDeducted));
+        else if (sortBy === 'points-low') list = [...list].sort((a: any, b: any) => (a.totalAdded - a.totalDeducted) - (b.totalAdded - b.totalDeducted));
         return list;
-    }, [behaviorReport, alertFilter, studentSearch]);
+    }, [behaviorReport, alertFilter, studentSearch, sortBy]);
 
     const totalPages = Math.ceil(filteredStudents.length / ITEMS_PER_PAGE);
     const paginatedStudents = useMemo(() => {
@@ -810,16 +814,33 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
 
                             {/* Student List */}
                             <div className="space-y-2">
-                                <div className="flex items-center justify-between mb-2">
+                                <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
                                     <h4 className="font-black text-slate-800 flex items-center gap-2">
                                         <Users className="w-4 h-4 text-slate-400" />
                                         {alertFilter !== 'all' ? `${ALERT_LABELS[alertFilter]} (${filteredStudents.length})` : `Danh sách học sinh (${filteredStudents.length})`}
                                     </h4>
-                                    {alertFilter !== 'all' && (
-                                        <button onClick={() => setAlertFilter('all')} className="text-xs text-indigo-600 font-bold hover:underline flex items-center gap-1">
-                                            <XCircle className="w-3 h-3" /> Bỏ lọc
-                                        </button>
-                                    )}
+                                    <div className="flex items-center gap-1">
+                                        {/* Sort buttons */}
+                                        {[
+                                            { key: 'default' as const, label: 'Mặc định' },
+                                            { key: 'points-high' as const, label: '↑ Điểm cao' },
+                                            { key: 'points-low' as const, label: '↓ Điểm thấp' },
+                                        ].map(s => (
+                                            <button key={s.key} onClick={() => { setSortBy(s.key); setCurrentPage(1); }}
+                                                className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                                                    sortBy === s.key
+                                                        ? 'bg-indigo-600 text-white shadow-sm'
+                                                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200'
+                                                }`}>
+                                                {s.label}
+                                            </button>
+                                        ))}
+                                        {alertFilter !== 'all' && (
+                                            <button onClick={() => setAlertFilter('all')} className="text-xs text-indigo-600 font-bold hover:underline flex items-center gap-1 ml-2">
+                                                <XCircle className="w-3 h-3" /> Bỏ lọc
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
 
                                 {filteredStudents.length === 0 ? (

@@ -212,7 +212,9 @@ BẮT BUỘC:
 - Mỗi HS nêu tên cụ thể + lớp + SỐ ĐIỂM
 - Tách riêng thưởng và phạt, KHÔNG viết chung 1 câu
 - Điểm phạt TĂNG = tín hiệu XẤU, dùng [!]
-- Điểm thưởng GIẢM = tín hiệu XẤU, dùng [-]`
+- Điểm thưởng GIẢM = tín hiệu XẤU, dùng [-]
+- CHỐNG MÂU THUẪN: Nếu 1 HS vừa có điểm cộng vừa có điểm trừ, KHÔNG gọi là "xuất sắc". Phải ghi rõ: "HS X được thưởng +Y nhưng cũng bị phạt -Z, tổng thực: ±W"
+- Chỉ gọi "xuất sắc" khi HS có điểm cộng cao VÀ KHÔNG bị phạt đáng kể`
             }]
         }
     ];
@@ -376,34 +378,22 @@ export async function analyzeStudentBehavior(report: any): Promise<string> {
         {
             role: 'user',
             parts: [{
-                text: `${context}\n\n---\nBạn là chuyên gia tư vấn giáo dục. Phân tích báo cáo trên và trình bày THEO TỪNG MỨC CẢNH BÁO, liệt kê HS cụ thể trong mỗi mức:
+                text: `${context}\n\n---\nBạn là chuyên gia tư vấn giáo dục. Phân tích báo cáo trên, trả lời ngắn gọn.
 
-[!] **MỨC ĐỎ — CẦN CAN THIỆP GẤP**
-Liệt kê từng HS mức đỏ (tên + lớp), nêu rõ:
-- Vi phạm cụ thể gì (trốn điểm danh, đi muộn nhiều lần...)
-- Đề xuất hành động: gặp riêng, gọi phụ huynh, theo dõi đặc biệt...
+Với mỗi mức có HS, liệt kê từng HS (tên + lớp + điểm số) kèm đề xuất:
 
-[-] **MỨC VÀNG — CẦN THEO DÕI**
-Liệt kê từng HS mức vàng (tên + lớp), nêu rõ:
-- Dấu hiệu tiêu cực gì
-- Đề xuất: nhắc nhở, gắn kèm bạn tốt...
-
-[+] **MỨC XANH — ỔN ĐỊNH**
-- Tóm tắt số lượng HS ổn định, nhận xét chung
-
-[*] **MỨC XUẤT SẮC — TUYÊN DƯƠNG**
-Liệt kê từng HS xuất sắc (tên + lớp), nêu rõ:
-- Thành tích cụ thể (điểm cộng cao, không vi phạm, cải thiện...)
-- Đề xuất khen thưởng: tuyên dương trước lớp, giấy khen, gửi thư phụ huynh...
-
-[>] **NHẬN ĐỊNH TỔNG QUAN**
-- Xu hướng chung trong ${report.weeksAnalyzed} tuần
-- Lớp nào cần chú ý nhất
+[!] HS mức đỏ — nêu vi phạm + đề xuất (gặp phụ huynh, theo dõi đặc biệt...)
+[-] HS mức vàng — nêu dấu hiệu + đề xuất (nhắc nhở, gắn kèm bạn tốt...)
+[+] HS mức xanh — tóm tắt ngắn gọn
+[*] HS xuất sắc — nêu thành tích + đề xuất khen thưởng
+[>] Nhận định tổng quan + đề xuất cho BGH/GVCN
 
 QUY TẮC:
-- Mỗi HS chỉ xuất hiện trong ĐÚNG 1 mức
-- Nêu TÊN CỤ THỂ, không nói chung chung
-- Dùng markers [!] [-] [+] [*] [>] đầu mỗi dòng quan trọng`
+- NẾU mức nào KHÔNG có HS → BỎ QUA hoàn toàn, KHÔNG viết "không có HS mức này"
+- Mỗi HS nêu tên + lớp + TỔNG ĐIỂM cụ thể
+- KHÔNG viết heading ### hay **tiêu đề đậm**, chỉ dùng markers [!] [-] [+] [*] [>]
+- KHÔNG viết đoạn văn dài, mỗi ý 1 dòng
+- Dùng markers đầu MỖI dòng quan trọng`
             }]
         }
     ];
