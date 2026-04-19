@@ -192,29 +192,31 @@ export async function analyzePointData(stats: any): Promise<string> {
         {
             role: 'user',
             parts: [{
-                text: `${context}\n\n---\nPhân tích dữ liệu theo format sau. MỖI DÒNG phải bắt đầu bằng marker [!] [-] [+] [>] [*]:
+                text: `${context}\n\n---\nPhân tích dữ liệu thống kê. Viết ngắn gọn, mỗi ý 1 dòng.
 
-### ĐIỂM THƯỞNG (Cộng điểm)
-[+] hoặc [-] Tổng điểm thưởng kỳ này: +X (so với kỳ trước +Y → tăng/giảm)
-[+] Tên HS cần tuyên dương (lớp) — được thưởng +Z điểm
-[*] HS xuất sắc nhất nếu có
+CHỈ có 3 mục (bỏ mục nào không có dữ liệu):
 
-### ĐIỂM PHẠT (Trừ điểm)
-[!] hoặc [-] Tổng điểm phạt kỳ này: -X (so với kỳ trước -Y → tăng/giảm)
-[!] Tên HS cần khiển trách (lớp) — bị phạt -Z điểm
-[-] HS cần theo dõi nếu có
+### ĐIỂM THƯỞNG
+[+] Tổng thưởng kỳ này: +X (so kỳ trước +Y)
+[+] Tên HS tuyên dương (lớp) — +Z điểm (nếu có)
+[+] HS xuất sắc nhất (nếu có, không bị phạt)
+
+### ĐIỂM PHẠT
+[!] Tổng phạt kỳ này: -X (so kỳ trước -Y)
+[!] Tên HS khiển trách (lớp) — -Z điểm (tối đa 5 HS)
 
 ### ĐỀ XUẤT
 [>] Hành động cụ thể cho GVCN/BGH
 
-BẮT BUỘC:
-- KHÔNG viết đoạn văn dài. Chỉ dùng bullet points với markers
-- Mỗi HS nêu tên cụ thể + lớp + SỐ ĐIỂM
-- Tách riêng thưởng và phạt, KHÔNG viết chung 1 câu
-- Điểm phạt TĂNG = tín hiệu XẤU, dùng [!]
-- Điểm thưởng GIẢM = tín hiệu XẤU, dùng [-]
-- CHỐNG MÂU THUẪN: Nếu 1 HS vừa có điểm cộng vừa có điểm trừ, KHÔNG gọi là "xuất sắc". Phải ghi rõ: "HS X được thưởng +Y nhưng cũng bị phạt -Z, tổng thực: ±W"
-- Chỉ gọi "xuất sắc" khi HS có điểm cộng cao VÀ KHÔNG bị phạt đáng kể`
+NGHIÊM CẤM:
+- KHÔNG dùng [-] cho mục thưởng. Mục thưởng CHỈ dùng [+]
+- KHÔNG dùng [-] cho mục phạt. Mục phạt CHỈ dùng [!]
+- KHÔNG dùng [*]. Dùng [+] cho tuyên dương
+- Mỗi mục dùng ĐÚNG 1 loại marker để gom nhóm
+- KHÔNG viết đoạn văn. Mỗi ý = 1 dòng
+- Nếu thưởng = 0 → ghi "[+] Không có HS nào được thưởng kỳ này"
+- Nếu 1 HS vừa thưởng vừa phạt → ghi ở mục phạt, nêu cả 2 số
+- Tối đa 5 HS/mục`
             }]
         }
     ];

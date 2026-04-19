@@ -4815,12 +4815,14 @@ async function getStudentBehaviorData(options: {
             if (lastWeek.absentCount >= 2) reasons.push(`Vắng ${lastWeek.absentCount} lần/tuần`);
             if (decliningWeeks >= 3) reasons.push('Điểm trừ tăng 3 tuần liên tiếp');
             if (s.repeatedViolations.length > 0) reasons.push(`Vi phạm lặp: ${s.repeatedViolations[0].reason} (${s.repeatedViolations[0].count} lần)`);
+            if (lastWeek.pointsDeducted >= 10) reasons.push(`Bị trừ ${lastWeek.pointsDeducted} điểm/tuần`);
+            else if (lastWeek.pointsDeducted >= 5) reasons.push(`Bị trừ ${lastWeek.pointsDeducted} điểm/tuần`);
 
-            if (lastWeek.lateCount >= 4 || lastWeek.absentCount >= 2 || decliningWeeks >= 3) {
+            if (lastWeek.lateCount >= 4 || lastWeek.absentCount >= 2 || decliningWeeks >= 3 || lastWeek.pointsDeducted >= 10) {
                 s.alertLevel = 'red';
-            } else if (lastWeek.lateCount >= 2 || decliningWeeks >= 2) {
+            } else if (lastWeek.lateCount >= 2 || decliningWeeks >= 2 || lastWeek.pointsDeducted >= 5) {
                 s.alertLevel = 'yellow';
-            } else if (s.trend === 'improving' && s.totalAdded > s.totalDeducted && lastWeek.lateCount === 0) {
+            } else if (s.trend === 'improving' && s.totalAdded > s.totalDeducted && lastWeek.lateCount === 0 && lastWeek.pointsDeducted === 0) {
                 s.alertLevel = 'star';
             } else {
                 s.alertLevel = 'green';
