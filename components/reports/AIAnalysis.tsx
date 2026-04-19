@@ -261,9 +261,28 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
         setChatMessages(prev => [...prev, { role: 'user', text: q }]);
         setChatSending(true);
         try {
-            const answer = behaviorReport
-                ? await chatWithStudentData(q, behaviorReport, stats, chatMessages)
-                : await chatWithData(q, stats, chatMessages);
+            // Auto-load data if not available (chat is self-sufficient)
+            let chatStats = stats;
+            let chatBehavior = behaviorReport;
+
+            if (!chatStats) {
+                const result = await dataService.getPointStatistics({ range: 'month' });
+                if (result.success) {
+                    chatStats = result.data;
+                    setStats(result.data); // cache for future
+                }
+            }
+            if (!chatBehavior) {
+                const result = await dataService.getStudentBehaviorData({ weeks: 4 });
+                if (result.success) {
+                    chatBehavior = result.data;
+                    setBehaviorReport(result.data); // cache for future
+                }
+            }
+
+            const answer = chatBehavior
+                ? await chatWithStudentData(q, chatBehavior, chatStats, chatMessages)
+                : await chatWithData(q, chatStats, chatMessages);
             setChatMessages(prev => [...prev, { role: 'ai', text: answer }]);
             setTimeout(() => chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
         } catch (err: any) {
