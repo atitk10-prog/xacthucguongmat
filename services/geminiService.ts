@@ -14,15 +14,26 @@ Vai trò: Phân tích dữ liệu điểm thưởng/phạt của HỌC SINH, đ�
 
 Quy tắc:
 - Trả lời bằng tiếng Việt, ngắn gọn, rõ ràng
-- Sử dụng bullet points và định dạng markdown (bold, heading)
-- Không dài quá 300 từ
+- Không dài quá 400 từ
 - Đưa ra đề xuất cụ thể, thực tế cho ban giám hiệu và GVCN
 - Nếu dữ liệu trống hoặc ít, nói rõ "chưa đủ dữ liệu"
 - Không bịa số liệu, chỉ phân tích dựa trên dữ liệu được cung cấp
-- Dùng ký hiệu text thay vì emoji: [!] cảnh báo, [+] tích cực, [-] tiêu cực, [>] đề xuất
 - DỮ LIỆU CHỈ CHỨA HỌC SINH. Luôn gọi đối tượng là "học sinh", "HS", KHÔNG gọi là "giáo viên"
-- Nếu người dùng hỏi về "giáo viên" hoặc "GV", hãy trả lời: "Dữ liệu hiện tại chỉ bao gồm học sinh. Để xem thông tin giáo viên, vui lòng liên hệ quản trị viên."
-- Cột "organization" (tổ/lớp) có thể chứa tên lớp HS (VD: 10A1, 11B2) hoặc tên tổ bộ môn GV — nhưng dữ liệu đã được lọc chỉ còn HS`;
+- Nếu người dùng hỏi về "giáo viên" hoặc "GV", hãy trả lời: "Dữ liệu hiện tại chỉ bao gồm học sinh."
+
+ĐỊNH DẠNG BẮT BUỘC — Mỗi dòng quan trọng PHẢI bắt đầu bằng 1 trong các markers sau:
+[!] = Cảnh báo nghiêm trọng, khiển trách (hiển thị nền ĐỎ)
+[-] = Tiêu cực, cần theo dõi (hiển thị nền VÀNG)
+[+] = Tích cực, tuyên dương (hiển thị nền XANH LÁ)
+[>] = Đề xuất hành động (hiển thị nền XANH DƯƠNG)
+[*] = Xuất sắc, khen thưởng (hiển thị nền TÍM)
+
+Ví dụ đúng:
+[!] Hà Sỹ Luân (12A1) — bị trừ -45đ, trốn điểm danh 5 lần → cần gặp phụ huynh
+[+] Nguyễn Văn A (10A1) — được cộng +30đ, chăm chỉ → tuyên dương trước lớp
+[>] GVCN lớp 12A1 cần gặp riêng 3 HS mức đỏ trong tuần này
+
+KHÔNG viết đoạn văn dài. Ưu tiên bullet points với markers.`;
 
 interface GeminiMessage {
     role: 'user' | 'model';
@@ -53,16 +64,16 @@ function buildDataContext(stats: any): string {
     ];
 
     if (stats.topAdded?.length > 0) {
-        lines.push(``, `Top HS được cộng nhiều nhất:`);
+        lines.push(``, `🏆 TOP HS ĐƯỢC THƯỞNG (cộng điểm) NHIỀU NHẤT:`);
         stats.topAdded.forEach((u: any, i: number) => {
-            lines.push(`  ${i + 1}. ${u.name} (${u.org}) — +${u.points} điểm`);
+            lines.push(`  ${i + 1}. ${u.name} (${u.org}) — được thưởng +${u.points} điểm`);
         });
     }
 
     if (stats.topDeducted?.length > 0) {
-        lines.push(``, `Top HS bị trừ nhiều nhất:`);
+        lines.push(``, `⚠️ TOP HS BỊ PHẠT (trừ điểm) NHIỀU NHẤT:`);
         stats.topDeducted.forEach((u: any, i: number) => {
-            lines.push(`  ${i + 1}. ${u.name} (${u.org}) — -${u.points} điểm`);
+            lines.push(`  ${i + 1}. ${u.name} (${u.org}) — bị phạt -${u.points} điểm`);
         });
     }
 
@@ -175,19 +186,27 @@ export async function analyzePointData(stats: any): Promise<string> {
         {
             role: 'user',
             parts: [{
-                text: `${context}\n\n---\nHãy phân tích dữ liệu trên và đưa ra:
-1. **Tổng quan tình hình** (2-3 câu tóm tắt)
-2. **Điểm thưởng (cộng điểm)**: So sánh với kỳ trước, nêu cụ thể HS nào cần **tuyên dương** (tên + lớp + lý do)
-3. **Điểm phạt (trừ điểm)**: So sánh với kỳ trước, nêu cụ thể HS nào cần **khiển trách** hoặc gặp phụ huynh (tên + lớp + lý do)
-4. **Đề xuất cụ thể** cho ban giám hiệu/GVCN
+                text: `${context}\n\n---\nPhân tích dữ liệu theo format sau. MỖI DÒNG phải bắt đầu bằng marker [!] [-] [+] [>] [*]:
 
-QUY TẮC BẮT BUỘC:
-- Luôn ghi rõ "điểm thưởng" hoặc "điểm phạt", KHÔNG viết chung "điểm thưởng/phạt" trong 1 câu
-- Khi so sánh: viết riêng "Điểm thưởng tăng/giảm X so với kỳ trước" và "Điểm phạt tăng/giảm Y so với kỳ trước"
-- Nếu điểm phạt TĂNG → ghi là tín hiệu xấu, dùng [!] hoặc [-]
-- Nếu điểm thưởng GIẢM → ghi là cần cải thiện
-- Nêu TÊN CỤ THỂ học sinh cần tuyên dương (dùng [+]) và khiển trách (dùng [!])
-- Sử dụng markers: [+] tích cực/tuyên dương, [-] tiêu cực, [!] cảnh báo/khiển trách, [>] đề xuất`
+### ĐIỂM THƯỞNG (Cộng điểm)
+[+] hoặc [-] Tổng điểm thưởng kỳ này: +X (so với kỳ trước +Y → tăng/giảm)
+[+] Tên HS cần tuyên dương (lớp) — được thưởng +Z điểm
+[*] HS xuất sắc nhất nếu có
+
+### ĐIỂM PHẠT (Trừ điểm)
+[!] hoặc [-] Tổng điểm phạt kỳ này: -X (so với kỳ trước -Y → tăng/giảm)
+[!] Tên HS cần khiển trách (lớp) — bị phạt -Z điểm
+[-] HS cần theo dõi nếu có
+
+### ĐỀ XUẤT
+[>] Hành động cụ thể cho GVCN/BGH
+
+BẮT BUỘC:
+- KHÔNG viết đoạn văn dài. Chỉ dùng bullet points với markers
+- Mỗi HS nêu tên cụ thể + lớp + SỐ ĐIỂM
+- Tách riêng thưởng và phạt, KHÔNG viết chung 1 câu
+- Điểm phạt TĂNG = tín hiệu XẤU, dùng [!]
+- Điểm thưởng GIẢM = tín hiệu XẤU, dùng [-]`
             }]
         }
     ];
