@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
 import { TEMPLATE_OPTIONS, CertificateTemplateId } from './templates/types';
 import { dataService } from '../../services/dataService';
@@ -10,7 +10,7 @@ import {
     Loader2, Landmark, Sparkles, Crown, Upload, Image as ImageIcon, LayoutTemplate,
     Eye, Archive, Download, CheckCircle, AlertCircle, Award, Settings2, Edit3,
     Palette, Type, Users, Search, ChevronLeft, ChevronRight, Calendar,
-    GraduationCap, BookOpen, UsersRound, UserCheck, UserX
+    GraduationCap, BookOpen, UsersRound, UserCheck, UserX, ZoomIn, ZoomOut, RotateCcw
 } from 'lucide-react';
 
 import { ToastProvider, useToast } from '../ui/Toast';
@@ -76,6 +76,64 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
 
     // Local QR for preview (replaces external API)
     const [demoQR, setDemoQR] = useState('');
+
+    // Zoom state for live preview
+    const [previewZoom, setPreviewZoom] = useState(1);
+    const [previewPan, setPreviewPan] = useState({ x: 0, y: 0 });
+    const [isPrevPanning, setIsPrevPanning] = useState(false);
+    const prevPanStart = useRef({ x: 0, y: 0 });
+    const prevLastTouchDist = useRef(0);
+    const previewContainerRef = useRef<HTMLDivElement>(null);
+
+    const handlePreviewZoomIn = useCallback(() => setPreviewZoom(z => Math.min(4, z + 0.2)), []);
+    const handlePreviewZoomOut = useCallback(() => setPreviewZoom(z => Math.max(0.3, z - 0.2)), []);
+    const handlePreviewZoomReset = useCallback(() => { setPreviewZoom(1); setPreviewPan({ x: 0, y: 0 }); }, []);
+
+    const handlePreviewWheel = useCallback((e: React.WheelEvent) => {
+        e.preventDefault();
+        setPreviewZoom(z => Math.min(4, Math.max(0.3, z + (e.deltaY > 0 ? -0.12 : 0.12))));
+    }, []);
+
+    const handlePreviewTouchStart = useCallback((e: React.TouchEvent) => {
+        if (e.touches.length === 2) {
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            prevLastTouchDist.current = Math.sqrt(dx * dx + dy * dy);
+        } else if (e.touches.length === 1 && previewZoom > 1) {
+            setIsPrevPanning(true);
+            prevPanStart.current = { x: e.touches[0].clientX - previewPan.x, y: e.touches[0].clientY - previewPan.y };
+        }
+    }, [previewPan, previewZoom]);
+
+    const handlePreviewTouchMove = useCallback((e: React.TouchEvent) => {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (prevLastTouchDist.current > 0) {
+                setPreviewZoom(z => Math.min(4, Math.max(0.3, z * (dist / prevLastTouchDist.current))));
+            }
+            prevLastTouchDist.current = dist;
+        } else if (e.touches.length === 1 && isPrevPanning && previewZoom > 1) {
+            setPreviewPan({ x: e.touches[0].clientX - prevPanStart.current.x, y: e.touches[0].clientY - prevPanStart.current.y });
+        }
+    }, [isPrevPanning, previewZoom]);
+
+    const handlePreviewTouchEnd = useCallback(() => { prevLastTouchDist.current = 0; setIsPrevPanning(false); }, []);
+
+    const handlePreviewMouseDown = useCallback((e: React.MouseEvent) => {
+        if (previewZoom <= 1) return;
+        setIsPrevPanning(true);
+        prevPanStart.current = { x: e.clientX - previewPan.x, y: e.clientY - previewPan.y };
+    }, [previewZoom, previewPan]);
+
+    const handlePreviewMouseMove = useCallback((e: React.MouseEvent) => {
+        if (!isPrevPanning || previewZoom <= 1) return;
+        setPreviewPan({ x: e.clientX - prevPanStart.current.x, y: e.clientY - prevPanStart.current.y });
+    }, [isPrevPanning, previewZoom]);
+
+    const handlePreviewMouseUp = useCallback(() => setIsPrevPanning(false), []);
     useEffect(() => {
         QRCode.toDataURL('DEMO-PREVIEW', { margin: 1, width: 150 })
             .then(url => setDemoQR(url))
@@ -1544,11 +1602,48 @@ const CertificateGeneratorContent: React.FC<CertificateGeneratorProps> = ({ onBa
                     {/* RIGHT COLUMN: Preview & List */}
                     <div className="xl:col-span-8 space-y-6">
                         {/* Live Preview */}
-                        <div className="bg-slate-100 rounded-3xl p-8 flex items-center justify-center overflow-hidden relative min-h-[400px]">
-                            <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-slate-600 shadow-sm flex items-center gap-2">
+                        <div
+                            ref={previewContainerRef}
+                            className="bg-slate-100 rounded-3xl p-8 flex items-center justify-center overflow-hidden relative min-h-[400px] select-none"
+                            style={{ cursor: previewZoom > 1 ? (isPrevPanning ? 'grabbing' : 'grab') : 'default', touchAction: 'none' }}
+                            onWheel={handlePreviewWheel}
+                            onTouchStart={handlePreviewTouchStart}
+                            onTouchMove={handlePreviewTouchMove}
+                            onTouchEnd={handlePreviewTouchEnd}
+                            onMouseDown={handlePreviewMouseDown}
+                            onMouseMove={handlePreviewMouseMove}
+                            onMouseUp={handlePreviewMouseUp}
+                            onMouseLeave={handlePreviewMouseUp}
+                        >
+                            <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-full text-xs font-bold text-slate-600 shadow-sm flex items-center gap-2 z-10">
                                 <Eye className="w-3 h-3" /> Xem trước (Live Preview)
                             </div>
-                            <div className={`shadow-2xl transition-all duration-500 origin-center ${customConfig.orientation === 'portrait' ? 'scale-[0.45]' : 'scale-[0.6]'}`}>
+
+                            {/* Zoom Controls */}
+                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-slate-900/80 backdrop-blur-xl px-3 py-2 rounded-2xl shadow-xl border border-white/10 z-10">
+                                <button onClick={handlePreviewZoomOut} className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-xl transition-all active:scale-90" title="Thu nhỏ">
+                                    <ZoomOut size={16} />
+                                </button>
+                                <button onClick={handlePreviewZoomReset} className="px-3 py-1 text-xs font-black text-white/90 hover:bg-white/10 rounded-xl transition-all min-w-[48px] text-center">
+                                    {Math.round(previewZoom * 100)}%
+                                </button>
+                                <button onClick={handlePreviewZoomIn} className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-xl transition-all active:scale-90" title="Phóng to">
+                                    <ZoomIn size={16} />
+                                </button>
+                                {(previewZoom !== 1 || previewPan.x !== 0 || previewPan.y !== 0) && (
+                                    <button onClick={handlePreviewZoomReset} className="p-2 text-amber-400/80 hover:text-amber-300 hover:bg-white/10 rounded-xl transition-all active:scale-90 ml-1 border-l border-white/10 pl-3">
+                                        <RotateCcw size={14} />
+                                    </button>
+                                )}
+                            </div>
+
+                            <div
+                                className="shadow-2xl origin-center"
+                                style={{
+                                    transform: `translate(${previewPan.x}px, ${previewPan.y}px) scale(${(customConfig.orientation === 'portrait' ? 0.45 : 0.6) * previewZoom})`,
+                                    transition: isPrevPanning ? 'none' : 'transform 0.3s ease-out',
+                                }}
+                            >
                                 <SelectedTemplate
                                     data={{
                                         recipientName: replaceVariables('{full_name}', users.find(u => u.id === formData.user_id)),
