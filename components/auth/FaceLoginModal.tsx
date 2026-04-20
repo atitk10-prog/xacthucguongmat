@@ -60,17 +60,17 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
                     videoRef.current.srcObject = newStream;
                 }
 
-                // 2. Load Face Models in background
-                setGuidance('Đang khởi tạo AI...');
-                await faceService.loadModels();
+                // 2. Load Face Models (skip if already cached from preload or previous session)
+                if (!faceService.isModelsLoaded()) {
+                    setGuidance('Đang khởi tạo AI...');
+                    await faceService.loadModels();
+                }
                 setModelsReady(true);
 
-                // 3. Load Users in background WITHOUT blocking
-                setGuidance('Đang đồng bộ dữ liệu...');
+                // 3. Load Users (skip if already cached)
                 const currentCount = faceService.faceMatcher.getCount();
-
-                // Only reload if we have no users cached
                 if (currentCount === 0) {
+                    setGuidance('Đang đồng bộ dữ liệu...');
                     const response = await dataService.getUsers({ status: 'active' });
                     if (response.success && response.data) {
                         const userIds = response.data.map(u => u.id);
@@ -126,7 +126,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         let animationId: number;
         const STABILITY_THRESHOLD = 600; // 0.6s — nhanh, UX tốt
         const PROCESSING_THROTTLE = 120; // ~8 FPS — mượt trên ĐT trung bình
-        const CONFIDENCE_THRESHOLD = 42;
+        const CONFIDENCE_THRESHOLD = 55; // Raised from 42 — prevents wrong-person login
 
         const loop = async () => {
             if (!videoRef.current || videoRef.current.paused || videoRef.current.ended || loginSuccess || isProcessing || capturedImage) {
@@ -237,11 +237,11 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
             }, 300);
 
             try {
-                // Perform deep auth on the captured image
+                // Perform deep auth on the captured image (320px for high accuracy)
                 const img = await faceService.base64ToImage(dataUrl);
                 const allDetections = await faceapi.detectAllFaces(
                     img,
-                    new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
+                    new faceapi.TinyFaceDetectorOptions({ inputSize: 320, scoreThreshold: 0.5 })
                 )
                     .withFaceLandmarks()
                     .withFaceDescriptors();
@@ -307,9 +307,7 @@ const FaceLoginModal: React.FC<FaceLoginModalProps> = ({ isOpen, onClose, onLogi
         if (!isOpen && stream) {
             stream.getTracks().forEach(t => t.stop());
             setStream(null);
-            // Reset state
-            setModelsReady(false);
-            setUsersLoaded(false);
+            // Reset UI state only — keep modelsReady & usersLoaded cached!
             setLoginSuccess(false);
             setMatchedUser(null);
             setStabilityProgress(0);

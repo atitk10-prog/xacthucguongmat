@@ -1,8 +1,9 @@
 /**
  * EduCheck - Face Recognition Service (using face-api.js)
- * Using ssdMobilenetv1 for ACCURATE detection (same as working old version)
- * Includes model warmup to eliminate first-inference delay
- * Chạy offline, không cần API key
+ * - TinyFaceDetector for fast, lightweight detection
+ * - Cache API for persistent model caching (iPhone/Android)
+ * - Model warmup to eliminate first-inference delay
+ * - Chạy offline sau lần tải đầu, không cần API key
  */
 
 import * as faceapi from 'face-api.js';
@@ -11,8 +12,11 @@ let modelsLoaded = false;
 let modelsLoading = false;
 let modelsWarmedUp = false;
 
-// Use CDN for models
+// CDN source for models
 const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+
+// Cache API for persistent model storage across sessions
+const MODEL_CACHE_NAME = 'educheck-face-models-v2';
 
 /**
  * Warm up the models by running a dummy inference
@@ -25,24 +29,23 @@ const warmupModels = async (): Promise<void> => {
         console.log('🔥 Warming up face models...');
         const startTime = performance.now();
 
-        // Create a canvas with realistic dimensions (640x480 VGA)
+        // Use small canvas (160x120) — just enough to trigger TF.js compilation
         const dummyCanvas = document.createElement('canvas');
-        dummyCanvas.width = 640;
-        dummyCanvas.height = 480;
+        dummyCanvas.width = 160;
+        dummyCanvas.height = 120;
         const ctx = dummyCanvas.getContext('2d');
         if (ctx) {
-            // Draw face-like oval for better warmup
             ctx.fillStyle = '#d0d0d0';
-            ctx.fillRect(0, 0, 640, 480);
+            ctx.fillRect(0, 0, 160, 120);
             ctx.fillStyle = '#ffcc99';
             ctx.beginPath();
-            ctx.ellipse(320, 240, 80, 100, 0, 0, 2 * Math.PI);
+            ctx.ellipse(80, 60, 30, 40, 0, 0, 2 * Math.PI);
             ctx.fill();
         }
 
-        // Run detection to warm up all networks
+        // Warmup using TinyFaceDetector (same detector used in actual login)
         await faceapi
-            .detectSingleFace(dummyCanvas)
+            .detectSingleFace(dummyCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 160 }))
             .withFaceLandmarks()
             .withFaceDescriptor();
 
@@ -54,7 +57,39 @@ const warmupModels = async (): Promise<void> => {
     }
 };
 
-// Load face-api.js models - using ssdMobilenetv1 for ACCURACY (same as old working version)
+/**
+ * Fetch with Cache API — stores model files persistently in the browser.
+ * Works on iPhone Safari, Android Chrome, and all modern browsers.
+ * After first download, models load from cache in <1 second.
+ */
+async function cachedFetch(url: string, originalFetch: typeof window.fetch): Promise<Response> {
+    if (!('caches' in window)) {
+        return originalFetch(url);
+    }
+
+    try {
+        const cache = await caches.open(MODEL_CACHE_NAME);
+        const cached = await cache.match(url);
+
+        if (cached) {
+            console.log(`📦 Cache HIT: ${url.split('/').pop()}`);
+            return cached.clone();
+        }
+
+        // Not in cache — download and store
+        const response = await originalFetch(url);
+        if (response.ok) {
+            await cache.put(url, response.clone());
+            console.log(`💾 Cached: ${url.split('/').pop()}`);
+        }
+        return response;
+    } catch (e) {
+        console.warn('⚠️ Cache API error, falling back to network:', e);
+        return originalFetch(url);
+    }
+}
+
+// Load face-api.js models with persistent Cache API caching
 export async function loadModels(): Promise<void> {
     if (modelsLoaded) return;
 
@@ -68,25 +103,67 @@ export async function loadModels(): Promise<void> {
 
     modelsLoading = true;
 
+    // Monkey-patch fetch to intercept model downloads and cache them
+    const originalFetch = window.fetch.bind(window);
+    const isCacheSupported = 'caches' in window;
+
+    if (isCacheSupported) {
+        window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+            const url = typeof input === 'string' ? input
+                : input instanceof URL ? input.href
+                : (input as Request).url;
+
+            // Only cache face model files (from CDN)
+            if (url.includes('vladmandic/face-api') || url.includes('face-api/model')) {
+                return cachedFetch(url, originalFetch);
+            }
+
+            return originalFetch(input, init);
+        };
+    }
+
     try {
+        console.log('⏳ Loading face models (TinyFaceDetector + Landmarks + Recognition)...');
+        const startTime = performance.now();
+
+        // Only load models that are ACTUALLY USED:
+        // - TinyFaceDetector (~190KB) — used for all detection
+        // - faceLandmark68Net (~350KB) — for landmark alignment  
+        // - faceRecognitionNet (~6.2MB) — for descriptor matching
         await Promise.all([
-            faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL), // ACCURATE detection (Mô hình chính xác cao)
-            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL), // TINY/FAST detection (Mô hình siêu nhẹ)
-            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL), // Landmarks
-            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL) // Recognition
+            faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+            faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+            faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
         ]);
+
+        console.log(`📦 Models loaded in ${Math.round(performance.now() - startTime)}ms ${isCacheSupported ? '(with Cache API)' : '(no cache)'}`);
 
         // Warmup BEFORE marking as loaded
         await warmupModels();
 
         modelsLoaded = true;
-        console.log('✅ Face models loaded and warmed up!');
+        console.log(`✅ Face models ready! Total: ${Math.round(performance.now() - startTime)}ms`);
     } catch (error) {
         console.error('❌ Failed to load face models:', error);
         throw error;
     } finally {
+        // ALWAYS restore original fetch
+        if (isCacheSupported) {
+            window.fetch = originalFetch;
+        }
         modelsLoading = false;
     }
+}
+
+/**
+ * Pre-load models in background (call on app start for instant face login)
+ * Non-blocking — errors are silently caught
+ */
+export function preloadModels(): void {
+    if (modelsLoaded || modelsLoading) return;
+    loadModels().catch(err => {
+        console.warn('⚠️ Background face model preload failed (non-critical):', err);
+    });
 }
 
 // Check if models are loaded
@@ -200,11 +277,11 @@ class FaceMatcherService {
         if (allScores.length > 0) {
             const scoresStr = topScores.map(s => `${s.name}: ${s.confidence}%`).join(', ');
 
-            // AMBIGUITY CHECK: Reduced margin from 8 to 5 for better usability
+            // AMBIGUITY CHECK: Require 12% gap between top-2 matches to prevent wrong-person login
             if (bestMatch && secondBestMatch) {
                 const margin = bestMatch.confidence - secondBestMatch.confidence;
-                if (margin < 5) {
-                    console.warn(`⚠️ AMBIGUOUS MATCH (Margin ${margin}% < 5%): ${scoresStr}`);
+                if (margin < 12) {
+                    console.warn(`⚠️ AMBIGUOUS MATCH (Margin ${margin}% < 12%): ${scoresStr}`);
                     return null;
                 }
             }
@@ -287,6 +364,7 @@ export async function verifyFace(
 // Export the service
 export const faceService = {
     loadModels,
+    preloadModels,
     isModelsLoaded,
     getFaceDescriptor,
     detectFaces,

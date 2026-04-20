@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { dataService } from '../../services/dataService';
 import { User } from '../../types';
 import FaceLoginModal from './FaceLoginModal';
+import { preloadModels } from '../../services/faceService';
 import { Camera } from 'lucide-react';
 
 interface LoginPageProps {
@@ -14,6 +15,9 @@ const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [showFaceLogin, setShowFaceLogin] = useState(false);
+
+    // Pre-load face AI models in background — so face login opens instantly
+    useEffect(() => { preloadModels(); }, []);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();

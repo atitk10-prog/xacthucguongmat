@@ -30,9 +30,19 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
     const [showFaceModal, setShowFaceModal] = useState(false);
     const [faceVerifyStatus, setFaceVerifyStatus] = useState<'idle' | 'loading_models' | 'camera_ready' | 'verifying' | 'success' | 'error'>('idle');
     const [faceVerifyMessage, setFaceVerifyMessage] = useState('');
+    const [faceIsLowLight, setFaceIsLowLight] = useState(false);
     const faceVideoRef = useRef<HTMLVideoElement>(null);
     const faceStreamRef = useRef<MediaStream | null>(null);
     const pendingGeoCheckinRef = useRef<{ slotId: string; slotEndTime: string; latitude: number; longitude: number; accuracy: number; status: 'on_time' | 'late' } | null>(null);
+
+    // Auto-start face verify when modal opens (like SelfCheckinPage)
+    useEffect(() => {
+        if (showFaceModal && faceVerifyStatus === 'idle') {
+            // Small delay to let modal render before starting camera
+            const timer = setTimeout(() => startFaceVerify(), 300);
+            return () => clearTimeout(timer);
+        }
+    }, [showFaceModal]);
 
     // Device fingerprint helper — stronger than just userAgent
     const getDeviceFingerprint = (): string => {
@@ -343,7 +353,7 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
         }
     };
 
-    // GPS Check-in handler
+    // GPS Check-in handler — auto-requests GPS permission like SelfCheckinPage
     const handleGeoCheckin = async (slotId: string, slotEndTime: string) => {
         if (!user || geoCheckinLoading) return;
 
@@ -353,17 +363,60 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
             return;
         }
 
+        if (!navigator.geolocation) {
+            toast.error('Thiết bị không hỗ trợ GPS.');
+            return;
+        }
+
         setGeoCheckinLoading(slotId);
 
         try {
-            // 1. Get GPS position
-            const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-                navigator.geolocation.getCurrentPosition(resolve, reject, {
-                    enableHighAccuracy: true,
-                    timeout: 10000,
-                    maximumAge: 0
+            // 1. Request GPS — browser will auto-prompt permission dialog on iPhone/Android
+            let position: GeolocationPosition;
+            try {
+                position = await new Promise<GeolocationPosition>((resolve, reject) => {
+                    navigator.geolocation.getCurrentPosition(resolve, reject, {
+                        enableHighAccuracy: true,
+                        timeout: 15000,
+                        maximumAge: 0
+                    });
                 });
-            });
+            } catch (gpsErr: any) {
+                if (gpsErr.code === 1) {
+                    // PERMISSION_DENIED — try once more with a user prompt
+                    toast.info('📍 Hệ thống cần quyền GPS. Bấm "Cho phép" khi được hỏi.');
+                    
+                    // Retry — on most browsers, this will re-trigger the permission dialog
+                    try {
+                        position = await new Promise<GeolocationPosition>((resolve, reject) => {
+                            navigator.geolocation.getCurrentPosition(resolve, reject, {
+                                enableHighAccuracy: true,
+                                timeout: 20000,
+                                maximumAge: 0
+                            });
+                        });
+                    } catch (retryErr: any) {
+                        // Permanently blocked — guide the user
+                        toast.error(
+                            '🚫 GPS bị chặn. Vào Cài đặt trình duyệt → Quyền vị trí → Cho phép, rồi thử lại.'
+                        );
+                        setGeoCheckinLoading(null);
+                        return;
+                    }
+                } else if (gpsErr.code === 2) {
+                    toast.error('Không thể xác định vị trí. Vui lòng bật GPS trên thiết bị.');
+                    setGeoCheckinLoading(null);
+                    return;
+                } else if (gpsErr.code === 3) {
+                    toast.error('GPS timeout. Vui lòng ra nơi có sóng tốt hơn và thử lại.');
+                    setGeoCheckinLoading(null);
+                    return;
+                } else {
+                    toast.error(gpsErr.message || 'Lỗi GPS');
+                    setGeoCheckinLoading(null);
+                    return;
+                }
+            }
 
             const { latitude, longitude, accuracy } = position.coords;
 
@@ -413,13 +466,7 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
                 );
             }
         } catch (err: any) {
-            if (err.code === 1) {
-                toast.error('Vui lòng bật GPS trên thiết bị của bạn');
-            } else if (err.code === 3) {
-                toast.error('GPS timeout. Vui lòng thử lại');
-            } else {
-                toast.error(err.message || 'Lỗi GPS');
-            }
+            toast.error(err.message || 'Lỗi không xác định');
         } finally {
             setGeoCheckinLoading(null);
         }
@@ -734,23 +781,29 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
             )}
         </div>
 
-            {/* Face Verify Modal for GPS Check-in */}
+            {/* Face Verify Modal for GPS Check-in — Full-screen like SelfCheckinPage */}
             {showFaceModal && (
-                <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50 animate-in fade-in duration-200">
-                    <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl">
-                        <div className="flex justify-between items-center mb-4">
-                            <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
-                                <Camera size={20} className="text-blue-600" />
-                                Xác thực khuôn mặt
-                            </h3>
-                            <button
-                                onClick={closeFaceModal}
-                                className="w-8 h-8 rounded-full bg-slate-100 hover:bg-slate-200 flex items-center justify-center text-slate-500 transition-colors"
-                            >✕</button>
+                <div className="fixed inset-0 bg-slate-900 flex flex-col z-50 animate-in fade-in duration-200">
+                    {/* Header */}
+                    <div className="flex justify-between items-center p-4 bg-gradient-to-b from-black/50 to-transparent absolute top-0 left-0 right-0 z-20">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-white/10 backdrop-blur-sm p-2 rounded-xl border border-white/20">
+                                <Camera size={18} className="text-white" />
+                            </div>
+                            <div>
+                                <h3 className="text-base font-black text-white">Xác thực khuôn mặt</h3>
+                                <p className="text-[10px] text-indigo-300">Điểm danh GPS nội trú</p>
+                            </div>
                         </div>
+                        <button
+                            onClick={closeFaceModal}
+                            className="p-2.5 bg-white/10 hover:bg-white/20 rounded-xl text-white transition-all backdrop-blur-sm border border-white/20"
+                        >✕</button>
+                    </div>
 
-                        {/* Camera Preview */}
-                        <div className="relative rounded-2xl overflow-hidden bg-black mb-4 aspect-[4/3]">
+                    {/* Camera View — Full Screen */}
+                    <div className="flex-1 flex items-center justify-center p-4 pt-20">
+                        <div className="relative w-full max-w-md aspect-square rounded-[2.5rem] overflow-hidden bg-black border-4 border-white/10 shadow-2xl">
                             <video
                                 ref={faceVideoRef}
                                 autoPlay
@@ -758,66 +811,114 @@ export default function StudentDashboard({ user, onNavigate }: StudentDashboardP
                                 muted
                                 className="w-full h-full object-cover scale-x-[-1]"
                             />
-                            {/* Status Overlay */}
+
+                            {/* Low Light Flash */}
+                            {faceIsLowLight && (
+                                <div className="absolute inset-0 bg-white z-[5] animate-pulse pointer-events-none opacity-40" />
+                            )}
+
+                            {/* Scanning Animation */}
+                            {(faceVerifyStatus === 'camera_ready' || faceVerifyStatus === 'verifying') && (
+                                <div className="absolute inset-0 z-10 pointer-events-none">
+                                    <div className="w-full h-1 bg-indigo-400/60 absolute shadow-[0_0_15px_rgba(79,70,229,0.6)]" style={{ animation: 'faceScan 2s linear infinite' }} />
+                                    <div className="absolute inset-0 bg-indigo-900/5" />
+                                </div>
+                            )}
+
+                            {/* Corner Borders */}
+                            <div className="absolute top-5 left-5 w-10 h-10 border-t-4 border-l-4 border-indigo-400 rounded-tl-2xl pointer-events-none z-10" />
+                            <div className="absolute top-5 right-5 w-10 h-10 border-t-4 border-r-4 border-indigo-400 rounded-tr-2xl pointer-events-none z-10" />
+                            <div className="absolute bottom-5 left-5 w-10 h-10 border-b-4 border-l-4 border-indigo-400 rounded-bl-2xl pointer-events-none z-10" />
+                            <div className="absolute bottom-5 right-5 w-10 h-10 border-b-4 border-r-4 border-indigo-400 rounded-br-2xl pointer-events-none z-10" />
+
+                            {/* Success Overlay */}
                             {faceVerifyStatus === 'success' && (
-                                <div className="absolute inset-0 bg-green-500/30 flex items-center justify-center">
-                                    <CheckCircle className="w-20 h-20 text-white drop-shadow-lg" />
+                                <div className="absolute inset-0 bg-emerald-500/30 flex items-center justify-center z-20 animate-in fade-in">
+                                    <div className="bg-emerald-500 rounded-full p-5 shadow-2xl shadow-emerald-500/50">
+                                        <CheckCircle className="w-16 h-16 text-white" />
+                                    </div>
                                 </div>
                             )}
+
+                            {/* Error Overlay */}
                             {faceVerifyStatus === 'error' && (
-                                <div className="absolute inset-0 bg-red-500/30 flex items-center justify-center">
-                                    <XCircle className="w-20 h-20 text-white drop-shadow-lg" />
+                                <div className="absolute inset-0 bg-red-500/20 flex items-center justify-center z-20 animate-in fade-in">
+                                    <div className="bg-red-500 rounded-full p-5 shadow-2xl shadow-red-500/50">
+                                        <XCircle className="w-16 h-16 text-white" />
+                                    </div>
                                 </div>
                             )}
-                            {(faceVerifyStatus === 'loading_models' || faceVerifyStatus === 'verifying') && (
-                                <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                                    <Loader2 className="w-12 h-12 text-white animate-spin" />
+
+                            {/* Loading Overlay */}
+                            {faceVerifyStatus === 'loading_models' && (
+                                <div className="absolute inset-0 bg-black/50 flex items-center justify-center z-20">
+                                    <div className="bg-slate-900/80 rounded-2xl p-4 flex items-center gap-3 border border-white/10">
+                                        <Loader2 className="w-6 h-6 text-indigo-400 animate-spin" />
+                                        <span className="text-sm text-white font-medium">Đang tải AI...</span>
+                                    </div>
                                 </div>
                             )}
-                        </div>
 
-                        {/* Status Message */}
-                        <div className={`text-center mb-4 text-sm font-bold ${
-                            faceVerifyStatus === 'success' ? 'text-green-600' :
-                            faceVerifyStatus === 'error' ? 'text-red-600' :
-                            'text-slate-600'
-                        }`}>
-                            {faceVerifyMessage || 'Bấm nút bên dưới để bắt đầu xác thực'}
+                            {/* Status Bar at Bottom */}
+                            <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-5 z-10">
+                                <p className={`text-center font-bold text-base ${
+                                    faceVerifyStatus === 'success' ? 'text-emerald-300' :
+                                    faceVerifyStatus === 'error' ? 'text-red-300' :
+                                    'text-white'
+                                }`}>
+                                    {faceVerifyMessage || 'Đang khởi tạo...'}
+                                </p>
+                            </div>
                         </div>
+                    </div>
 
-                        {/* Action Buttons */}
-                        <div className="flex gap-2">
-                            {faceVerifyStatus === 'idle' && (
+                    {/* Footer Controls */}
+                    <div className="p-5 space-y-3">
+                        {/* Low Light Toggle */}
+                        <label className="flex items-center justify-center gap-2 text-white/60 text-sm cursor-pointer">
+                            <input
+                                type="checkbox"
+                                checked={faceIsLowLight}
+                                onChange={(e) => setFaceIsLowLight(e.target.checked)}
+                                className="w-4 h-4 rounded border-white/20 bg-white/10 text-indigo-500 focus:ring-indigo-500"
+                            />
+                            <span className="font-bold">Bù sáng ban đêm {faceIsLowLight && '🌙'}</span>
+                        </label>
+
+                        {/* Retry / Cancel Buttons */}
+                        <div className="flex gap-3">
+                            {faceVerifyStatus === 'error' && (
                                 <button
                                     onClick={startFaceVerify}
-                                    className="flex-1 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold rounded-xl shadow-lg hover:shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2"
+                                    className="flex-1 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white font-black rounded-2xl shadow-lg shadow-indigo-500/20 transition-all active:scale-95 flex items-center justify-center gap-2"
                                 >
-                                    <Camera size={18} /> Bắt đầu xác thực
-                                </button>
-                            )}
-                            {faceVerifyStatus === 'error' && (
-                                <button
-                                    onClick={startFaceVerify}
-                                    className="flex-1 py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl transition-colors flex items-center justify-center gap-2"
-                                >
-                                    🔄 Thử lại
+                                    <Camera size={18} /> Thử lại
                                 </button>
                             )}
                             <button
                                 onClick={closeFaceModal}
-                                className="px-4 py-3 bg-slate-100 hover:bg-slate-200 text-slate-500 font-bold rounded-xl transition-colors"
+                                className={`py-3.5 bg-white/10 hover:bg-white/20 text-white font-bold rounded-2xl transition-all backdrop-blur-sm border border-white/20 active:scale-95 ${
+                                    faceVerifyStatus === 'error' ? 'flex-1' : 'w-full'
+                                }`}
                             >
-                                Hủy
+                                Hủy bỏ
                             </button>
                         </div>
 
-                        {/* Info */}
-                        <p className="text-[10px] text-slate-400 text-center mt-3">
+                        <p className="text-[10px] text-white/30 text-center">
                             🔒 Khuôn mặt chỉ dùng để xác thực, không lưu trữ ảnh
                         </p>
                     </div>
                 </div>
             )}
+
+            {/* CSS Animation for Face Scan */}
+            <style>{`
+                @keyframes faceScan {
+                    0% { top: 0; }
+                    100% { top: 100%; }
+                }
+            `}</style>
         </>
     );
 }
