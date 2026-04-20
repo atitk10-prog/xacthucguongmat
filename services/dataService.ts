@@ -260,11 +260,12 @@ async function login(identifier: string, password: string): Promise<ApiResponse<
 
     try {
         // Simple password-based auth (no Supabase Auth, just table lookup)
-        // Use maybeSingle() to avoid 406 error when no user found
+        // Normalize: trim whitespace + case-insensitive match
+        const normalizedId = identifier.trim();
         const { data, error } = await supabase
             .from('users')
             .select('*')
-            .or(`email.eq.${identifier},student_code.eq.${identifier}`)
+            .or(`email.ilike.${normalizedId},student_code.ilike.${normalizedId}`)
             .maybeSingle();
 
         if (error) {
