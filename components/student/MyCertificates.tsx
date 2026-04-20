@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import QRCode from 'qrcode';
-import { Award, Calendar, Download, Eye, X, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react';
+import { Award, Calendar, Download, Eye, X, ChevronLeft, ChevronRight, Loader2, ZoomIn, ZoomOut, RotateCcw } from 'lucide-react';
 import { dataService } from '../../services/dataService';
 import { User, Certificate } from '../../types';
 import { getTemplateComponent, generateSingleExportPDF } from '../../services/certificateExportService';
@@ -20,6 +20,105 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
     const [configCache, setConfigCache] = useState<Record<string, any>>({});
     const [certQR, setCertQR] = useState('');
     const itemsPerPage = 6;
+
+    // Zoom & Pan state for certificate preview
+    const [zoom, setZoom] = useState(1);
+    const [pan, setPan] = useState({ x: 0, y: 0 });
+    const [isPanning, setIsPanning] = useState(false);
+    const [baseScale, setBaseScale] = useState(0.5);
+    const panStart = useRef({ x: 0, y: 0 });
+    const panOffset = useRef({ x: 0, y: 0 });
+    const lastTouchDist = useRef(0);
+    const zoomContainerRef = useRef<HTMLDivElement>(null);
+
+    const CERT_WIDTH = 800; // Typical certificate template width in px
+    const MIN_ZOOM = 0.5;
+    const MAX_ZOOM = 4;
+
+    // Calculate base scale to fit certificate in container
+    useEffect(() => {
+        if (selectedCert && zoomContainerRef.current) {
+            const containerW = zoomContainerRef.current.clientWidth - 32; // minus padding
+            const scale = Math.min(containerW / CERT_WIDTH, 0.9);
+            setBaseScale(Math.max(0.3, scale));
+            setZoom(1);
+            setPan({ x: 0, y: 0 });
+        }
+    }, [selectedCert]);
+
+    // Also recalculate on resize
+    useEffect(() => {
+        if (!selectedCert) return;
+        const handleResize = () => {
+            if (zoomContainerRef.current) {
+                const containerW = zoomContainerRef.current.clientWidth - 32;
+                const scale = Math.min(containerW / CERT_WIDTH, 0.9);
+                setBaseScale(Math.max(0.3, scale));
+            }
+        };
+        window.addEventListener('resize', handleResize);
+        return () => window.removeEventListener('resize', handleResize);
+    }, [selectedCert]);
+
+    const handleZoomIn = useCallback(() => setZoom(z => Math.min(MAX_ZOOM, z + 0.2)), []);
+    const handleZoomOut = useCallback(() => setZoom(z => Math.max(MIN_ZOOM, z - 0.2)), []);
+    const handleZoomReset = useCallback(() => { setZoom(1); setPan({ x: 0, y: 0 }); }, []);
+
+    // Mouse wheel zoom
+    const handleWheel = useCallback((e: React.WheelEvent) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.15 : 0.15;
+        setZoom(z => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z + delta)));
+    }, []);
+
+    // Touch: pinch zoom + pan
+    const handleTouchStart = useCallback((e: React.TouchEvent) => {
+        if (e.touches.length === 2) {
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            lastTouchDist.current = Math.sqrt(dx * dx + dy * dy);
+        } else if (e.touches.length === 1) {
+            setIsPanning(true);
+            panStart.current = { x: e.touches[0].clientX - pan.x, y: e.touches[0].clientY - pan.y };
+        }
+    }, [pan]);
+
+    const handleTouchMove = useCallback((e: React.TouchEvent) => {
+        if (e.touches.length === 2) {
+            e.preventDefault();
+            const dx = e.touches[0].clientX - e.touches[1].clientX;
+            const dy = e.touches[0].clientY - e.touches[1].clientY;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (lastTouchDist.current > 0) {
+                const scale = dist / lastTouchDist.current;
+                setZoom(z => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z * scale)));
+            }
+            lastTouchDist.current = dist;
+        } else if (e.touches.length === 1 && isPanning && zoom > 1) {
+            const x = e.touches[0].clientX - panStart.current.x;
+            const y = e.touches[0].clientY - panStart.current.y;
+            setPan({ x, y });
+        }
+    }, [isPanning, zoom]);
+
+    const handleTouchEnd = useCallback(() => {
+        lastTouchDist.current = 0;
+        setIsPanning(false);
+    }, []);
+
+    // Mouse drag pan
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
+        if (zoom <= 1) return;
+        setIsPanning(true);
+        panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+    }, [zoom, pan]);
+
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        if (!isPanning || zoom <= 1) return;
+        setPan({ x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y });
+    }, [isPanning, zoom]);
+
+    const handleMouseUp = useCallback(() => setIsPanning(false), []);
 
     // Resolve full config by merging lightweight metadata with shared config from config_id
     const resolveConfig = async (cert: Certificate): Promise<any> => {
@@ -273,12 +372,30 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
                             </button>
                         </div>
 
-                        <div className="flex-1 overflow-y-auto p-4 md:p-12 flex items-center justify-center bg-slate-100/30 relative">
+                        <div
+                            ref={zoomContainerRef}
+                            className="flex-1 overflow-hidden p-4 md:p-8 flex items-center justify-center bg-slate-100/30 relative select-none"
+                            style={{ cursor: zoom > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default', touchAction: 'none' }}
+                            onWheel={handleWheel}
+                            onTouchStart={handleTouchStart}
+                            onTouchMove={handleTouchMove}
+                            onTouchEnd={handleTouchEnd}
+                            onMouseDown={handleMouseDown}
+                            onMouseMove={handleMouseMove}
+                            onMouseUp={handleMouseUp}
+                            onMouseLeave={handleMouseUp}
+                        >
                             {/* Decorative Background Elements */}
-                            <div className="absolute top-10 left-10 w-32 h-32 bg-indigo-400/10 blur-[60px] rounded-full"></div>
-                            <div className="absolute bottom-10 right-10 w-40 h-40 bg-amber-400/10 blur-[70px] rounded-full"></div>
+                            <div className="absolute top-10 left-10 w-32 h-32 bg-indigo-400/10 blur-[60px] rounded-full pointer-events-none"></div>
+                            <div className="absolute bottom-10 right-10 w-40 h-40 bg-amber-400/10 blur-[70px] rounded-full pointer-events-none"></div>
 
-                            <div className="transform scale-[0.35] sm:scale-[0.5] md:scale-[0.65] lg:scale-[0.75] xl:scale-[0.85] origin-center shadow-[0_30px_100px_rgba(0,0,0,0.15)] bg-white rounded-lg transition-transform duration-500 hover:scale-[0.37] sm:hover:scale-[0.52] md:hover:scale-[0.67] lg:hover:scale-[0.77] xl:hover:scale-[0.87]">
+                            <div
+                                className="origin-center shadow-[0_30px_100px_rgba(0,0,0,0.15)] bg-white rounded-lg"
+                                style={{
+                                    transform: `translate(${pan.x}px, ${pan.y}px) scale(${baseScale * zoom})`,
+                                    transition: isPanning ? 'none' : 'transform 0.3s ease-out',
+                                }}
+                            >
                                 {React.createElement(getTemplateComponent(selectedCert.template_id || 'classic'), {
                                     data: {
                                         recipientName: user.full_name,
@@ -293,9 +410,22 @@ export default function MyCertificates({ user }: MyCertificatesProps) {
                                 })}
                             </div>
 
-                            {/* Mobile Hint */}
-                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-slate-800/80 backdrop-blur px-4 py-2 rounded-full text-[10px] font-bold text-white uppercase tracking-widest md:hidden">
-                                Vuốt/Phóng to để xem chi tiết
+                            {/* Zoom Controls */}
+                            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-2 bg-slate-900/80 backdrop-blur-xl px-3 py-2 rounded-2xl shadow-xl border border-white/10">
+                                <button onClick={handleZoomOut} className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-xl transition-all active:scale-90" title="Thu nhỏ">
+                                    <ZoomOut size={18} />
+                                </button>
+                                <button onClick={handleZoomReset} className="px-3 py-1 text-xs font-black text-white/90 hover:bg-white/10 rounded-xl transition-all min-w-[52px] text-center" title="Reset zoom">
+                                    {Math.round(zoom * 100)}%
+                                </button>
+                                <button onClick={handleZoomIn} className="p-2 text-white/70 hover:text-white hover:bg-white/10 rounded-xl transition-all active:scale-90" title="Phóng to">
+                                    <ZoomIn size={18} />
+                                </button>
+                                {(zoom !== 1 || pan.x !== 0 || pan.y !== 0) && (
+                                    <button onClick={handleZoomReset} className="p-2 text-amber-400/80 hover:text-amber-300 hover:bg-white/10 rounded-xl transition-all active:scale-90 ml-1 border-l border-white/10 pl-3" title="Reset">
+                                        <RotateCcw size={16} />
+                                    </button>
+                                )}
                             </div>
                         </div>
 

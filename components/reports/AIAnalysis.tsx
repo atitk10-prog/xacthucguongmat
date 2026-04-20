@@ -254,6 +254,92 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
         }
     };
 
+    // ═══ Smart Date Range Parser for Chat ═══
+    // Detects date ranges in Vietnamese questions like "từ tháng 1 đến tháng 6"
+    const parseDateRangeFromQuestion = (question: string): { startDate: string; endDate: string } | null => {
+        const q = question.toLowerCase();
+        const currentYear = new Date().getFullYear();
+
+        // Helper: get last day of month
+        const lastDay = (y: number, m: number) => new Date(y, m, 0).getDate();
+        const fmt = (y: number, m: number, d: number) =>
+            `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+
+        // Pattern 1: "từ tháng X đến tháng Y" or "tháng X đến tháng Y" (optional năm)
+        const p1 = q.match(/(?:từ\s+)?tháng\s+(\d{1,2})(?:\s*(?:\/|năm)\s*(\d{4}))?\s*(?:đến|tới|->|–|-)\s*tháng\s+(\d{1,2})(?:\s*(?:\/|năm)\s*(\d{4}))?/);
+        if (p1) {
+            const m1 = parseInt(p1[1]), y1 = parseInt(p1[2] || String(currentYear));
+            const m2 = parseInt(p1[3]), y2 = parseInt(p1[4] || String(y1));
+            if (m1 >= 1 && m1 <= 12 && m2 >= 1 && m2 <= 12) {
+                return { startDate: fmt(y1, m1, 1), endDate: fmt(y2, m2, lastDay(y2, m2)) };
+            }
+        }
+
+        // Pattern 2: "từ DD/MM đến DD/MM" or "DD/MM/YYYY đến DD/MM/YYYY"
+        const p2 = q.match(/(?:từ\s+)?(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s*(?:đến|tới|->|–|-)\s*(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?/);
+        if (p2) {
+            const d1 = parseInt(p2[1]), m1 = parseInt(p2[2]), y1 = parseInt(p2[3] || String(currentYear));
+            const d2 = parseInt(p2[4]), m2 = parseInt(p2[5]), y2 = parseInt(p2[6] || String(y1));
+            if (m1 >= 1 && m1 <= 12 && m2 >= 1 && m2 <= 12 && d1 >= 1 && d2 >= 1) {
+                return { startDate: fmt(y1, m1, d1), endDate: fmt(y2, m2, d2) };
+            }
+        }
+
+        // Pattern 3: "tháng X" alone (single month) — optionally with year
+        const p3 = q.match(/(?:trong\s+)?tháng\s+(\d{1,2})(?:\s*(?:\/|năm)\s*(\d{4}))?/);
+        if (p3 && !q.includes('đến') && !q.includes('tới')) {
+            const m = parseInt(p3[1]), y = parseInt(p3[2] || String(currentYear));
+            if (m >= 1 && m <= 12) {
+                return { startDate: fmt(y, m, 1), endDate: fmt(y, m, lastDay(y, m)) };
+            }
+        }
+
+        // Pattern 4: "học kỳ 1" / "học kỳ 2" / "HK1" / "HK2"
+        if (/học\s*kỳ\s*1|hk\s*1/i.test(q)) {
+            // Sep - Dec of current school year
+            const schoolYear = new Date().getMonth() >= 8 ? currentYear : currentYear - 1;
+            return { startDate: fmt(schoolYear, 9, 1), endDate: fmt(schoolYear, 12, 31) };
+        }
+        if (/học\s*kỳ\s*2|hk\s*2/i.test(q)) {
+            // Jan - May of current school year
+            const schoolYear = new Date().getMonth() >= 8 ? currentYear + 1 : currentYear;
+            return { startDate: fmt(schoolYear, 1, 1), endDate: fmt(schoolYear, 5, 31) };
+        }
+
+        // Pattern 5: "cả năm" / "năm nay" / "năm 2025"
+        const p5 = q.match(/(?:cả\s+)?năm\s*(\d{4})?|năm\s+nay/);
+        if (p5) {
+            const y = parseInt(p5[1] || String(currentYear));
+            return { startDate: fmt(y, 1, 1), endDate: fmt(y, 12, 31) };
+        }
+
+        // Pattern 6: Relative time — "năm qua", "tháng qua", "tuần qua", "tháng trước", etc.
+        const now = new Date();
+        const todayStr = fmt(now.getFullYear(), now.getMonth() + 1, now.getDate());
+
+        if (/năm\s*qua|1\s*năm\s*(?:qua|gần|trước)|năm\s*vừa\s*qua/.test(q)) {
+            const start = new Date(now); start.setFullYear(start.getFullYear() - 1);
+            return { startDate: fmt(start.getFullYear(), start.getMonth() + 1, start.getDate()), endDate: todayStr };
+        }
+        if (/(?:3|ba)\s*tháng\s*(?:qua|gần|trước)|quý\s*(?:qua|trước|vừa)/.test(q)) {
+            const start = new Date(now); start.setMonth(start.getMonth() - 3);
+            return { startDate: fmt(start.getFullYear(), start.getMonth() + 1, start.getDate()), endDate: todayStr };
+        }
+        if (/tháng\s*(?:qua|trước|vừa\s*qua|vừa\s*rồi)|1\s*tháng\s*(?:qua|gần)/.test(q)) {
+            const start = new Date(now); start.setMonth(start.getMonth() - 1);
+            return { startDate: fmt(start.getFullYear(), start.getMonth() + 1, start.getDate()), endDate: todayStr };
+        }
+        if (/tuần\s*(?:qua|trước|vừa\s*qua|vừa\s*rồi)|7\s*ngày\s*(?:qua|gần)/.test(q)) {
+            const start = new Date(now); start.setDate(start.getDate() - 7);
+            return { startDate: fmt(start.getFullYear(), start.getMonth() + 1, start.getDate()), endDate: todayStr };
+        }
+        if (/hôm\s*nay|ngày\s*hôm\s*nay/.test(q)) {
+            return { startDate: todayStr, endDate: todayStr };
+        }
+
+        return null; // No date range detected — use existing data
+    };
+
     const handleChatSend = async (customQuestion?: string) => {
         const q = (customQuestion || chatInput).trim();
         if (!q || chatSending) return;
@@ -261,22 +347,45 @@ const AIAnalysis: React.FC<Props> = ({ currentUser }) => {
         setChatMessages(prev => [...prev, { role: 'user', text: q }]);
         setChatSending(true);
         try {
-            // Auto-load data if not available (chat is self-sufficient)
             let chatStats = stats;
             let chatBehavior = behaviorReport;
 
-            if (!chatStats) {
-                const result = await dataService.getPointStatistics({ range: 'month' });
-                if (result.success) {
-                    chatStats = result.data;
-                    setStats(result.data); // cache for future
+            // ── Smart date detection: if user asks about specific months/dates, fetch that data ──
+            const detectedRange = parseDateRangeFromQuestion(q);
+            if (detectedRange) {
+                // User asked about a specific time range → fetch fresh data for it
+                const [statsRes, behaviorRes] = await Promise.all([
+                    dataService.getPointStatistics({
+                        range: 'custom',
+                        startDate: detectedRange.startDate,
+                        endDate: detectedRange.endDate
+                    }),
+                    dataService.getStudentBehaviorData({
+                        classFilter: classFilter || undefined,
+                        startDate: detectedRange.startDate,
+                        endDate: detectedRange.endDate
+                    })
+                ]);
+                if (statsRes.success) chatStats = statsRes.data;
+                if (behaviorRes.success) chatBehavior = behaviorRes.data;
+            } else {
+                // No date detected → use existing data, or auto-load broad range (self-sufficient, no tab needed)
+                if (!chatStats) {
+                    // Default: load 1 year of data for comprehensive answers
+                    const result = await dataService.getPointStatistics({ range: 'year' });
+                    if (result.success) {
+                        chatStats = result.data;
+                    }
                 }
-            }
-            if (!chatBehavior) {
-                const result = await dataService.getStudentBehaviorData({ weeks: 4 });
-                if (result.success) {
-                    chatBehavior = result.data;
-                    setBehaviorReport(result.data); // cache for future
+                if (!chatBehavior) {
+                    // Default: load 52 weeks (1 year) of behavior data
+                    const result = await dataService.getStudentBehaviorData({
+                        classFilter: classFilter || undefined,
+                        weeks: 52
+                    });
+                    if (result.success) {
+                        chatBehavior = result.data;
+                    }
                 }
             }
 
